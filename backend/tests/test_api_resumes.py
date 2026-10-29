@@ -39,7 +39,10 @@ async def test_rejects_other_files(api: httpx.AsyncClient) -> None:
 
 
 async def test_parse_then_accept(
-    api: httpx.AsyncClient, sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+    api: httpx.AsyncClient,
+    sql: psycopg.Connection[Any],
+    monkeypatch: pytest.MonkeyPatch,
+    events: list[tuple[str, dict[str, Any]]],
 ) -> None:
     sql.execute("INSERT INTO skill_alias VALUES ('postgresql', 'postgres'), ('k8s', 'kubernetes')")
     await api.put(
@@ -85,3 +88,7 @@ async def test_parse_then_accept(
     profile = (await api.get("/api/profile")).json()
     assert profile["must_have_skills"] == ["python", "postgres"]
     assert profile["nice_to_have_skills"] == ["kubernetes"]
+    # Accepting starts a run by itself (T1), after the resume upload's own event.
+    [run] = sql.execute("SELECT id, trigger, status FROM run").fetchall()
+    assert run[1:] == ("resume_updated", "queued")
+    assert events[-1] == ("run/requested", {"run_id": str(run[0])})

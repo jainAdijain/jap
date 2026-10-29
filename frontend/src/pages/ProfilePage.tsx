@@ -92,7 +92,7 @@ export default function ProfilePage() {
       setForm(fields(saved))
       setMessage({
         kind: 'ok',
-        text: `Saved. ${saved.matching_count} listing${saved.matching_count === 1 ? '' : 's'} match now.`,
+        text: `Saved. ${saved.matching_count} listing${saved.matching_count === 1 ? '' : 's'} match now. Fetching new jobs in the background.`,
       })
     } catch (err) {
       setMessage({ kind: 'error', text: err instanceof Error ? err.message : String(err) })

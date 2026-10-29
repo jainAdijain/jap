@@ -1,5 +1,6 @@
 """My profile: what the UI reads and saves (U7 to U10)."""
 
+from datetime import time
 from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field, HttpUrl, field_validator
@@ -94,6 +95,7 @@ class ProfileOut(ProfileIn):
     email: str | None = None  # stored values are returned as saved
     apply_mode: ApplyMode
     daily_run: bool
+    daily_run_at: time
     daily_cap: int
     spend: Spend
 
@@ -109,3 +111,4 @@ class MatchPreview(BaseModel):
 class ProfileSwitches(BaseModel):
     apply_mode: ApplyMode | None = None
     daily_run: bool | None = None
+    daily_run_at: time | None = None  # in JAP_TZ; 06:00 unless changed for testing

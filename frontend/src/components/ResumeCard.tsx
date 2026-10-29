@@ -17,6 +17,7 @@ export default function ResumeCard({ mustHave, niceToHave, onAccepted }: Props) 
   const [versions, setVersions] = useState<Resume[]>([])
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [started, setStarted] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const load = async () => {
@@ -41,6 +42,7 @@ export default function ResumeCard({ mustHave, niceToHave, onAccepted }: Props) 
   const upload = async (file: File) => {
     setBusy(true)
     setError(null)
+    setStarted(false)
     try {
       await api.uploadResume(file)
       await load()
@@ -74,6 +76,12 @@ export default function ResumeCard({ mustHave, niceToHave, onAccepted }: Props) 
       <p className="hint">PDF or DOCX, up to 10 MB. Each upload is a new version; the newest is attached to applications.</p>
       {error && <p className="error" role="alert">{error}</p>}
 
+      {started && !pending && (
+        <p className="saved" role="status">
+          Skills saved and the job list re-filtered. A run has started to fetch jobs for them; follow it on the
+          Dashboard.
+        </p>
+      )}
       {active?.status === 'parsing' && <p className="muted">Reading {active.original_name}…</p>}
       {active?.status === 'failed' && (
         <p className="error" role="alert">
@@ -88,6 +96,7 @@ export default function ResumeCard({ mustHave, niceToHave, onAccepted }: Props) 
           niceToHave={niceToHave}
           onAccepted={async (must, nice) => {
             onAccepted(must, nice)
+            setStarted(true)
             await load()
           }}
         />

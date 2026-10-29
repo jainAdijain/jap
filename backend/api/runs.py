@@ -1,4 +1,6 @@
-"""Runs (T3 to T5, U6): start a Find only run, read the last run line and the run log."""
+"""Runs (T3 to T5, U6): the Run dialog, the last run line and the run log."""
+
+from typing import Any
 
 from fastapi import APIRouter
 from sqlalchemy import func, select
@@ -9,7 +11,7 @@ from database.models import Posting, Run
 from database.session import Session
 from functions.events import send
 from pipeline.runs import queue_run
-from schemas.run import RunIn, RunOut
+from schemas.run import RunIn, RunOut, RunState
 
 router = APIRouter(prefix="/runs", tags=["runs"])
 
@@ -35,19 +37,56 @@ def to_out(run: Run, pending: int = 0) -> RunOut:
         created_at=run.created_at,
         started_at=run.started_at,
         ended_at=run.ended_at,
+        scope=run.scope or {},
         counts=run.counts or {},
         error=run.error,
         extracting=pending,
     )
 
 
-@router.post("", response_model=RunOut, status_code=202)
-async def start(body: RunIn, session: Session) -> RunOut:
-    scope = {"board_ids": [str(b) for b in body.board_ids]} if body.board_ids else {}
-    run, created = await queue_run(session, "manual", body.mode, scope)
+async def request_run(
+    session: AsyncSession,
+    trigger: str,
+    mode: str = "find_only",
+    scope: dict[str, Any] | None = None,
+) -> Run:
+    """Queue a run (or join the one already queued, T4) and send its event if it is new."""
+    run, created = await queue_run(session, trigger, mode, scope)
     if created:
         await send("run/requested", {"run_id": str(run.id)})
+    return run
+
+
+@router.post("", response_model=RunOut, status_code=202)
+async def start(body: RunIn, session: Session) -> RunOut:
+    scope: dict[str, Any] = {}
+    if body.board_ids:
+        scope["board_ids"] = [str(b) for b in body.board_ids]
+    if body.roles:
+        scope["roles"] = body.roles
+    run = await request_run(session, "manual", body.mode, scope)
     return to_out(run, await extracting(session))
+
+
+@router.get("/state", response_model=RunState)
+async def state(session: Session) -> RunState:
+    """The last run line (U6) plus the run going now and the one waiting behind it."""
+
+    async def newest(*statuses: str) -> Run | None:
+        query = select(Run).where(Run.status.in_(statuses))
+        return await session.scalar(query.order_by(Run.created_at.desc()).limit(1))
+
+    pending = await extracting(session)
+    last, active, queued = (
+        await newest("succeeded", "failed"),
+        await newest("running"),
+        await newest("queued"),
+    )
+    return RunState(
+        last=to_out(last, pending) if last else None,
+        active=to_out(active, pending) if active else None,
+        queued=to_out(queued) if queued else None,
+    )
 
 
 @router.get("/latest", response_model=RunOut | None)

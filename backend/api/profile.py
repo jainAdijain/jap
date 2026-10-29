@@ -33,6 +33,7 @@ async def to_out(session: AsyncSession, profile: Profile) -> ProfileOut:
     data.update(
         apply_mode=profile.apply_mode,
         daily_run=profile.daily_run,
+        daily_run_at=profile.daily_run_at,
         daily_cap=profile.daily_cap,
         spend=await month_spend(session),
     )
@@ -59,7 +60,8 @@ async def normalized(session: AsyncSession, body: ProfileIn) -> dict[str, object
 
 @router.put("", response_model=ProfileSaved)
 async def save_profile(body: ProfileIn, session: Session) -> ProfileSaved:
-    """Save, then re-filter the stored listings at once (T2, F1): no fetch is needed."""
+    """Save, then re-filter the stored listings at once (T2, F1). profile/saved then starts
+    a fetch in the background (profile-saved, debounced), so new matching jobs follow."""
     profile = await load_profile(session)
     for field, value in (await normalized(session, body)).items():
         setattr(profile, field, value)
@@ -87,6 +89,8 @@ async def flip_switches(body: ProfileSwitches, session: Session) -> ProfileOut:
         profile.apply_mode = body.apply_mode
     if body.daily_run is not None:
         profile.daily_run = body.daily_run
+    if body.daily_run_at is not None:
+        profile.daily_run_at = body.daily_run_at.replace(second=0, microsecond=0, tzinfo=None)
     await session.commit()
     await session.refresh(profile)
     return await to_out(session, profile)

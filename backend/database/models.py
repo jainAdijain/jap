@@ -5,11 +5,11 @@ Tables used from Phase 4 on (application, ...) get their classes when their code
 """
 
 import uuid
-from datetime import datetime
+from datetime import datetime, time
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, Integer, Numeric, Text, func
+from sqlalchemy import Boolean, Integer, Numeric, Text, Time, func
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -19,7 +19,9 @@ ATS = ENUM("greenhouse", "lever", "ashby", name="ats", create_type=False)
 WORK_MODE = ENUM("remote", "hybrid", "onsite", name="work_mode", create_type=False)
 APPLY_MODE = ENUM("review", "automatic", name="apply_mode", create_type=False)
 POSTING_STATE = ENUM("open", "closed", name="posting_state", create_type=False)
-RUN_TRIGGER = ENUM("resume_updated", "manual", "scheduled", name="run_trigger", create_type=False)
+RUN_TRIGGER = ENUM(
+    "resume_updated", "manual", "scheduled", "profile_saved", name="run_trigger", create_type=False
+)
 RUN_MODE = ENUM("find_only", "find_and_apply", name="run_mode", create_type=False)
 LISTING_STATUS = ENUM(
     "not_applied", "ready_for_review", "applying", "applied", "needs_input", "failed",
@@ -65,6 +67,8 @@ class Profile(Timestamps, Base):
     tone_note: Mapped[str | None] = mapped_column(Text)
     apply_mode: Mapped[str] = mapped_column(APPLY_MODE, server_default="review")
     daily_run: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    daily_run_at: Mapped[time] = mapped_column(Time, server_default="06:00")
+    daily_run_last_at: Mapped[datetime | None]
     daily_cap: Mapped[int] = mapped_column(Integer, server_default="20")
 
 

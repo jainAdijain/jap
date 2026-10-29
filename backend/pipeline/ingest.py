@@ -9,6 +9,7 @@ on its board is marked Closed, never deleted.
 import hashlib
 import re
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from html.parser import HTMLParser
@@ -136,12 +137,23 @@ async def store_jobs(session: AsyncSession, board_id: uuid.UUID, jobs: list[Job]
 
 
 async def close_missing(
-    session: AsyncSession, board_id: uuid.UUID, seen_external_ids: list[str]
+    session: AsyncSession,
+    board_id: uuid.UUID,
+    seen_external_ids: list[str],
+    only: Callable[[str], bool] | None = None,
 ) -> int:
-    """Mark Closed every open posting of this board that the board no longer lists (I6)."""
+    """Mark Closed every open posting of this board that the board no longer lists (I6).
+
+    only (a test on the title) limits it to the postings a scoped run looked at (T3)."""
     where = [Posting.watched_board_id == board_id, Posting.state == "open"]
     if seen_external_ids:
         where.append(Posting.external_id.not_in(seen_external_ids))
+    if only is not None:
+        rows = await session.execute(select(Posting.id, Posting.title_raw).where(*where))
+        ids = [pid for pid, title in rows if only(title)]
+        if not ids:
+            return 0
+        where.append(Posting.id.in_(ids))
     stmt = update(Posting).where(*where).values(state="closed", closed_at=func.now())
     result = await session.execute(stmt)
     await session.commit()

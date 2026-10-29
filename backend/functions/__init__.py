@@ -13,6 +13,7 @@ from functions.fetch_board import fetch_board
 from functions.parse_resume import parse_resume
 from functions.ping import ping
 from functions.run_pipeline import run_pipeline
+from functions.triggers import daily_schedule, profile_saved
 
 ALL_FUNCTIONS: list[inngest.Function[Any]] = [
     ping,
@@ -20,6 +21,8 @@ ALL_FUNCTIONS: list[inngest.Function[Any]] = [
     run_pipeline,
     fetch_board,
     enrich_posting,
+    profile_saved,
+    daily_schedule,
 ]
 
 __all__ = ["ALL_FUNCTIONS", "inngest_client"]

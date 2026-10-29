@@ -15,6 +15,7 @@ from database.models import WatchedBoard
 from database.session import get_sessionmaker
 from functions.client import inngest_client
 from pipeline.ingest import close_missing, store_jobs
+from pipeline.runs import in_scope, role_matcher
 from schemas.job import ATS
 from sources import ADAPTERS, BoardNotFound, SourceChanged, SourceUnavailable, base
 
@@ -30,7 +31,7 @@ async def _mark(board_id: uuid.UUID, ok: bool) -> None:
             await session.commit()
 
 
-async def fetch_step(board_id: str) -> dict[str, Any]:
+async def fetch_step(board_id: str, roles: list[str] | None = None) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
         board = await session.get(WatchedBoard, uuid.UUID(board_id))
         if board is None:
@@ -48,6 +49,8 @@ async def fetch_step(board_id: str) -> dict[str, Any]:
         raise inngest.NonRetriableError(str(exc)) from exc
     except SourceUnavailable:
         raise  # retried by Inngest
+    matcher = role_matcher(roles)
+    jobs = [j for j in jobs if in_scope(j.title, matcher)]  # a scoped run's roles only (T3)
     async with get_sessionmaker()() as session:
         stored = await store_jobs(session, uuid.UUID(board_id), jobs)
     await _mark(uuid.UUID(board_id), ok=True)
@@ -63,9 +66,11 @@ async def fetch_step(board_id: str) -> dict[str, Any]:
     }
 
 
-async def close_step(board_id: str, seen: list[str]) -> int:
+async def close_step(board_id: str, seen: list[str], roles: list[str] | None = None) -> int:
+    matcher = role_matcher(roles)
+    only = None if matcher is None else (lambda title: in_scope(title, matcher))
     async with get_sessionmaker()() as session:
-        return await close_missing(session, uuid.UUID(board_id), seen)
+        return await close_missing(session, uuid.UUID(board_id), seen, only)
 
 
 @inngest_client.create_function(
@@ -76,13 +81,15 @@ async def close_step(board_id: str, seen: list[str]) -> int:
 )
 async def fetch_board(ctx: inngest.Context) -> dict[str, Any]:
     board_id = str(ctx.event.data["board_id"])
+    raw_roles = ctx.event.data.get("roles")
+    roles = [str(r) for r in raw_roles] if isinstance(raw_roles, list) and raw_roles else None
     try:
-        fetched = await ctx.step.run("fetch", fetch_step, board_id)
+        fetched = await ctx.step.run("fetch", fetch_step, board_id, roles)
     except inngest.StepError as exc:
         return {"board_id": board_id, "ok": False, "error": exc.message or "fetch failed"}
     if not fetched["ok"]:
         return {"board_id": board_id, **fetched}
-    closed = await ctx.step.run("close-missing", close_step, board_id, fetched["seen"])
+    closed = await ctx.step.run("close-missing", close_step, board_id, fetched["seen"], roles)
     to_enrich: list[str] = fetched["to_enrich"]
     for i in range(0, len(to_enrich), EVENTS_PER_SEND):
         await ctx.step.send_event(
