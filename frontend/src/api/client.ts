@@ -94,6 +94,9 @@ export type Detected = {
 }
 
 export type RunCounts = {
+  merged?: number
+  new_listings?: number
+  possible_duplicates?: number
   boards?: number
   boards_failed?: number
   board_errors?: string[]
@@ -154,6 +157,47 @@ export type PostingDetail = PostingRow & {
 }
 export type Answer = { id: string; question: string; answer: string }
 
+export type ListingRow = {
+  id: string
+  title: string
+  company: string
+  locations: string[]
+  work_mode: string | null
+  status: string
+  last_posted_at: string | null
+  platforms: Ats[]
+  postings: number
+}
+export type ListingPage = { total: number; page: number; page_size: number; rows: ListingRow[] }
+export type AlsoOn = {
+  posting_id: string
+  source: Ats
+  title: string
+  company: string
+  locations: string[]
+  posting_url: string
+  state: 'open' | 'closed'
+  posted_at: string | null
+}
+export type ListingDetail = ListingRow & {
+  canonical_role: string
+  skills: string[]
+  seniority: string | null
+  remote_regions: string[]
+  primary: PostingDetail | null
+  also_on: AlsoOn[]
+  same_company: { id: string; title: string }[]
+}
+export type DuplicateSide = { id: string; title: string; platforms: Ats[]; locations: string[] }
+export type Duplicate = {
+  id: string
+  company: string
+  a: DuplicateSide
+  b: DuplicateSide
+  title_similarity: number
+  description_similarity: number
+}
+
 export const api = {
   health: (signal?: AbortSignal) => request<Health>('/api/health', { signal }),
   profile: () => request<Profile>('/api/profile'),
@@ -185,6 +229,21 @@ export const api = {
     return request<PostingPage>(`/api/postings?${query}`)
   },
   posting: (id: string) => request<PostingDetail>(`/api/postings/${id}`),
+  listings: (params: { q?: string; status?: 'open' | 'closed' | 'all'; page?: number }) => {
+    const query = new URLSearchParams()
+    if (params.q) query.set('q', params.q)
+    if (params.status) query.set('status', params.status)
+    if (params.page) query.set('page', String(params.page))
+    return request<ListingPage>(`/api/listings?${query}`)
+  },
+  listing: (id: string) => request<ListingDetail>(`/api/listings/${id}`),
+  merge: (id: string, other: string) =>
+    request<ListingDetail>(`/api/listings/${id}/merge`, json('POST', { other_listing_id: other })),
+  split: (postingId: string) =>
+    request<{ listing_id: string }>(`/api/postings/${postingId}/split`, json('POST', {})),
+  duplicates: () => request<Duplicate[]>('/api/duplicates'),
+  decide: (id: string, decision: 'merged' | 'kept_apart') =>
+    request<void>(`/api/duplicates/${id}`, json('POST', { decision })),
   removeBoard: (id: string) => request<void>(`/api/boards/${id}`, { method: 'DELETE' }),
   answers: () => request<Answer[]>('/api/answers'),
   addAnswer: (a: Omit<Answer, 'id'>) => request<Answer>('/api/answers', json('POST', a)),

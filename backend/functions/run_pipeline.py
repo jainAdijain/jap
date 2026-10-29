@@ -1,28 +1,52 @@
-"""run-pipeline (T4, T5, I7): one run. Phase 2 does the fetch; dedup, filter and apply
-steps join it in later phases.
+"""run-pipeline (T4, T5, I7, D6): one run. fetch, then dedup; filter and apply steps join
+it in later phases.
 
 Concurrency 1 across the app, so a queued run waits for the active one. Each board is
-fetched by its own fetch-board run, invoked in parallel.
+fetched by its own fetch-board run, invoked in parallel. Dedup waits (a few minutes at
+most) for new postings' embeddings, which Ollama makes in seconds, so near matches count.
 """
 
 import uuid
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import inngest
 
+from config import get_settings
+from database.models import Run
 from database.session import get_sessionmaker
 from functions.client import inngest_client
 from functions.fetch_board import fetch_board
-from pipeline.runs import finish_run, start_run
+from llm.ollama import ping_ollama
+from pipeline.dedup import dedup
+from pipeline.runs import embeddings_pending, finish_run, start_run
 from schemas.job import ATS
 from sources import ADAPTERS
 
+WAIT_ROUNDS, WAIT_SECONDS = 24, 5  # up to two minutes for embeddings
 COUNTED = ("fetched", "new", "changed", "unchanged", "reopened", "closed", "enrich_queued")
 
 
 async def start_step(run_id: str) -> list[dict[str, str]]:
     async with get_sessionmaker()() as session:
         return await start_run(session, uuid.UUID(run_id))
+
+
+async def pending_step() -> int:
+    """Postings waiting for an embedding, or 0 when Ollama is down (no point waiting)."""
+    settings = get_settings()
+    if not (await ping_ollama(settings.ollama_base_url, settings.jap_model_embed)).ok:
+        return 0
+    async with get_sessionmaker()() as session:
+        return await embeddings_pending(session)
+
+
+async def dedup_step(run_id: str) -> dict[str, Any]:
+    async with get_sessionmaker()() as session:
+        run = await session.get(Run, uuid.UUID(run_id))
+        since = run.started_at if run is not None else datetime.now(UTC)
+        counts = await dedup(session, since)
+    return counts.as_dict()
 
 
 async def finish_step(run_id: str, counts: dict[str, Any], error: str | None) -> None:
@@ -83,5 +107,10 @@ async def run_pipeline(ctx: inngest.Context) -> dict[str, Any]:
 
     results = list(await ctx.group.parallel(tuple(fetch(b) for b in boards))) if boards else []
     counts = summarize(results)
+    for i in range(WAIT_ROUNDS):
+        if not await ctx.step.run(f"embeddings-pending-{i}", pending_step):
+            break
+        await ctx.step.sleep(f"wait-embeddings-{i}", timedelta(seconds=WAIT_SECONDS))
+    counts.update(await ctx.step.run("dedup", dedup_step, run_id))
     await ctx.step.run("finish", finish_step, run_id, counts, None)
     return counts

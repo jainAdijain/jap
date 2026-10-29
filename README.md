@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.3.0 (Phase 2), 29 Oct 2026.**
+**Version 0.4.0 (Phase 3), 29 Oct 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -12,7 +12,7 @@ the [build plan](https://claude.ai/artifact/1TrqC2jt8SuPVbULa8i6eU) and the
 
 | Service | URL (127.0.0.1 only) | What it is |
 | --- | --- | --- |
-| ui | http://localhost:5173 | React + Vite UI: My profile, and a Dashboard with the status checks |
+| ui | http://localhost:5173 | React + Vite UI: My profile, and a Dashboard with jobs, possible duplicates and the status checks |
 | app | http://localhost:8001 | FastAPI JSON API and Inngest functions (`/api/health`, `/api/inngest`) |
 | inngest | http://localhost:8290 | Inngest dev server, runs every pipeline step |
 | db | localhost:5432 | Postgres 16 with pgvector, pg_trgm, pgcrypto |
@@ -50,6 +50,22 @@ extract model once per description: a re-run with unchanged postings costs nothi
 first run on a big board (some list 700+ jobs) makes one model call per job, so start with a
 few companies and watch the AI spend in My profile.
 
+## One row per job
+
+The same job is often posted on more than one board. After each run JAP groups postings into
+listings: one row per company and role, with a badge for each board. Company names are
+cleaned (Inc, Ltd, Technologies and the like are dropped, and aliases in `company_alias` map
+to one name) and titles are reduced to a canonical role (Sr becomes Senior, locations and
+work-mode words are dropped). Seniority always stays in the role, so Senior and Junior are
+two rows. Postings join a listing when they share a requisition ID, have the same canonical
+role, or are a near match (titles 90% alike and descriptions 92% alike). Pairs just below
+that bar show under **Possible duplicates** on the Dashboard for you to Merge or Keep apart.
+Merge and Split in the job panel are remembered on later runs.
+
+`make demo` loads "JAP Demo Co" with six made-up postings on a Greenhouse and a Lever board,
+so you can see grouping, a possible duplicate, Merge and Split without waiting for real
+boards. Runs skip demo boards; `make demo-clear` removes them.
+
 ## Make targets
 
 | Target | Does |
@@ -65,6 +81,7 @@ few companies and watch the AI spend in My profile.
 | `make backup` / `make restore FILE=...` | Dump to / restore from `data/backups/` |
 | `make llm-check` | One tiny test call to each OpenRouter model (no personal data) |
 | `make ollama-check` | Is Ollama answering with `nomic-embed-text` pulled |
+| `make demo` / `make demo-clear` | Load or remove the JAP Demo Co postings used to check dedup |
 
 ## Layout
 
@@ -83,6 +100,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.4.0 | 29 Oct 2026 | Phase 3: canonical company and role, dedup into listings (requisition ID, exact and near match), Possible duplicates with Merge and Keep apart, Merge and Split in the job panel remembered across runs, merged count on the last run line, `make demo` |
 | 0.3.0 | 29 Oct 2026 | Phase 2: Greenhouse, Lever and Ashby adapters, board detection from a URL or name, Find only runs (run-pipeline, fetch-board, enrich-posting), extraction cached by description hash, Closed postings, job list with the JD side panel |
 | 0.2.2 | 29 Oct 2026 | My profile: "No unsaved changes" next to a disabled Save, an inline hint when no work mode is ticked, and work modes compared as a set |
 | 0.2.1 | 29 Oct 2026 | Writer model is `anthropic/claude-sonnet-4.5` (normal calls); OpenRouter only takes `:batch` ids through its batch service |

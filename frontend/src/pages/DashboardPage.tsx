@@ -1,9 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
-import { api, type PostingPage, type Run } from '../api/client'
-import JobPanel from '../components/JobPanel'
+import { api, type Duplicate, type ListingPage, type Run } from '../api/client'
+import Duplicates from '../components/Duplicates'
+import ListingPanel from '../components/ListingPanel'
+import Platforms from '../components/Platforms'
 import RunBar from '../components/RunBar'
-import { atsLabel, shortDate } from '../format'
+import { shortDate } from '../format'
 
 const POLL_MS = 5000
 
@@ -12,7 +14,8 @@ const busy = (run: Run | null | undefined) =>
 
 export default function DashboardPage() {
   const [run, setRun] = useState<Run | null | undefined>(undefined)
-  const [page, setPage] = useState<PostingPage | null>(null)
+  const [page, setPage] = useState<ListingPage | null>(null)
+  const [pairs, setPairs] = useState<Duplicate[]>([])
   const [pageNo, setPageNo] = useState(1)
   const [q, setQ] = useState('')
   const [showClosed, setShowClosed] = useState(false)
@@ -23,12 +26,14 @@ export default function DashboardPage() {
 
   const refresh = useCallback(async () => {
     const { q, showClosed, pageNo } = query.current
-    const [latest, jobs] = await Promise.all([
+    const [latest, listings, dupes] = await Promise.all([
       api.latestRun(),
-      api.postings({ q: q.trim() || undefined, state: showClosed ? 'all' : 'open', page: pageNo }),
+      api.listings({ q: q.trim() || undefined, status: showClosed ? 'all' : 'open', page: pageNo }),
+      api.duplicates(),
     ])
     setRun(latest)
-    setPage(jobs)
+    setPage(listings)
+    setPairs(dupes)
     setError(null)
   }, [])
 
@@ -36,7 +41,7 @@ export default function DashboardPage() {
     refresh().catch((err) => setError(String(err)))
   }, [refresh, q, showClosed, pageNo])
 
-  // New jobs appear without a reload: poll while a run or its extraction is going (T2).
+  // New listings appear without a reload: poll while a run or its extraction is going (T2).
   const polling = busy(run)
   useEffect(() => {
     if (!polling) return
@@ -51,16 +56,18 @@ export default function DashboardPage() {
       setError(err instanceof Error ? err.message : String(err))
     }
   }
+  const changed = () => void refresh().catch((err) => setError(String(err)))
 
   const pages = page ? Math.max(1, Math.ceil(page.total / page.page_size)) : 1
 
   return (
     <>
       <RunBar run={run} onRun={() => void start()} />
+      <Duplicates pairs={pairs} onChanged={changed} />
       <section className="card">
         <div className="card-head">
           <h1>
-            Jobs found <span className="count">{page ? page.total : '…'}</span>
+            Jobs <span className="count">{page ? page.total : '…'}</span>
           </h1>
           <div className="list-tools">
             <label className="sr-only" htmlFor="job-search">Search title or company</label>
@@ -88,8 +95,8 @@ export default function DashboardPage() {
           </div>
         </div>
         <p className="hint">
-          Every job from your Companies to watch, newest first. Matching to your profile and
-          merging the same job across boards come in later phases.
+          One row per company and role, newest first, however many boards post it. Matching to
+          your profile comes in the next phase.
         </p>
         {error && <p className="error" role="alert">{error}</p>}
         {page && page.rows.length === 0 ? (
@@ -109,18 +116,18 @@ export default function DashboardPage() {
               </thead>
               <tbody>
                 {page?.rows.map((r) => (
-                  <tr key={r.id} className={r.state === 'closed' ? 'closed' : undefined}>
+                  <tr key={r.id} className={r.status === 'closed' ? 'closed' : undefined}>
                     <td>
                       <button type="button" className="link" onClick={() => setOpenId(r.id)}>
                         {r.title}
                       </button>
-                      {r.state === 'closed' && <span className="badge">Closed</span>}
+                      {r.status === 'closed' && <span className="badge">Closed</span>}
                     </td>
                     <td>
-                      {r.company} <span className={`ats ats-${r.source}`}>{atsLabel(r.source)}</span>
+                      {r.company} <Platforms list={r.platforms} />
                     </td>
                     <td className="col-locations">{r.locations.join(' · ') || '–'}</td>
-                    <td className="nowrap">{shortDate(r.posted_at)}</td>
+                    <td className="nowrap">{shortDate(r.last_posted_at)}</td>
                   </tr>
                 ))}
               </tbody>
@@ -141,7 +148,7 @@ export default function DashboardPage() {
           </div>
         )}
       </section>
-      {openId && <JobPanel id={openId} onClose={() => setOpenId(null)} />}
+      {openId && <ListingPanel id={openId} onClose={() => setOpenId(null)} onChanged={changed} onOpen={setOpenId} />}
     </>
   )
 }

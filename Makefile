@@ -12,7 +12,7 @@ OLLAMA_URL ?= http://127.0.0.1:11434
 EMBED_MODEL ?= nomic-embed-text
 
 .DEFAULT_GOAL := help
-.PHONY: help env start stop restart reset clean logs ps migrate seed test test-app test-ui backup restore ollama-check llm-check
+.PHONY: help env start stop restart reset clean logs ps migrate seed test test-app test-ui backup restore ollama-check llm-check demo demo-clear
 
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
@@ -59,6 +59,12 @@ migrate: ## Apply database migrations (alembic upgrade head)
 
 seed: ## Load seed/companies.yaml and seed/skills.yaml (safe to repeat)
 	$(COMPOSE) exec app python -m database.seed
+
+demo: ## Load made-up postings for checking dedup by hand (JAP Demo Co; never fetched)
+	$(COMPOSE) exec app python -m database.demo load
+
+demo-clear: ## Remove the demo postings, listings and boards
+	$(COMPOSE) exec app python -m database.demo clear
 
 test: test-app test-ui ## ruff, mypy and pytest for app; lint and build for ui
 
