@@ -1,6 +1,7 @@
-"""Companies to watch (I8, U8): the boards each run fetches, grouped by ATS in the UI.
+"""Companies to watch (I8, I9, U8): the boards each run fetches, grouped by ATS in the UI.
 
-Detecting a board from a pasted URL (POST /api/boards/detect) arrives with ingestion.
+POST /api/boards/detect turns a pasted board URL or a company name into (ATS, token) and
+checks the board answers; nothing is saved until the UI then POSTs /api/boards.
 """
 
 import uuid
@@ -11,8 +12,10 @@ from sqlalchemy import select
 from api.errors import ApiError
 from database.models import WatchedBoard
 from database.session import Session
-from schemas.board import BoardIn, BoardOut
+from schemas.board import BoardIn, BoardOut, DetectIn, DetectOut
 from schemas.job import ATS
+from sources import base
+from sources.detect import NotABoard, detect
 
 router = APIRouter(prefix="/boards", tags=["boards"])
 
@@ -25,6 +28,8 @@ def to_out(b: WatchedBoard) -> BoardOut:
         display_name=b.display_name,
         origin=b.origin,
         active=b.active,
+        last_checked_at=b.last_checked_at,
+        last_ok=b.last_ok,
     )
 
 
@@ -34,6 +39,29 @@ async def boards(session: Session) -> list[BoardOut]:
         select(WatchedBoard).where(WatchedBoard.active).order_by(WatchedBoard.display_name)
     )
     return [to_out(b) for b in rows]
+
+
+@router.post("/detect", response_model=DetectOut)
+async def detect_board(body: DetectIn, session: Session) -> DetectOut:
+    try:
+        async with base.client() as http:
+            found = await detect(http, body.text)
+    except NotABoard as exc:
+        raise ApiError(422, "not_a_board", str(exc)) from exc
+    watched = await session.scalar(
+        select(WatchedBoard.id).where(
+            WatchedBoard.ats == found.ats.value,
+            WatchedBoard.board_token == found.board_token,
+            WatchedBoard.active,
+        )
+    )
+    return DetectOut(
+        ats=found.ats,
+        board_token=found.board_token,
+        display_name=found.display_name,
+        job_count=found.job_count,
+        already_watched=watched is not None,
+    )
 
 
 @router.post("", response_model=BoardOut, status_code=201)

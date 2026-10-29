@@ -1,8 +1,8 @@
 """SQLAlchemy mappings for the tables the app writes so far.
 
 The schema itself lives in migrations/versions (0001_initial); these classes only map it.
-Tables used from Phase 2 on (company, listing, posting, application, run, ...) get their
-classes when their code arrives.
+Tables used from Phase 3 on (company, listing, application, ...) get their classes when
+their code arrives.
 """
 
 import uuid
@@ -19,6 +19,10 @@ from database.base import Base
 ATS = ENUM("greenhouse", "lever", "ashby", name="ats", create_type=False)
 WORK_MODE = ENUM("remote", "hybrid", "onsite", name="work_mode", create_type=False)
 APPLY_MODE = ENUM("review", "automatic", name="apply_mode", create_type=False)
+POSTING_STATE = ENUM("open", "closed", name="posting_state", create_type=False)
+RUN_TRIGGER = ENUM("resume_updated", "manual", "scheduled", name="run_trigger", create_type=False)
+RUN_MODE = ENUM("find_only", "find_and_apply", name="run_mode", create_type=False)
+RUN_STATUS = ENUM("queued", "running", "succeeded", "failed", name="run_status", create_type=False)
 
 
 class Timestamps:
@@ -89,6 +93,57 @@ class WatchedBoard(Timestamps, Base):
     active: Mapped[bool] = mapped_column(Boolean, server_default="true")
     last_checked_at: Mapped[datetime | None]
     last_ok: Mapped[bool | None]
+
+
+class Posting(Timestamps, Base):
+    """One job found on one board (I2, I5, I6)."""
+
+    __tablename__ = "posting"
+
+    id: Mapped[uuid.UUID] = _id()
+    source: Mapped[str] = mapped_column(ATS)
+    external_id: Mapped[str] = mapped_column(Text)
+    watched_board_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    listing_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    company_name_raw: Mapped[str] = mapped_column(Text)
+    title_raw: Mapped[str] = mapped_column(Text)
+    canonical_role: Mapped[str | None] = mapped_column(Text)
+    requisition_id: Mapped[str | None] = mapped_column(Text)
+    locations: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    department: Mapped[str | None] = mapped_column(Text)
+    employment_type: Mapped[str | None] = mapped_column(Text)
+    posted_at: Mapped[datetime | None]
+    posting_url: Mapped[str] = mapped_column(Text)
+    apply_url: Mapped[str] = mapped_column(Text)
+    description_html: Mapped[str] = mapped_column(Text)
+    description_text: Mapped[str] = mapped_column(Text)
+    description_hash: Mapped[str] = mapped_column(Text)
+    raw_payload: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    extracted: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    extracted_hash: Mapped[str | None] = mapped_column(Text)
+    # embedding (vector(768)) is written and read with plain SQL in pipeline/enrich.py.
+    embedded_hash: Mapped[str | None] = mapped_column(Text)
+    state: Mapped[str] = mapped_column(POSTING_STATE, server_default="open")
+    first_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    last_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    closed_at: Mapped[datetime | None]
+
+
+class Run(Timestamps, Base):
+    """One pipeline run (T4, T5)."""
+
+    __tablename__ = "run"
+
+    id: Mapped[uuid.UUID] = _id()
+    trigger: Mapped[str] = mapped_column(RUN_TRIGGER)
+    mode: Mapped[str] = mapped_column(RUN_MODE)
+    scope: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
+    status: Mapped[str] = mapped_column(RUN_STATUS, server_default="queued")
+    started_at: Mapped[datetime | None]
+    ended_at: Mapped[datetime | None]
+    counts: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
+    error: Mapped[str | None] = mapped_column(Text)
+    inngest_run_id: Mapped[str | None] = mapped_column(Text)
 
 
 class AnswerBank(Timestamps, Base):

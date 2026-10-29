@@ -8,9 +8,18 @@ from typing import Any
 import inngest
 
 from functions.client import inngest_client
+from functions.enrich_posting import enrich_posting
+from functions.fetch_board import fetch_board
 from functions.parse_resume import parse_resume
 from functions.ping import ping
+from functions.run_pipeline import run_pipeline
 
-ALL_FUNCTIONS: list[inngest.Function[Any]] = [ping, parse_resume]
+ALL_FUNCTIONS: list[inngest.Function[Any]] = [
+    ping,
+    parse_resume,
+    run_pipeline,
+    fetch_board,
+    enrich_posting,
+]
 
 __all__ = ["ALL_FUNCTIONS", "inngest_client"]

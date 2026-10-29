@@ -215,3 +215,42 @@ label { font-size: 14px; font-weight: 500; }
   .detail { grid-column: 2 / -1; }
   .answer { grid-template-columns: 1fr; }
 }
+
+/* Phase 2: Companies to watch detection, run bar, job list and side panel */
+.chip-warn { outline: 1px dashed var(--down); }
+.detected { margin-top: 10px; padding: 10px 12px; border-radius: 8px; background: var(--accent-soft); }
+.detected p { margin: 0 0 6px; font-size: 14px; }
+.runbar .lead { margin-top: 4px; }
+.list-tools { display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+.list-tools input[type='search'] { width: 220px; max-width: 100%; }
+.table-wrap { overflow-x: auto; margin-top: 8px; }
+table.jobs { width: 100%; border-collapse: collapse; font-size: 14px; }
+.jobs th { text-align: left; font-weight: 600; color: var(--muted); font-size: 13px; padding: 8px; border-bottom: 1px solid var(--border); }
+.jobs td { padding: 8px; border-bottom: 1px solid var(--border); vertical-align: top; }
+.jobs tr.closed td { color: var(--muted); }
+.nowrap { white-space: nowrap; }
+button.link {
+  border: none; padding: 0; min-height: 0; text-align: left; color: var(--accent-text);
+  font-weight: 500; display: inline; background: none;
+}
+button.link:hover { text-decoration: underline; }
+.ats { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--chip); color: var(--muted); white-space: nowrap; }
+.pager { display: flex; gap: 12px; align-items: center; justify-content: center; margin-top: 12px; }
+.panel-backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 0.3); display: flex; justify-content: flex-end; z-index: 10; }
+.panel {
+  width: min(560px, 100%); height: 100%; overflow-y: auto; background: var(--card);
+  border-left: 1px solid var(--border); padding: 16px 20px 40px;
+}
+.panel-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; position: sticky; top: -16px; background: var(--card); padding: 4px 0 8px; }
+.panel-head h2 { font-size: 18px; margin: 4px 0 0; }
+.panel-body section { margin-top: 16px; }
+.panel-body h3 { font-size: 15px; margin: 0 0 8px; }
+.panel .lead .badge { margin-left: 8px; }
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 8px 16px; margin: 0 0 12px; }
+.facts dt { font-size: 12px; color: var(--muted); }
+.facts dd { margin: 0; font-size: 14px; text-transform: none; }
+.jd { white-space: pre-wrap; font-size: 14px; line-height: 1.5; }
+@media (max-width: 560px) {
+  .jobs .col-locations { display: none; }
+}
+.panel a { color: var(--accent-text); }

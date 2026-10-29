@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.2.2 (Phase 1), 29 Oct 2026.**
+**Version 0.3.0 (Phase 2), 29 Oct 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -41,6 +41,15 @@ one, and `backend/llm/client.py` is the only code that talks to OpenRouter (a te
 it). Each call is logged in `llm_call` with its cost; model steps stop once this month's
 spend reaches `JAP_MONTHLY_COST_CAP_USD`.
 
+## Fetching jobs
+
+Add companies in My profile by pasting their Greenhouse, Lever or Ashby board URL (or typing
+the name), then press **Run: find only** on the Dashboard. Each board is one `fetch-board` run
+in Inngest, throttled to one request a second per ATS. Job descriptions are read by the
+extract model once per description: a re-run with unchanged postings costs nothing. The
+first run on a big board (some list 700+ jobs) makes one model call per job, so start with a
+few companies and watch the AI spend in My profile.
+
 ## Make targets
 
 | Target | Does |
@@ -74,6 +83,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.3.0 | 29 Oct 2026 | Phase 2: Greenhouse, Lever and Ashby adapters, board detection from a URL or name, Find only runs (run-pipeline, fetch-board, enrich-posting), extraction cached by description hash, Closed postings, job list with the JD side panel |
 | 0.2.2 | 29 Oct 2026 | My profile: "No unsaved changes" next to a disabled Save, an inline hint when no work mode is ticked, and work modes compared as a set |
 | 0.2.1 | 29 Oct 2026 | Writer model is `anthropic/claude-sonnet-4.5` (normal calls); OpenRouter only takes `:batch` ids through its batch service |
 | 0.2.0 | 29 Oct 2026 | Phase 1: full schema (0001_initial), My profile, resume upload and parsing, redact module, model spend log and $2 cap, Companies to watch, answer bank |
