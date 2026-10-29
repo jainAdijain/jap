@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.4.0 (Phase 3), 29 Oct 2026.**
+**Version 0.5.0 (Phase 4), 29 Oct 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -62,9 +62,29 @@ role, or are a near match (titles 90% alike and descriptions 92% alike). Pairs j
 that bar show under **Possible duplicates** on the Dashboard for you to Merge or Keep apart.
 Merge and Split in the job panel are remembered on later runs.
 
+## Which jobs are listed
+
+The Dashboard lists only the jobs that match My profile. The match rule is one or more rows
+of Role, Skills and Location: a job is listed when it meets every condition in at least one
+row (the default lists a job that meets any one). Role means the job's cleaned title contains
+one of your target roles (engineer and developer count alike); Skills means every must-have
+skill is in the job; Location means a job location names one of yours, or the job is remote
+and allows one of your Remote regions, or it is Remote - Worldwide. On top of that, the work
+mode must be one you ticked (a job that doesn't say is listed and tagged Work mode unclear),
+and excluded companies and title words are dropped.
+
+The filter is one SQL query over the stored listings (`backend/pipeline/matching.py`), so
+saving My profile updates the list in well under a second without fetching anything, and My
+profile shows how many listings your unsaved changes would match. Each row shows which
+conditions it matched. Totals and Jobs by role count each listing once (under the first
+target role it matches, or Other); the filter bar narrows the list by role, location, status
+and matched condition without changing your profile. Every run ends with the same filter.
+
 `make demo` loads "JAP Demo Co" with six made-up postings on a Greenhouse and a Lever board,
 so you can see grouping, a possible duplicate, Merge and Split without waiting for real
-boards. Runs skip demo boards; `make demo-clear` removes them.
+boards. It also loads "Globex Demo" on an Ashby board with jobs for checking the filters:
+Remote - Worldwide, Remote - US, Remote - APAC, an Intern title, an unclear work mode and a
+job in Berlin. Runs skip demo boards; `make demo-clear` removes them.
 
 ## Make targets
 
@@ -81,7 +101,7 @@ boards. Runs skip demo boards; `make demo-clear` removes them.
 | `make backup` / `make restore FILE=...` | Dump to / restore from `data/backups/` |
 | `make llm-check` | One tiny test call to each OpenRouter model (no personal data) |
 | `make ollama-check` | Is Ollama answering with `nomic-embed-text` pulled |
-| `make demo` / `make demo-clear` | Load or remove the JAP Demo Co postings used to check dedup |
+| `make demo` / `make demo-clear` | Load or remove the demo postings used to check dedup and the filters |
 
 ## Layout
 
@@ -100,6 +120,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.5.0 | 29 Oct 2026 | Phase 4: match rule as one SQL query (Role, Skills, Location, Remote regions, work mode, exclusions), re-filter on profile save and after every run, match preview on My profile, Totals and Jobs by role, filter bar (role, location, status, matched condition), matched-condition tags, Globex Demo jobs in `make demo` |
 | 0.4.0 | 29 Oct 2026 | Phase 3: canonical company and role, dedup into listings (requisition ID, exact and near match), Possible duplicates with Merge and Keep apart, Merge and Split in the job panel remembered across runs, merged count on the last run line, `make demo` |
 | 0.3.0 | 29 Oct 2026 | Phase 2: Greenhouse, Lever and Ashby adapters, board detection from a URL or name, Find only runs (run-pipeline, fetch-board, enrich-posting), extraction cached by description hash, Closed postings, job list with the JD side panel |
 | 0.2.2 | 29 Oct 2026 | My profile: "No unsaved changes" next to a disabled Save, an inline hint when no work mode is ticked, and work modes compared as a set |

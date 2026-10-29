@@ -102,6 +102,10 @@ class ProfileSaved(ProfileOut):
     matching_count: int
 
 
+class MatchPreview(BaseModel):
+    matching_count: int
+
+
 class ProfileSwitches(BaseModel):
     apply_mode: ApplyMode | None = None
     daily_run: bool | None = None

@@ -12,7 +12,7 @@ const when = (iso: string) =>
 function summary(run: Run): string {
   const c = run.counts
   if (run.status === 'queued') return 'Waiting to start…'
-  if (run.status === 'running') return 'Fetching boards and grouping duplicates…'
+  if (run.status === 'running') return 'Fetching boards, grouping duplicates and matching your profile…'
   if (run.status === 'failed') return `Failed: ${run.error ?? 'unknown error'}`
   const parts = [
     `${c.boards ?? 0} board${c.boards === 1 ? '' : 's'}`,
@@ -20,6 +20,7 @@ function summary(run: Run): string {
     `${c.new ?? 0} new`,
   ]
   if (c.merged) parts.push(`${c.merged} merged as duplicates`)
+  if (c.listed !== undefined) parts.push(`${c.listed} match your profile`)
   if (c.changed) parts.push(`${c.changed} changed`)
   if (c.closed) parts.push(`${c.closed} closed`)
   if (c.boards_failed) parts.push(`${c.boards_failed} board${c.boards_failed === 1 ? '' : 's'} failed`)

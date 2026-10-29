@@ -1,5 +1,5 @@
-"""run-pipeline (T4, T5, I7, D6): one run. fetch, then dedup; filter and apply steps join
-it in later phases.
+"""run-pipeline (T4, T5, I7, D6, F1): one run. fetch, dedup, then filter (the match rule
+on every stored listing); the apply steps join it in a later phase.
 
 Concurrency 1 across the app, so a queued run waits for the active one. Each board is
 fetched by its own fetch-board run, invoked in parallel. Dedup waits (a few minutes at
@@ -19,6 +19,7 @@ from functions.client import inngest_client
 from functions.fetch_board import fetch_board
 from llm.ollama import ping_ollama
 from pipeline.dedup import dedup
+from pipeline.matching import refilter_from_profile
 from pipeline.runs import embeddings_pending, finish_run, start_run
 from schemas.job import ATS
 from sources import ADAPTERS
@@ -47,6 +48,13 @@ async def dedup_step(run_id: str) -> dict[str, Any]:
         since = run.started_at if run is not None else datetime.now(UTC)
         counts = await dedup(session, since)
     return counts.as_dict()
+
+
+async def filter_step() -> dict[str, int]:
+    async with get_sessionmaker()() as session:
+        listed = await refilter_from_profile(session)
+        await session.commit()
+    return {"listed": listed}
 
 
 async def finish_step(run_id: str, counts: dict[str, Any], error: str | None) -> None:
@@ -112,5 +120,6 @@ async def run_pipeline(ctx: inngest.Context) -> dict[str, Any]:
             break
         await ctx.step.sleep(f"wait-embeddings-{i}", timedelta(seconds=WAIT_SECONDS))
     counts.update(await ctx.step.run("dedup", dedup_step, run_id))
+    counts.update(await ctx.step.run("filter", filter_step))
     await ctx.step.run("finish", finish_step, run_id, counts, None)
     return counts

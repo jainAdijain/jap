@@ -60,7 +60,7 @@ migrate: ## Apply database migrations (alembic upgrade head)
 seed: ## Load seed/companies.yaml and seed/skills.yaml (safe to repeat)
 	$(COMPOSE) exec app python -m database.seed
 
-demo: ## Load made-up postings for checking dedup by hand (JAP Demo Co; never fetched)
+demo: ## Load made-up postings for checking dedup and filters by hand (never fetched)
 	$(COMPOSE) exec app python -m database.demo load
 
 demo-clear: ## Remove the demo postings, listings and boards

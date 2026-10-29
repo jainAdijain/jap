@@ -1,15 +1,16 @@
 """GET, PUT and PATCH /api/profile (U7 to U10)."""
 
 from fastapi import APIRouter
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import Profile
 from database.session import Session
 from functions.events import send
 from llm.spend import month_spend
+from pipeline.matching import Criteria, preview_count, refilter
 from pipeline.resume import normalize_skills, skill_aliases
-from schemas.profile import ProfileIn, ProfileOut, ProfileSaved, ProfileSwitches
+from schemas.profile import MatchPreview, ProfileIn, ProfileOut, ProfileSaved, ProfileSwitches
 
 router = APIRouter(prefix="/profile", tags=["profile"])
 
@@ -43,9 +44,8 @@ async def get_profile(session: Session) -> ProfileOut:
     return await to_out(session, await load_profile(session))
 
 
-@router.put("", response_model=ProfileSaved)
-async def save_profile(body: ProfileIn, session: Session) -> ProfileSaved:
-    profile = await load_profile(session)
+async def normalized(session: AsyncSession, body: ProfileIn) -> dict[str, object]:
+    """The profile as it is stored: skills through skill_alias, nice-to-have minus must-have."""
     aliases = await skill_aliases(session)
     data = body.model_dump(mode="json")
     data["must_have_skills"] = normalize_skills(body.must_have_skills, aliases)
@@ -54,15 +54,30 @@ async def save_profile(body: ProfileIn, session: Session) -> ProfileSaved:
         for s in normalize_skills(body.nice_to_have_skills, aliases)
         if s not in data["must_have_skills"]
     ]
-    for field, value in data.items():
+    return data
+
+
+@router.put("", response_model=ProfileSaved)
+async def save_profile(body: ProfileIn, session: Session) -> ProfileSaved:
+    """Save, then re-filter the stored listings at once (T2, F1): no fetch is needed."""
+    profile = await load_profile(session)
+    for field, value in (await normalized(session, body)).items():
         setattr(profile, field, value)
+    await session.flush()
+    matching = await refilter(session, Criteria.of(profile))
     await session.commit()
     await session.refresh(profile)
-    # Listings get their match flags from Phase 4 on; until then nothing is listed.
-    matching = await session.scalar(text("SELECT count(*) FROM listing WHERE matched IS NOT NULL"))
     await send("profile/saved")
     out = await to_out(session, profile)
-    return ProfileSaved(**out.model_dump(), matching_count=int(matching or 0))
+    return ProfileSaved(**out.model_dump(), matching_count=matching)
+
+
+@router.post("/preview", response_model=MatchPreview)
+async def preview(body: ProfileIn, session: Session) -> MatchPreview:
+    """How many listings these settings would list, before saving (U10). Saves nothing."""
+    data = await normalized(session, body)
+    criteria = Criteria.of(ProfileIn.model_validate(data))
+    return MatchPreview(matching_count=await preview_count(session, criteria))
 
 
 @router.patch("", response_model=ProfileOut)
