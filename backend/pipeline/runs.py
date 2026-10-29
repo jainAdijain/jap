@@ -8,11 +8,11 @@ import uuid
 from datetime import UTC, datetime
 from typing import Any
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import Run, WatchedBoard
+from database.models import Posting, Run, WatchedBoard
 
 
 async def queue_run(
@@ -43,7 +43,11 @@ async def start_run(session: AsyncSession, run_id: uuid.UUID) -> list[dict[str, 
     if run.status == "queued":
         run.status = "running"
         run.started_at = datetime.now(UTC)
-    query = select(WatchedBoard).where(WatchedBoard.active).order_by(WatchedBoard.display_name)
+    query = (
+        select(WatchedBoard)
+        .where(WatchedBoard.active, WatchedBoard.origin != "demo")  # demo boards hold fixtures
+        .order_by(WatchedBoard.display_name)
+    )
     board_ids = (run.scope or {}).get("board_ids")
     if board_ids:
         query = query.where(WatchedBoard.id.in_([uuid.UUID(b) for b in board_ids]))
@@ -63,3 +67,16 @@ async def finish_run(
     run.counts = {**(run.counts or {}), **counts}
     run.error = error
     await session.commit()
+
+
+async def embeddings_pending(session: AsyncSession) -> int:
+    """Open postings still waiting for their embedding (near-match dedup needs it)."""
+    count = await session.scalar(
+        select(func.count())
+        .select_from(Posting)
+        .where(
+            Posting.state == "open",
+            Posting.embedded_hash.is_distinct_from(Posting.description_hash),
+        )
+    )
+    return int(count or 0)

@@ -1,8 +1,7 @@
 """SQLAlchemy mappings for the tables the app writes so far.
 
 The schema itself lives in migrations/versions (0001_initial); these classes only map it.
-Tables used from Phase 3 on (company, listing, application, ...) get their classes when
-their code arrives.
+Tables used from Phase 4 on (application, ...) get their classes when their code arrives.
 """
 
 import uuid
@@ -22,6 +21,10 @@ APPLY_MODE = ENUM("review", "automatic", name="apply_mode", create_type=False)
 POSTING_STATE = ENUM("open", "closed", name="posting_state", create_type=False)
 RUN_TRIGGER = ENUM("resume_updated", "manual", "scheduled", name="run_trigger", create_type=False)
 RUN_MODE = ENUM("find_only", "find_and_apply", name="run_mode", create_type=False)
+LISTING_STATUS = ENUM(
+    "not_applied", "ready_for_review", "applying", "applied", "needs_input", "failed",
+    "manual_apply", "skipped", "closed", name="listing_status", create_type=False,
+)  # fmt: skip
 RUN_STATUS = ENUM("queued", "running", "succeeded", "failed", name="run_status", create_type=False)
 
 
@@ -93,6 +96,73 @@ class WatchedBoard(Timestamps, Base):
     active: Mapped[bool] = mapped_column(Boolean, server_default="true")
     last_checked_at: Mapped[datetime | None]
     last_ok: Mapped[bool | None]
+
+
+class Company(Timestamps, Base):
+    """Canonical company: one row however many boards and spellings it has."""
+
+    __tablename__ = "company"
+
+    id: Mapped[uuid.UUID] = _id()
+    name: Mapped[str] = mapped_column(Text)
+    canonical_name: Mapped[str] = mapped_column(Text, unique=True)
+    careers_domain: Mapped[str | None] = mapped_column(Text, unique=True)
+
+
+class CompanyAlias(Timestamps, Base):
+    __tablename__ = "company_alias"
+
+    alias: Mapped[str] = mapped_column(Text, primary_key=True)
+    company_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    origin: Mapped[str] = mapped_column(Text)  # auto or user
+
+
+class Listing(Timestamps, Base):
+    """One company plus one role (D1 to D4); what the dashboard shows."""
+
+    __tablename__ = "listing"
+
+    id: Mapped[uuid.UUID] = _id()
+    company_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    canonical_role: Mapped[str] = mapped_column(Text)
+    title_display: Mapped[str] = mapped_column(Text)
+    locations: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    work_mode: Mapped[str | None] = mapped_column(WORK_MODE)
+    remote_regions: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    skills: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    seniority: Mapped[str | None] = mapped_column(Text)
+    primary_posting_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    status: Mapped[str] = mapped_column(LISTING_STATUS, server_default="not_applied")
+    matched: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    first_posted_at: Mapped[datetime | None]
+    last_posted_at: Mapped[datetime | None]
+    applied_at: Mapped[datetime | None]
+    closed_at: Mapped[datetime | None]
+
+
+class DedupOverride(Timestamps, Base):
+    """A merge or split I chose (D5), remembered by posting so it survives later runs."""
+
+    __tablename__ = "dedup_override"
+
+    id: Mapped[uuid.UUID] = _id()
+    kind: Mapped[str] = mapped_column(Text)  # merge or split
+    posting_source: Mapped[str] = mapped_column(ATS)
+    posting_external_id: Mapped[str] = mapped_column(Text)
+    listing_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+
+
+class PossibleDuplicate(Timestamps, Base):
+    """A borderline pair for me to merge or keep apart (Near match)."""
+
+    __tablename__ = "possible_duplicate"
+
+    id: Mapped[uuid.UUID] = _id()
+    kind: Mapped[str] = mapped_column(Text)  # company or listing
+    a_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    b_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    scores: Mapped[dict[str, Any]] = mapped_column(JSONB)
+    decision: Mapped[str] = mapped_column(Text, server_default="open")
 
 
 class Posting(Timestamps, Base):

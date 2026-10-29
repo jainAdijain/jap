@@ -254,3 +254,14 @@ button.link:hover { text-decoration: underline; }
   .jobs .col-locations { display: none; }
 }
 .panel a { color: var(--accent-text); }
+
+/* Phase 3: listings, Also on, Merge and Split, Possible duplicates */
+.platforms { display: inline-flex; gap: 4px; flex-wrap: wrap; vertical-align: middle; }
+.platform-count { background: var(--accent-soft); color: var(--accent-text); font-weight: 600; }
+.also-on { list-style: none; padding: 0; margin: 0; display: grid; gap: 8px; }
+.also-on li { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 8px 0; border-bottom: 1px solid var(--border); }
+.merge-row { margin-top: 12px; }
+.merge-row select { flex: 1 1 0; min-width: 0; max-width: 100%; }
+.dupes { list-style: none; padding: 0; margin: 8px 0 0; display: grid; gap: 12px; }
+.dupes li { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 0; border-top: 1px solid var(--border); }
+.dupe-sides { display: grid; gap: 6px; min-width: 0; }

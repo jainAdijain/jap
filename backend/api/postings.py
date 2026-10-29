@@ -1,6 +1,5 @@
-"""The raw job list (Phase 2): every posting fetched, before dedup turns them into listings.
-
-From Phase 4 the dashboard reads /api/listings instead; this stays as the per-board view.
+"""Postings: one job on one board. The dashboard lists listings (api/listings.py); this is
+the raw per-board view, the JD detail of one posting, and Split (D5).
 Jobs of a company I stopped watching are left out (they are kept, just no longer shown).
 """
 
@@ -12,8 +11,10 @@ from sqlalchemy import ColumnElement, func, or_, select
 from api.errors import ApiError
 from database.models import Posting, WatchedBoard
 from database.session import Session
+from pipeline.dedup import DedupConflict, split_posting
 from schemas.extract import Extracted
 from schemas.job import ATS
+from schemas.listing import SplitOut
 from schemas.posting import PostingDetail, PostingPage, PostingRow
 
 router = APIRouter(prefix="/postings", tags=["postings"])
@@ -65,11 +66,7 @@ async def postings(
     )
 
 
-@router.get("/{posting_id}", response_model=PostingDetail)
-async def posting(posting_id: uuid.UUID, session: Session) -> PostingDetail:
-    p = await session.get(Posting, posting_id)
-    if p is None:
-        raise ApiError(404, "not_found", "No such job")
+def detail(p: Posting) -> PostingDetail:
     return PostingDetail(
         **_row(p).model_dump(),
         department=p.department,
@@ -81,3 +78,23 @@ async def posting(posting_id: uuid.UUID, session: Session) -> PostingDetail:
         fields=Extracted.model_validate(p.extracted) if p.extracted else None,
         closed_at=p.closed_at,
     )
+
+
+@router.get("/{posting_id}", response_model=PostingDetail)
+async def posting(posting_id: uuid.UUID, session: Session) -> PostingDetail:
+    p = await session.get(Posting, posting_id)
+    if p is None:
+        raise ApiError(404, "not_found", "No such job")
+    return detail(p)
+
+
+@router.post("/{posting_id}/split", response_model=SplitOut)
+async def split(posting_id: uuid.UUID, session: Session) -> SplitOut:
+    """Split this posting out of its listing (D5); remembered on later runs."""
+    try:
+        listing_id = await split_posting(session, posting_id)
+    except LookupError as exc:
+        raise ApiError(404, "not_found", str(exc)) from exc
+    except DedupConflict as exc:
+        raise ApiError(409, "conflict", str(exc)) from exc
+    return SplitOut(listing_id=listing_id)
