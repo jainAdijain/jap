@@ -3,7 +3,8 @@
 A field is matched to name, first name, last name, email, phone, LinkedIn, GitHub, website
 or location by its label and input type. The resume file goes into a file field labelled
 resume or CV. Questions only I can answer (notice period, salary, start date, work
-authorisation, relocation) are spotted here too, so no model is asked to invent them.
+authorisation, relocation) are spotted here too, so no model is asked to invent them, and
+so is a cover letter field, which pipeline/cover_letter.py fills.
 """
 
 import re
@@ -94,7 +95,9 @@ def is_resume_field(f: FormField) -> bool:
 
 
 def is_cover_letter_field(f: FormField) -> bool:
-    return bool(COVER_LETTER.search(f.label) or COVER_LETTER.search(f.key))
+    """A field that takes the letter itself: a file, or text to paste (C4)."""
+    named = bool(COVER_LETTER.search(f.label) or COVER_LETTER.search(f.key))
+    return named and f.type in ("file", "text", "textarea")
 
 
 def needs_my_fact(f: FormField) -> bool:

@@ -237,6 +237,15 @@ export type ApplicationStatus =
   | 'needs_input'
   | 'failed'
   | 'cancelled'
+export type Claim = { claim: string; found: boolean; evidence: string }
+export type CoverLetter = {
+  text: string
+  words: number
+  source: 'generated' | 'you'
+  as_file: boolean
+  has_pdf: boolean
+  claims: Claim[]
+}
 export type Application = {
   id: string
   listing_id: string
@@ -249,6 +258,7 @@ export type Application = {
   fields: FormField[]
   pending: Pending[]
   cover_letter_text: string | null
+  cover_letter: CoverLetter | null
   error: string | null
   submitted_at: string | null
   email_sent_at: string | null
@@ -327,13 +337,13 @@ export const api = {
   applyNow: (id: string) => request<{ listing_id: string; queued: boolean }>(`/api/listings/${id}/apply`, json('POST', {})),
   skip: (id: string) => request<ListingDetail>(`/api/listings/${id}/skip`, json('POST', {})),
   unskip: (id: string) => request<ListingDetail>(`/api/listings/${id}/unskip`, json('POST', {})),
-  editAnswers: (appId: string, answers: Record<string, string>) =>
-    request<Application>(`/api/applications/${appId}`, json('PUT', { answers })),
+  editAnswers: (appId: string, answers: Record<string, string>, coverLetter?: string) =>
+    request<Application>(`/api/applications/${appId}`, json('PUT', { answers, cover_letter: coverLetter ?? null })),
   approve: (appId: string) => request<Application>(`/api/applications/${appId}/approve`, json('POST', {})),
   answer: (appId: string, answers: Record<string, string>, saveToBank: boolean) =>
     request<Application>(`/api/applications/${appId}/answer`, json('POST', { answers, save_to_bank: saveToBank })),
   retry: (appId: string) => request<{ listing_id: string; queued: boolean }>(`/api/applications/${appId}/retry`, json('POST', {})),
-  fileUrl: (kind: 'screenshot' | 'trace', appId: string) => `${API_URL}/api/files/${kind}/${appId}`,
+  fileUrl: (kind: 'screenshot' | 'trace' | 'cover_letter', appId: string) => `${API_URL}/api/files/${kind}/${appId}`,
   duplicates: () => request<Duplicate[]>('/api/duplicates'),
   decide: (id: string, decision: 'merged' | 'kept_apart') =>
     request<void>(`/api/duplicates/${id}`, json('POST', { decision })),

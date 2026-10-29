@@ -33,6 +33,7 @@ from llm.client import ModelCallError
 from pipeline.apply import fields as rules
 from pipeline.apply.answers import bank_answer, draft_answer, pick_option
 from pipeline.apply.form import FormField, FormRead, Upload, read_form, submit_form
+from pipeline.cover_letter import LetterFailed, generate, upload_name, write_pdf
 from pipeline.resume import sensitive_from_profile
 from pipeline.runs import in_scope, role_matcher
 
@@ -164,7 +165,9 @@ async def save_form(session: AsyncSession, app_id: str, read: FormRead) -> None:
 
 @dataclass
 class Mapped:
-    status: str  # ready_for_review, needs_input or applying (Automatic mode)
+    # ready_for_review, needs_input, applying (Automatic mode), or cover_letter: a required
+    # cover letter field has no letter yet, so the cover-letter step runs next
+    status: str
     drafted: int
     pending: int
 
@@ -191,12 +194,20 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
     out: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     drafted = 0
+    need_letter = False
     for f in form_of(app):
         prev = old.get(f.key, {})
         entry: dict[str, Any] = {**f.as_dict(), "filled_from": ""}
         value: str | None = None
         source = ""
-        if prev.get("filled_from") == "you" and (app.answers or {}).get(f.key):
+        if rules.is_cover_letter_field(f):
+            # Only a mandatory field gets a letter (C1); an optional one stays empty.
+            if f.required and app.cover_letter_text:
+                value = letter_value(f, app, company.name if company else "", profile)
+                source = "you" if prev.get("filled_from") == "you" else "cover_letter"
+            elif f.required:
+                need_letter = True
+        elif prev.get("filled_from") == "you" and (app.answers or {}).get(f.key):
             value, source = str((app.answers or {})[f.key]), "you"
         elif contact := (rules.contact_value(f, profile) if profile else None):
             source, value = f"profile:{contact[0]}", contact[1]
@@ -205,9 +216,7 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
         elif f.type == "file":
             if f.required:
                 pending.append({"key": f.key, "label": f.label, "blocked": True,
-                                "reason": "The form needs a file JAP doesn't have"
-                                + (" (cover letters arrive in the next phase)"
-                                   if rules.is_cover_letter_field(f) else "")})  # fmt: skip
+                                "reason": "The form needs a file JAP doesn't have"})  # fmt: skip
         elif (saved := await bank_answer(session, f.label)) is not None:
             choice = f.type in CHOICE and bool(f.options)
             picked = pick_option(saved.answer, f.options) if choice else None
@@ -221,10 +230,6 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
                 saved.last_used_at = datetime.now(UTC)
         elif not f.required:
             pass  # optional fields only when an answer already exists
-        elif rules.is_cover_letter_field(f):
-            pending.append({"key": f.key, "label": f.label,
-                            "reason": "A cover letter is required (JAP writes them from the next "
-                            "phase); paste one here"})  # fmt: skip
         elif rules.needs_my_fact(f):
             pending.append({"key": f.key, "label": f.label, "options": f.options,
                             "reason": "Only you know this"})  # fmt: skip
@@ -264,6 +269,16 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
     pending = captcha + pending
     app.form_fields = out
     app.answers = answers
+    if need_letter:  # the cover-letter step writes it, then settles the status
+        app.pending_questions = pending or None
+        await session.commit()
+        return Mapped(status="cover_letter", drafted=drafted, pending=len(pending))
+    await settle(session, app, pending)
+    return Mapped(status=app.status, drafted=drafted, pending=len(pending))
+
+
+async def settle(session: AsyncSession, app: Application, pending: list[dict[str, Any]]) -> None:
+    """Needs input when anything is pending, else Ready for review (or applying)."""
     app.pending_questions = pending or None
     if pending:
         app.status = "needs_input"
@@ -277,7 +292,107 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
     elif app.status == "ready_for_review" and app.run_id:
         await bump(session, app.run_id, "ready_for_review")
     await session.commit()
-    return Mapped(status=app.status, drafted=drafted, pending=len(pending))
+
+
+def letter_fields(app: Application) -> list[dict[str, Any]]:
+    return [f for f in app.form_fields or []
+            if f["required"] and rules.is_cover_letter_field(FormField(
+                key=f["key"], label=f["label"], type=f["type"], required=True))]  # fmt: skip
+
+
+def letter_value(f: FormField, app: Application, company: str, profile: Profile | None) -> str:
+    """What a cover letter field holds: the text itself, or the PDF's file name."""
+    if f.type == "file":
+        return upload_name(profile.full_name if profile else None, company)
+    return app.cover_letter_text or ""
+
+
+async def set_letter(session: AsyncSession, app: Application, text: str, *, source: str) -> None:
+    """Keep a letter on the application (written by JAP, or mine): its text, the PDF built
+    from it, and every cover letter field filled with it. The caller commits."""
+    listing = await session.get(Listing, app.listing_id)
+    assert listing is not None
+    company = await session.get(Company, listing.company_id)
+    profile = await session.scalar(select(Profile))
+    company_name = company.name if company else ""
+    title = str((app.jd_snapshot or {}).get("title") or listing.title_display)
+    app.cover_letter_text = text.strip()
+    contact = " · ".join(v for v in [profile.email, profile.phone] if v) if profile else ""
+    path = await write_pdf(
+        data_path("cover_letters", f"{app.id}.pdf"),
+        app.cover_letter_text,
+        name=(profile.full_name if profile else None) or "",
+        contact=contact,
+        company=company_name,
+        title=title,
+    )
+    app.cover_letter_path = str(path)
+    answers = dict(app.answers or {})
+    out = []
+    keys = {f["key"] for f in letter_fields(app)}
+    for f in app.form_fields or []:
+        if f["key"] in keys:
+            ff = FormField(key=f["key"], label=f["label"], type=f["type"], required=True)
+            answers[f["key"]] = letter_value(ff, app, company_name, profile)
+            f = {**f, "filled_from": source}
+        out.append(f)
+    app.form_fields = out
+    app.answers = answers
+
+
+async def write_cover_letter(session: AsyncSession, app_id: str) -> dict[str, Any]:
+    """cover-letter (C1 to C6): write the letter for the mandatory field, check its claims
+    against the resume, regenerate once, then settle the status. Two failures add a Needs
+    input question instead, so nothing is sent without the required letter. Returns what
+    the Inngest UI may show: the redacted prompt's start, never the letter or my name."""
+    app = await _app(session, app_id)
+    if app.status != "preparing":
+        raise Stop(f"application is {app.status}")
+    fields = letter_fields(app)
+    pending = list(app.pending_questions or [])
+    if not fields or app.cover_letter_text:
+        await settle(session, app, pending)
+        return {"status": app.status, "letter": "not needed"}
+    profile = await session.scalar(select(Profile))
+    listing = await session.get(Listing, app.listing_id)
+    resume = await session.get(ResumeVersion, app.resume_version_id)
+    assert listing is not None and resume is not None
+    company = await session.get(Company, listing.company_id)
+    jd = app.jd_snapshot or {}
+    try:
+        letter = await generate(
+            session,
+            company=company.name if company else "",
+            title=str(jd.get("title") or listing.title_display),
+            role=listing.canonical_role,
+            jd_text=str(jd.get("text") or ""),
+            resume_text=resume.text or "",
+            tone_note=profile.tone_note if profile else None,
+            sensitive=sensitive_from_profile(profile),
+        )
+    except LetterFailed as exc:
+        app = await _app(session, app_id)
+        f = fields[0]
+        pending.append({"key": f["key"], "label": f["label"],
+                        "reason": "JAP could not write a cover letter that passed the resume "
+                        f"check twice ({exc}). Paste your own letter here, or Skip."})  # fmt: skip
+        await settle(session, app, pending)
+        return {"status": app.status, "letter": "failed twice", "error": str(exc)[:500]}
+    app = await _app(session, app_id)
+    app.claim_check = letter.claims
+    await set_letter(session, app, letter.text, source="cover_letter")
+    await settle(session, app, pending)
+    return {
+        "status": app.status,
+        "letter": "written",
+        "attempts": letter.attempts,
+        "words": len(letter.text.split()),
+        "claims_checked": len(letter.claims),
+        "format": "pdf" if any(f["type"] == "file" for f in fields) else "text",
+        "prompt_sent_to_model": letter.prompt_excerpt,
+        "placeholders_in_prompt": letter.placeholders,
+        "name_filled_in_locally": "[NAME]" not in letter.text,
+    }
 
 
 async def status_of(session: AsyncSession, app_id: str) -> str:
@@ -322,6 +437,10 @@ async def wait_before_submit(session: AsyncSession, now: datetime) -> datetime |
     return None
 
 
+def _file_letters(app: Application) -> list[str]:
+    return [f["key"] for f in letter_fields(app) if f["type"] == "file"]
+
+
 class SubmitRetry(Exception):
     """Submit failed before the button was pressed: safe to try again."""
 
@@ -355,6 +474,10 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     assert resume is not None
     upload = Upload(Path(resume.file_path), resume.original_name, resume.mime)
     files = {f["key"]: upload for f in app.form_fields or [] if f.get("filled_from") == "resume"}
+    for key in _file_letters(app) if app.cover_letter_path else []:
+        assert app.cover_letter_path is not None
+        name = answers.get(key) or "Cover-Letter.pdf"
+        files[key] = Upload(Path(app.cover_letter_path), name, "application/pdf")
     shot = data_path("screenshots", f"{app_id}.png")
     trace = data_path("traces", f"{app_id}.zip")
     result = await submit_form(url, fields, answers, files, shot, trace)

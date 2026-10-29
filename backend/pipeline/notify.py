@@ -67,6 +67,8 @@ async def build(session: AsyncSession, app_id: uuid.UUID) -> Mail | None:
         f"Frozen JD in JAP: {panel}",
     ]
     letter = Path(app.cover_letter_path) if app.cover_letter_path else None
+    if letter is not None and letter.exists():
+        lines += ["", "Cover letter: attached, exactly as sent"]
     return Mail(
         to=profile.email,
         subject=f"Applied: {title} at {company_name}",

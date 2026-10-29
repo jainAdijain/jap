@@ -18,11 +18,14 @@ from database.models import Application, Listing, ResumeVersion
 from database.session import Session
 from functions.events import send
 from pipeline.apply.answers import save_to_bank
+from pipeline.apply.flow import letter_fields, set_letter
 from schemas.application import (
     AnswerQuestionsIn,
     AnswersIn,
     ApplicationOut,
     ApplyQueued,
+    ClaimOut,
+    CoverLetterOut,
     FieldOut,
     FrozenJd,
     PendingOut,
@@ -43,6 +46,20 @@ def _inside_data(path: str | None) -> bool:
 
 async def _listing_to(session: AsyncSession, listing_id: uuid.UUID, status: str) -> None:
     await session.execute(update(Listing).where(Listing.id == listing_id).values(status=status))
+
+
+def _letter_out(app: Application) -> CoverLetterOut | None:
+    if not app.cover_letter_text:
+        return None
+    fields = letter_fields(app)
+    return CoverLetterOut(
+        text=app.cover_letter_text,
+        words=len(app.cover_letter_text.split()),
+        source="you" if any(f.get("filled_from") == "you" for f in fields) else "generated",
+        as_file=any(f["type"] == "file" for f in fields),
+        has_pdf=_exists(app.cover_letter_path),
+        claims=[ClaimOut.model_validate(c) for c in app.claim_check or []],
+    )
 
 
 async def to_out(session: AsyncSession, app: Application) -> ApplicationOut:
@@ -85,6 +102,7 @@ async def to_out(session: AsyncSession, app: Application) -> ApplicationOut:
         ],
         pending=[PendingOut.model_validate(q) for q in app.pending_questions or []],
         cover_letter_text=app.cover_letter_text,
+        cover_letter=_letter_out(app),
         error=app.error,
         submitted_at=app.submitted_at,
         email_sent_at=app.email_sent_at,
@@ -131,11 +149,18 @@ async def one(app_id: uuid.UUID, session: Session) -> ApplicationOut:
 
 @router.put("/applications/{app_id}", response_model=ApplicationOut)
 async def edit(app_id: uuid.UUID, body: AnswersIn, session: Session) -> ApplicationOut:
-    """Edit answers while Ready for review (C5)."""
+    """Edit answers and the cover letter while Ready for review (C5)."""
     app = await get_app(session, app_id, lock=True)
     _require(app, "ready_for_review", "Answers can be edited")
-    editable = {f["key"] for f in app.form_fields or [] if f["type"] != "file"}
+    letter_keys = {f["key"] for f in letter_fields(app)}
+    editable = {f["key"] for f in app.form_fields or [] if f["type"] != "file"} - letter_keys
     _set_answers(app, body.answers, editable)
+    if body.cover_letter is not None and body.cover_letter.strip() != app.cover_letter_text:
+        if not letter_keys:
+            raise ApiError(422, "validation", "This form has no cover letter field")
+        if not body.cover_letter.strip():
+            raise ApiError(422, "validation", "The form requires a cover letter; it can't be empty")
+        await set_letter(session, app, body.cover_letter, source="you")
     await session.commit()
     await session.refresh(app)
     return await to_out(session, app)
@@ -172,8 +197,11 @@ async def answer(app_id: uuid.UUID, body: AnswerQuestionsIn, session: Session) -
     if empty:
         raise ApiError(422, "validation", f"Answer every question: {'; '.join(empty)}")
     _set_answers(app, given, {q["key"] for q in pending})
-    if body.save_to_bank:
-        for q in pending:
+    letter_keys = {f["key"] for f in letter_fields(app)}
+    for q in pending:
+        if q["key"] in letter_keys:  # my own letter, after JAP's failed twice (C6)
+            await set_letter(session, app, given[q["key"]], source="you")
+        elif body.save_to_bank:
             await save_to_bank(session, q["label"], given[q["key"]])
     app.status = "preparing"
     app.pending_questions = [q for q in app.pending_questions or [] if q.get("key") == "captcha"]
@@ -202,13 +230,17 @@ async def retry(app_id: uuid.UUID, session: Session) -> ApplyQueued:
 
 @router.get("/files/{kind}/{app_id}")
 async def file(kind: str, app_id: uuid.UUID, session: Session) -> FileResponse:
-    """A screenshot or Playwright trace from data/ (U14, U15)."""
+    """A screenshot, Playwright trace or cover letter PDF from data/ (U14, U15)."""
     app = await get_app(session, app_id)
-    path = {"screenshot": app.screenshot_path, "trace": app.trace_path}.get(kind)
-    if kind not in ("screenshot", "trace"):
+    paths = {
+        "screenshot": (app.screenshot_path, "image/png"),
+        "trace": (app.trace_path, "application/zip"),
+        "cover_letter": (app.cover_letter_path, "application/pdf"),
+    }
+    if kind not in paths:
         raise ApiError(404, "not_found", "No such file kind")
+    path, media = paths[kind]
     if not _inside_data(path):
-        raise ApiError(404, "not_found", f"No {kind} for this application")
-    media = "image/png" if kind == "screenshot" else "application/zip"
+        raise ApiError(404, "not_found", f"No {kind.replace('_', ' ')} for this application")
     assert path is not None
     return FileResponse(path, media_type=media, filename=Path(path).name)
