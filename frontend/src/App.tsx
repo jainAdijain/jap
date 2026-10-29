@@ -1,12 +1,13 @@
 import { useState } from 'react'
 
+import DashboardPage from './pages/DashboardPage'
 import ProfilePage from './pages/ProfilePage'
 import StatusPage from './pages/StatusPage'
 
 type Tab = 'dashboard' | 'profile'
 
 export default function App() {
-  const [tab, setTab] = useState<Tab>('profile')
+  const [tab, setTab] = useState<Tab>('dashboard')
   return (
     <div className="shell">
       <header className="topbar">
@@ -34,12 +35,7 @@ export default function App() {
       <main>
         {tab === 'dashboard' ? (
           <>
-            <section className="card">
-              <h1>Dashboard</h1>
-              <p className="muted">
-                Jobs show up here from Phase 2, once JAP fetches the boards in Companies to watch.
-              </p>
-            </section>
+            <DashboardPage />
             <StatusPage />
           </>
         ) : (

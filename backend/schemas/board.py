@@ -1,3 +1,4 @@
+from datetime import datetime
 from uuid import UUID
 
 from pydantic import BaseModel, Field
@@ -15,3 +16,17 @@ class BoardOut(BoardIn):
     id: UUID
     origin: str
     active: bool
+    last_checked_at: datetime | None = None
+    last_ok: bool | None = None
+
+
+class DetectIn(BaseModel):
+    text: str = Field(min_length=1, max_length=500)
+
+
+class DetectOut(BaseModel):
+    ats: ATS
+    board_token: str
+    display_name: str
+    job_count: int
+    already_watched: bool

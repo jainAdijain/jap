@@ -1,0 +1,87 @@
+"""run-pipeline (T4, T5, I7): one run. Phase 2 does the fetch; dedup, filter and apply
+steps join it in later phases.
+
+Concurrency 1 across the app, so a queued run waits for the active one. Each board is
+fetched by its own fetch-board run, invoked in parallel.
+"""
+
+import uuid
+from typing import Any
+
+import inngest
+
+from database.session import get_sessionmaker
+from functions.client import inngest_client
+from functions.fetch_board import fetch_board
+from pipeline.runs import finish_run, start_run
+from schemas.job import ATS
+from sources import ADAPTERS
+
+COUNTED = ("fetched", "new", "changed", "unchanged", "reopened", "closed", "enrich_queued")
+
+
+async def start_step(run_id: str) -> list[dict[str, str]]:
+    async with get_sessionmaker()() as session:
+        return await start_run(session, uuid.UUID(run_id))
+
+
+async def finish_step(run_id: str, counts: dict[str, Any], error: str | None) -> None:
+    async with get_sessionmaker()() as session:
+        await finish_run(session, uuid.UUID(run_id), counts, error)
+
+
+async def _failed(ctx: inngest.Context) -> None:
+    original = ctx.event.data.get("event")
+    data = original.get("data") if isinstance(original, dict) else None
+    run_id = data.get("run_id") if isinstance(data, dict) else None
+    error = ctx.event.data.get("error")
+    message = error.get("message") if isinstance(error, dict) else None
+    if isinstance(run_id, str):
+        await finish_step(run_id, {}, message or "Run failed after retries")
+
+
+def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
+    counts: dict[str, Any] = {k: 0 for k in COUNTED}
+    counts["boards"] = len(results)
+    counts["boards_failed"] = 0
+    errors: list[str] = []
+    for r in results:
+        if not r.get("ok"):
+            counts["boards_failed"] += 1
+            errors.append(str(r.get("error") or "fetch failed"))
+            continue
+        for k in COUNTED:
+            counts[k] += int(r.get(k) or 0)
+    if errors:
+        counts["board_errors"] = errors[:20]
+    return counts
+
+
+@inngest_client.create_function(
+    fn_id="run-pipeline",
+    trigger=inngest.TriggerEvent(event="run/requested"),
+    concurrency=[inngest.Concurrency(limit=1)],
+    retries=2,
+    on_failure=_failed,
+)
+async def run_pipeline(ctx: inngest.Context) -> dict[str, Any]:
+    run_id = str(ctx.event.data["run_id"])
+    boards = await ctx.step.run("start", start_step, run_id)
+
+    def fetch(board: dict[str, str]) -> Any:
+        async def go() -> dict[str, Any]:
+            data = {"run_id": run_id, "board_id": board["board_id"],
+                    "host": ADAPTERS[ATS(board["ats"])].host}  # fmt: skip
+            try:
+                return await ctx.step.invoke(
+                    f"fetch-{board['board_id']}", function=fetch_board, data=data
+                )
+            except inngest.StepError as exc:
+                return {"board_id": board["board_id"], "ok": False, "error": exc.message}
+
+        return go
+
+    results = list(await ctx.group.parallel(tuple(fetch(b) for b in boards))) if boards else []
+    counts = summarize(results)
+    await ctx.step.run("finish", finish_step, run_id, counts, None)
+    return counts

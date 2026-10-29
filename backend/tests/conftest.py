@@ -95,7 +95,7 @@ def events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
     import functions.events
 
     monkeypatch.setattr(functions.events, "send", fake_send)
-    for mod in ("api.profile", "api.resumes"):
+    for mod in ("api.profile", "api.resumes", "api.runs"):
         monkeypatch.setattr(f"{mod}.send", fake_send)
     return sent
 

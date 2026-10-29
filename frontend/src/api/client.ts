@@ -76,7 +76,82 @@ export type Resume = {
 }
 
 export type Ats = 'greenhouse' | 'lever' | 'ashby'
-export type Board = { id: string; ats: Ats; board_token: string; display_name: string; origin: string }
+export type Board = {
+  id: string
+  ats: Ats
+  board_token: string
+  display_name: string
+  origin: string
+  last_checked_at: string | null
+  last_ok: boolean | null
+}
+export type Detected = {
+  ats: Ats
+  board_token: string
+  display_name: string
+  job_count: number
+  already_watched: boolean
+}
+
+export type RunCounts = {
+  boards?: number
+  boards_failed?: number
+  board_errors?: string[]
+  fetched?: number
+  new?: number
+  changed?: number
+  unchanged?: number
+  reopened?: number
+  closed?: number
+  enrich_queued?: number
+}
+export type Run = {
+  id: string
+  trigger: 'resume_updated' | 'manual' | 'scheduled'
+  mode: 'find_only' | 'find_and_apply'
+  status: 'queued' | 'running' | 'succeeded' | 'failed'
+  created_at: string
+  started_at: string | null
+  ended_at: string | null
+  counts: RunCounts
+  error: string | null
+  extracting: number
+}
+
+export type Salary = { min: number | null; max: number | null; currency: string | null; period: string | null }
+export type Extracted = {
+  skills?: string[]
+  seniority?: string
+  work_mode?: string
+  salary?: Salary
+  visa_sponsorship?: string
+  remote_regions?: string[]
+  cover_letter_asked?: boolean
+  direct: string[]
+}
+export type PostingRow = {
+  id: string
+  source: Ats
+  company: string
+  title: string
+  locations: string[]
+  posted_at: string | null
+  state: 'open' | 'closed'
+  extracted: boolean
+  work_mode: string | null
+  first_seen_at: string
+}
+export type PostingPage = { total: number; page: number; page_size: number; rows: PostingRow[] }
+export type PostingDetail = PostingRow & {
+  department: string | null
+  employment_type: string | null
+  requisition_id: string | null
+  posting_url: string
+  apply_url: string
+  description_text: string
+  fields: Extracted | null
+  closed_at: string | null
+}
 export type Answer = { id: string; question: string; answer: string }
 
 export const api = {
@@ -97,7 +172,19 @@ export const api = {
     ),
   resumeFileUrl: (id: string) => `${API_URL}/api/resumes/${id}/file`,
   boards: () => request<Board[]>('/api/boards'),
-  addBoard: (b: Omit<Board, 'id' | 'origin'>) => request<Board>('/api/boards', json('POST', b)),
+  addBoard: (b: Pick<Board, 'ats' | 'board_token' | 'display_name'>) =>
+    request<Board>('/api/boards', json('POST', b)),
+  detectBoard: (text: string) => request<Detected>('/api/boards/detect', json('POST', { text })),
+  startRun: () => request<Run>('/api/runs', json('POST', { mode: 'find_only' })),
+  latestRun: () => request<Run | null>('/api/runs/latest'),
+  postings: (params: { q?: string; state?: 'open' | 'closed' | 'all'; page?: number }) => {
+    const query = new URLSearchParams()
+    if (params.q) query.set('q', params.q)
+    if (params.state) query.set('state', params.state)
+    if (params.page) query.set('page', String(params.page))
+    return request<PostingPage>(`/api/postings?${query}`)
+  },
+  posting: (id: string) => request<PostingDetail>(`/api/postings/${id}`),
   removeBoard: (id: string) => request<void>(`/api/boards/${id}`, { method: 'DELETE' }),
   answers: () => request<Answer[]>('/api/answers'),
   addAnswer: (a: Omit<Answer, 'id'>) => request<Answer>('/api/answers', json('POST', a)),

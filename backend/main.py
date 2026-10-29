@@ -4,13 +4,13 @@ import inngest.fast_api
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api import answers, boards, errors, health, profile, resumes
+from api import answers, boards, errors, health, postings, profile, resumes, runs
 from config import get_settings
 from functions import ALL_FUNCTIONS, inngest_client
 
 settings = get_settings()
 
-app = FastAPI(title="JAP", version="0.1.0")
+app = FastAPI(title="JAP", version="0.3.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -18,7 +18,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 errors.install(app)
-for module in (health, profile, resumes, boards, answers):
+for module in (health, profile, resumes, boards, answers, runs, postings):
     app.include_router(module.router, prefix="/api")
 
 inngest.fast_api.serve(app, inngest_client, ALL_FUNCTIONS, serve_path="/api/inngest")
