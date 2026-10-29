@@ -14,12 +14,16 @@ from sqlalchemy import ColumnElement, Text, cast, exists, func, or_, select
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.applications import to_out as application_out
 from api.errors import ApiError
 from api.postings import detail
-from database.models import Company, Listing, Posting, Profile, WatchedBoard
+from database.models import Application, Company, Listing, Posting, Profile, WatchedBoard
 from database.session import Session
+from functions.events import send
+from pipeline.apply.flow import ACTIVE, why_not
 from pipeline.dedup import DedupConflict, merge_listings
 from pipeline.matching import refilter_from_profile
+from schemas.application import ApplyQueued
 from schemas.job import ATS
 from schemas.listing import (
     AlsoOn,
@@ -178,6 +182,13 @@ async def load_detail(session: AsyncSession, listing_id: uuid.UUID) -> ListingDe
         (p for p in postings if p.id != listing.primary_posting_id),
         key=lambda p: (p.state != "open", p.source, p.title_raw),
     )
+    attempts = list(
+        await session.scalars(
+            select(Application)
+            .where(Application.listing_id == listing.id)
+            .order_by(Application.created_at.desc())
+        )
+    )
     same = await session.execute(
         select(Listing.id, Listing.title_display)
         .where(Listing.company_id == listing.company_id, Listing.id != listing.id, watched())
@@ -203,6 +214,9 @@ async def load_detail(session: AsyncSession, listing_id: uuid.UUID) -> ListingDe
             for p in others
         ],
         same_company=[ListingRef(id=i, title=t) for i, t in same.all()],
+        application=await application_out(session, attempts[0]) if attempts else None,
+        attempts=len(attempts),
+        apply_blocked=await why_not(session, listing.id),
     )
 
 
@@ -222,4 +236,56 @@ async def merge(listing_id: uuid.UUID, body: MergeIn, session: Session) -> Listi
         raise ApiError(404, "not_found", str(exc)) from exc
     except DedupConflict as exc:
         raise ApiError(409, "conflict", str(exc)) from exc
+    return await load_detail(session, listing_id)
+
+
+@router.post("/{listing_id}/apply", response_model=ApplyQueued, status_code=202)
+async def apply_now(listing_id: uuid.UUID, session: Session) -> ApplyQueued:
+    """Apply now (one listing): prepares it; in Review mode it stops at Ready for review."""
+    reason = await why_not(session, listing_id)
+    if reason:
+        raise ApiError(409, "conflict", reason)
+    await send("listing/apply.requested", {"listing_id": str(listing_id), "run_id": None})
+    return ApplyQueued(listing_id=listing_id, queued=True)
+
+
+@router.post("/{listing_id}/skip", response_model=ListingDetail)
+async def skip(listing_id: uuid.UUID, session: Session) -> ListingDetail:
+    """Skip: I chose not to apply. An attempt waiting for me is cancelled."""
+    listing = await session.get(Listing, listing_id, with_for_update=True)
+    if listing is None:
+        raise ApiError(404, "not_found", "No such listing")
+    if listing.status == "applied":
+        raise ApiError(409, "conflict", "This job is Applied")
+    active = list(
+        await session.scalars(
+            select(Application)
+            .where(Application.listing_id == listing_id, Application.status.in_(ACTIVE))
+            .with_for_update()
+        )
+    )
+    if any(a.status == "applying" for a in active):
+        raise ApiError(409, "conflict", "JAP is filling or submitting this form right now")
+    for a in active:
+        a.status = "cancelled"
+    listing.status = "skipped"
+    await session.commit()
+    if active:
+        await send("application/cancelled", {"listing_id": str(listing_id)})
+    return await load_detail(session, listing_id)
+
+
+@router.post("/{listing_id}/unskip", response_model=ListingDetail)
+async def unskip(listing_id: uuid.UUID, session: Session) -> ListingDetail:
+    """Undo Skip: back to Not applied (or Closed if every posting closed meanwhile)."""
+    listing = await session.get(Listing, listing_id)
+    if listing is None:
+        raise ApiError(404, "not_found", "No such listing")
+    if listing.status != "skipped":
+        raise ApiError(409, "conflict", "This job is not Skipped")
+    is_open = await session.scalar(
+        select(Posting.id).where(Posting.listing_id == listing_id, Posting.state == "open").limit(1)
+    )
+    listing.status = "not_applied" if is_open else "closed"
+    await session.commit()
     return await load_detail(session, listing_id)

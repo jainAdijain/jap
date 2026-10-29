@@ -59,8 +59,11 @@ async def queue_run(
     queued = await session.scalar(select(Run).where(Run.status == "queued"))
     if queued is not None:
         merged = merge_scope(queued.scope or {}, scope or {})
-        if merged != (queued.scope or {}):
+        upgrade = mode == "find_and_apply" and queued.mode != mode  # applying covers finding
+        if merged != (queued.scope or {}) or upgrade:
             queued.scope = merged
+            if upgrade:
+                queued.mode = mode
             await session.commit()
             await session.refresh(queued)
         return queued, False
@@ -114,7 +117,7 @@ async def start_run(session: AsyncSession, run_id: uuid.UUID) -> list[dict[str, 
 async def finish_run(
     session: AsyncSession, run_id: uuid.UUID, counts: dict[str, Any], error: str | None = None
 ) -> None:
-    run = await session.get(Run, run_id)
+    run = await session.get(Run, run_id, with_for_update=True)  # apply-listing adds counts too
     if run is None:
         return
     run.status = "failed" if error else "succeeded"

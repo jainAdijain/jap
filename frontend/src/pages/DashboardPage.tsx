@@ -37,7 +37,8 @@ export default function DashboardPage() {
   const [pairs, setPairs] = useState<Duplicate[]>([])
   const [pageNo, setPageNo] = useState(1)
   const [filters, setFilters] = useState<Filters>(NO_FILTERS)
-  const [openId, setOpenId] = useState<string | null>(null)
+  // ?listing=<id> opens that job's panel (the confirmation email links here).
+  const [openId, setOpenId] = useState<string | null>(() => new URLSearchParams(window.location.search).get('listing'))
   const [error, setError] = useState<string | null>(null)
   const query = useRef({ filters, pageNo })
   query.current = { filters, pageNo }

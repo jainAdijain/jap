@@ -9,6 +9,8 @@ from typing import Any
 
 import httpx
 
+from config import get_settings
+
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
 
@@ -50,7 +52,7 @@ async def chat(api_key: str, body: dict[str, Any], wait_s: float = 120.0) -> Cha
         raise MissingApiKey("OPENROUTER_API_KEY is not set in .env")
     async with httpx.AsyncClient(timeout=wait_s) as client:
         resp = await client.post(
-            OPENROUTER_URL,
+            get_settings().openrouter_url or OPENROUTER_URL,
             content=json.dumps(body),
             headers={
                 "Authorization": f"Bearer {api_key}",
