@@ -1,5 +1,13 @@
 # JAP: one command per job. Run `make help` for the list.
 COMPOSE := docker compose --env-file .env -f infra/compose.yaml
+
+# Host ports: .env wins, these are the defaults (keep in step with infra/compose.yaml).
+-include .env
+JAP_UI_PORT ?= 5173
+JAP_API_PORT ?= 8001
+JAP_INNGEST_PORT ?= 8289
+JAP_ADMINER_PORT ?= 8080
+HEALTH_URL = http://127.0.0.1:$(JAP_API_PORT)/api/health
 OLLAMA_URL ?= http://127.0.0.1:11434
 EMBED_MODEL ?= nomic-embed-text
 
@@ -14,9 +22,9 @@ env: ## Create .env from .env.example if it is missing
 
 start: env ## Start the stack and wait for /api/health
 	$(COMPOSE) up -d --build
-	@infra/scripts/wait-for-health.sh
+	@infra/scripts/wait-for-health.sh $(HEALTH_URL)
 	@$(MAKE) --no-print-directory ollama-check
-	@echo "UI http://localhost:5173  API http://localhost:8000  Inngest http://localhost:8288  Adminer http://localhost:8080"
+	@echo "UI http://localhost:$(JAP_UI_PORT)  API http://localhost:$(JAP_API_PORT)  Inngest http://localhost:$(JAP_INNGEST_PORT)  Adminer http://localhost:$(JAP_ADMINER_PORT)"
 
 stop: ## Stop the stack (data is kept)
 	$(COMPOSE) down
@@ -28,7 +36,7 @@ reset: env ## Wipe the database and start fresh: down -v, up, migrate, seed (ask
 	read answer; [ "$$answer" = "yes" ] || { echo "Cancelled."; exit 1; }
 	$(COMPOSE) down -v
 	$(COMPOSE) up -d --build
-	@infra/scripts/wait-for-health.sh
+	@infra/scripts/wait-for-health.sh $(HEALTH_URL)
 	@$(MAKE) --no-print-directory migrate seed
 
 clean: ## Remove containers, volumes, JAP images and build caches (asks first; data/ is kept)

@@ -2,7 +2,7 @@
 # Waits until GET /api/health answers, then prints each check.
 # Usage: wait-for-health.sh [url] [timeout_seconds]
 set -eu
-URL="${1:-http://127.0.0.1:8000/api/health}"
+URL="${1:-http://127.0.0.1:8001/api/health}"
 TIMEOUT="${2:-180}"
 
 printf 'Waiting for %s ' "$URL"

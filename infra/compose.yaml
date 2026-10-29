@@ -1,4 +1,5 @@
 # JAP stack: ui, app, inngest, db, adminer. Every port binds to 127.0.0.1 only.
+# Host ports come from JAP_*_PORT in .env (defaults below); inside Docker the ports never change.
 # Ollama is not here: it runs natively on the Mac so it can use the GPU.
 # Run through the Makefile (make start), which uses: docker compose -f infra/compose.yaml
 name: jap
@@ -9,9 +10,9 @@ services:
       context: ..
       dockerfile: infra/docker/ui.Dockerfile
     ports:
-      - "127.0.0.1:5173:5173"
+      - "127.0.0.1:${JAP_UI_PORT:-5173}:5173"
     environment:
-      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+      VITE_API_URL: http://localhost:${JAP_API_PORT:-8001}
     volumes:
       - ../frontend:/ui
       - ui_node_modules:/ui/node_modules
@@ -23,7 +24,7 @@ services:
       context: ..
       dockerfile: infra/docker/app.Dockerfile
     ports:
-      - "127.0.0.1:8000:8000"
+      - "127.0.0.1:${JAP_API_PORT:-8001}:8000"
     env_file: ../.env
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-jap}:${POSTGRES_PASSWORD:-jap}@db:5432/${POSTGRES_DB:-jap}
@@ -32,6 +33,7 @@ services:
       # The URL Inngest calls back, even when a sync is started from the Mac's browser.
       INNGEST_SERVE_ORIGIN: http://app:8000
       JAP_SEED_DIR: /seed
+      CORS_ORIGINS: '["http://localhost:${JAP_UI_PORT:-5173}"]'
     volumes:
       - ../backend:/app
       - ../seed:/seed:ro
@@ -47,14 +49,14 @@ services:
     image: inngest/inngest:v1.49.0
     command: inngest dev -u http://app:8000/api/inngest --no-discovery
     ports:
-      - "127.0.0.1:8288:8288"
+      - "127.0.0.1:${JAP_INNGEST_PORT:-8289}:8288"
     depends_on:
       - app
 
   db:
     image: pgvector/pgvector:pg16
     ports:
-      - "127.0.0.1:5432:5432"
+      - "127.0.0.1:${JAP_DB_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-jap}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-jap}
@@ -73,7 +75,7 @@ services:
     # Listen on IPv4; the image default ([::]) fails where Docker has IPv6 turned off.
     command: ["php", "-S", "0.0.0.0:8080", "-t", "/var/www/html"]
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:${JAP_ADMINER_PORT:-8080}:8080"
     environment:
       ADMINER_DEFAULT_SERVER: db
     depends_on:

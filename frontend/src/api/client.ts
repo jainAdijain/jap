@@ -1,4 +1,4 @@
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
+const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8001'
 
 export type Check = { ok: boolean; detail: string }
 export type Health = { ok: boolean; checks: Record<string, Check> }

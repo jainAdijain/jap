@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.1.0 (Phase 0), 29 Oct 2026.**
+**Version 0.1.1 (Phase 0), 29 Oct 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -13,10 +13,14 @@ the [build plan](https://claude.ai/artifact/1TrqC2jt8SuPVbULa8i6eU) and the
 | Service | URL (127.0.0.1 only) | What it is |
 | --- | --- | --- |
 | ui | http://localhost:5173 | React + Vite UI (status page in Phase 0) |
-| app | http://localhost:8000 | FastAPI JSON API and Inngest functions (`/api/health`, `/api/inngest`) |
-| inngest | http://localhost:8288 | Inngest dev server, runs every pipeline step |
+| app | http://localhost:8001 | FastAPI JSON API and Inngest functions (`/api/health`, `/api/inngest`) |
+| inngest | http://localhost:8289 | Inngest dev server, runs every pipeline step |
 | db | localhost:5432 | Postgres 16 with pgvector, pg_trgm, pgcrypto |
 | adminer | http://localhost:8080 | Database browser (server `db`, user/password/db `jap`) |
+
+Each host port can be changed in `.env` (`JAP_UI_PORT`, `JAP_API_PORT`, `JAP_INNGEST_PORT`,
+`JAP_DB_PORT`, `JAP_ADMINER_PORT`). The API and Inngest use 8001 and 8289 so they don't clash with
+other projects on 8000 and 8288. Inside Docker the services keep their usual ports.
 
 Ollama is **not** in Docker. It runs natively on the Mac so it can use the GPU, and the app
 reaches it at `http://host.docker.internal:11434`.
@@ -61,4 +65,5 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.1.1 | 29 Oct 2026 | Host ports set in `.env`; API on 8001 and Inngest on 8289 by default |
 | 0.1.0 | 29 Oct 2026 | Phase 0: repo layout, Docker Compose (ui, app, inngest, db, adminer), Makefile, FastAPI health and Inngest endpoint, status page, CI |
