@@ -49,7 +49,7 @@ services:
     image: inngest/inngest:v1.49.0
     command: inngest dev -u http://app:8000/api/inngest --no-discovery
     ports:
-      - "127.0.0.1:${JAP_INNGEST_PORT:-8289}:8288"
+      - "127.0.0.1:${JAP_INNGEST_PORT:-8290}:8288"
     depends_on:
       - app
 

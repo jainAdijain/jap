@@ -5,7 +5,7 @@ COMPOSE := docker compose --env-file .env -f infra/compose.yaml
 -include .env
 JAP_UI_PORT ?= 5173
 JAP_API_PORT ?= 8001
-JAP_INNGEST_PORT ?= 8289
+JAP_INNGEST_PORT ?= 8290
 JAP_ADMINER_PORT ?= 8080
 HEALTH_URL = http://127.0.0.1:$(JAP_API_PORT)/api/health
 OLLAMA_URL ?= http://127.0.0.1:11434
