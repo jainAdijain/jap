@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.6.0 (Phase 5), 29 Oct 2026.**
+**Version 0.6.1 (Phase 5), 29 Oct 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
