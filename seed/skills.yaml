@@ -1,0 +1,13 @@
+# alias -> canonical skill name (lowercase)
+postgresql: postgres
+k8s: kubernetes
+js: javascript
+ts: typescript
+py: python
+golang: go
+reactjs: react
+node.js: node
+nodejs: node
+gcp: google cloud
+aws: amazon web services
+ml: machine learning
