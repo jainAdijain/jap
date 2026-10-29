@@ -42,6 +42,23 @@ class PendingOut(BaseModel):
     blocked: bool = False  # a CAPTCHA or a file: can't be answered here
 
 
+class ClaimOut(BaseModel):
+    """One claim the letter makes about me and where the resume says it (C3)."""
+
+    claim: str
+    found: bool
+    evidence: str
+
+
+class CoverLetterOut(BaseModel):
+    text: str
+    words: int
+    source: str  # generated (JAP wrote it) or you (I wrote or edited it)
+    as_file: bool  # the form takes a file: the PDF is uploaded; else the text is pasted
+    has_pdf: bool
+    claims: list[ClaimOut]
+
+
 class ApplicationOut(BaseModel):
     id: UUID
     listing_id: UUID
@@ -54,6 +71,7 @@ class ApplicationOut(BaseModel):
     fields: list[FieldOut]
     pending: list[PendingOut]
     cover_letter_text: str | None
+    cover_letter: CoverLetterOut | None
     error: str | None
     submitted_at: datetime | None
     email_sent_at: datetime | None
@@ -64,7 +82,9 @@ class ApplicationOut(BaseModel):
 class AnswersIn(BaseModel):
     """Edited answers while Ready for review (C5), by field key."""
 
-    answers: dict[str, str] = Field(max_length=200)
+    answers: dict[str, str] = Field(default_factory=dict, max_length=200)
+    # The cover letter, edited (C5); it replaces the letter in every cover letter field.
+    cover_letter: str | None = Field(default=None, max_length=10_000)
 
 
 class AnswerQuestionsIn(AnswersIn):

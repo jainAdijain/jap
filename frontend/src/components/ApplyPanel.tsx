@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 
-import { api, type Application, type Ats, type FormField, type ListingDetail } from '../api/client'
+import { api, type Application, type Ats, type CoverLetter, type FormField, type ListingDetail } from '../api/client'
 import { atsLabel, shortDate } from '../format'
 
 type Props = { listing: ListingDetail; onChanged: (detail?: ListingDetail) => void }
@@ -9,8 +9,16 @@ const SOURCES: Record<string, string> = {
   resume: 'Your resume',
   answer_bank: 'Answer bank',
   drafted: 'Drafted for this job',
+  cover_letter: 'Cover letter by JAP',
   you: 'Your answer',
 }
+
+const LETTER = /cover ?letter/i
+/** A mandatory field that takes the cover letter itself (pipeline/apply/fields.py). */
+const isLetterField = (f: FormField) =>
+  f.required && ['file', 'text', 'textarea'].includes(f.type) && (LETTER.test(f.label) || LETTER.test(f.key))
+const MAX_WORDS = 250
+const countWords = (t: string) => t.split(/\s+/).filter(Boolean).length
 
 function sourceLabel(from: string): string {
   if (from.startsWith('profile:')) return 'My profile'
@@ -24,7 +32,9 @@ const when = (iso: string) =>
 function FieldInput({ f, value, onChange }: { f: FormField; value: string; onChange: (v: string) => void }) {
   const id = `field-${f.key}`
   let input
-  if (f.type === 'file') {
+  if (isLetterField(f) && value) {
+    input = <p className="muted">{f.type === 'file' ? `Uploads ${value}, built from the cover letter below` : 'Pastes the cover letter below'}</p>
+  } else if (f.type === 'file') {
     input = <p className="muted">{value || 'Nothing attached'}</p>
   } else if (f.type === 'textarea' || value.length > 120) {
     input = <textarea id={id} rows={Math.min(12, Math.max(4, Math.ceil(value.length / 55)))} maxLength={f.max_chars ?? undefined} value={value} onChange={(e) => onChange(e.target.value)} />
@@ -69,10 +79,56 @@ function FieldInput({ f, value, onChange }: { f: FormField; value: string; onCha
   )
 }
 
+/** The generated letter while Ready for review: editable, with the claim check (C3, C5). */
+function LetterEditor({ letter, appId, value, onChange }: { letter: CoverLetter; appId: string; value: string; onChange: (v: string) => void }) {
+  const n = countWords(value)
+  const found = letter.claims.filter((c) => c.found).length
+  return (
+    <div className="cover-letter">
+      <div className="form-answer-head">
+        <label htmlFor="cover-letter">
+          Cover letter<span className="req" aria-label="required"> *</span>
+        </label>
+        <span className={`from from-${letter.source === 'you' ? 'you' : 'drafted'}`}>
+          {letter.source === 'you' ? 'Edited by you' : 'Written for this job'}
+        </span>
+      </div>
+      <textarea id="cover-letter" rows={14} value={value} onChange={(e) => onChange(e.target.value)} />
+      <div className={`hint${n >= MAX_WORDS ? ' error' : ''}`}>
+        {n} words (under {MAX_WORDS}) · {letter.as_file ? 'sent as a PDF' : 'pasted into the form as text'}
+        {letter.has_pdf && (
+          <>
+            {' · '}
+            <a href={`${api.fileUrl('cover_letter', appId)}?v=${encodeURIComponent(letter.text.length + ':' + letter.words)}`} target="_blank" rel="noreferrer">
+              View PDF
+            </a>
+          </>
+        )}
+      </div>
+      {letter.claims.length > 0 && (
+        <details className="claims">
+          <summary>
+            Checked against your resume: {found} of {letter.claims.length} claims found
+          </summary>
+          <ul>
+            {letter.claims.map((c, i) => (
+              <li key={i} className={c.found ? '' : 'error'}>
+                <strong>{c.claim}</strong>
+                {c.evidence && <span className="muted"> · resume: “{c.evidence}”</span>}
+              </li>
+            ))}
+          </ul>
+        </details>
+      )}
+    </div>
+  )
+}
+
 /** Apply now, Skip, Ready for review, Needs input, Applied and Failed (Statuses, U14, U15). */
 export default function ApplyPanel({ listing, onChanged }: Props) {
   const app: Application | null = listing.application
   const [edits, setEdits] = useState<Record<string, string>>({})
+  const [letterEdit, setLetterEdit] = useState<string | null>(null)
   const [answers, setAnswers] = useState<Record<string, string>>({})
   const [saveToBank, setSaveToBank] = useState(true)
   const [busy, setBusy] = useState(false)
@@ -83,6 +139,7 @@ export default function ApplyPanel({ listing, onChanged }: Props) {
   const appStatus = app?.status
   useEffect(() => {
     setEdits({})
+    setLetterEdit(null)
     setAnswers({})
     setError(null)
   }, [appId, appStatus])
@@ -112,7 +169,9 @@ export default function ApplyPanel({ listing, onChanged }: Props) {
 
   const status = listing.status
   const live = app && ['preparing', 'ready_for_review', 'applying', 'needs_input'].includes(app.status) ? app : null
-  const dirty = Object.keys(edits).length > 0
+  const letterDirty = letterEdit !== null && letterEdit.trim() !== (app?.cover_letter?.text ?? '')
+  const dirty = Object.keys(edits).length > 0 || letterDirty
+  const save = (id: string) => api.editAnswers(id, edits, letterDirty ? (letterEdit ?? undefined) : undefined)
   const valueOf = (f: FormField) => edits[f.key] ?? f.value
   const skipButton = (
     <button type="button" disabled={busy} onClick={() => void act(() => api.skip(listing.id))}>
@@ -178,6 +237,18 @@ export default function ApplyPanel({ listing, onChanged }: Props) {
         {app.cover_letter_text && (
           <>
             <h4>Cover letter</h4>
+            <p className="hint">
+              {app.cover_letter?.as_file ? 'Uploaded as a PDF' : 'Pasted into the form'}
+              {app.cover_letter?.source === 'you' ? ', with your edits' : ''}
+              {app.cover_letter?.has_pdf && (
+                <>
+                  {' · '}
+                  <a href={api.fileUrl('cover_letter', app.id)} target="_blank" rel="noreferrer">
+                    PDF as sent
+                  </a>
+                </>
+              )}
+            </p>
             <div className="jd">{app.cover_letter_text}</div>
           </>
         )}
@@ -240,7 +311,7 @@ export default function ApplyPanel({ listing, onChanged }: Props) {
       )}
 
       {live?.status === 'preparing' && (
-        <p className="hint" role="status">Preparing: reading the form and filling it from My profile, your resume and the answer bank…</p>
+        <p className="hint" role="status">Preparing: reading the form and filling it from My profile, your resume and the answer bank, and writing a cover letter if the form requires one…</p>
       )}
       {live?.status === 'applying' && (
         <p className="hint" role="status">Submitting the form… a screenshot of the confirmation follows.</p>
@@ -263,13 +334,15 @@ export default function ApplyPanel({ listing, onChanged }: Props) {
                       </option>
                     ))}
                   </select>
+                ) : LETTER.test(q.label) ? (
+                  <textarea id={`q-${q.key}`} rows={10} placeholder="Paste your cover letter" value={answers[q.key] ?? ''} onChange={(e) => setAnswers({ ...answers, [q.key]: e.target.value })} />
                 ) : (
                   <input id={`q-${q.key}`} type="text" value={answers[q.key] ?? ''} onChange={(e) => setAnswers({ ...answers, [q.key]: e.target.value })} />
                 )}
               </li>
             ))}
           </ul>
-          {live.pending.some((q) => !q.blocked) && (
+          {live.pending.some((q) => !q.blocked && !LETTER.test(q.label)) && (
             <label className="check">
               <input type="checkbox" checked={saveToBank} onChange={(e) => setSaveToBank(e.target.checked)} />
               Save my answers to the answer bank for next time
@@ -307,19 +380,22 @@ export default function ApplyPanel({ listing, onChanged }: Props) {
               <FieldInput key={f.key} f={f} value={valueOf(f)} onChange={(v) => setEdits({ ...edits, [f.key]: v })} />
             ))}
           </ul>
+          {live.cover_letter && (
+            <LetterEditor letter={live.cover_letter} appId={live.id} value={letterEdit ?? live.cover_letter.text} onChange={setLetterEdit} />
+          )}
           <div className="row-buttons">
             <button
               type="button"
               className="primary"
               disabled={busy}
               onClick={() => void act(async () => {
-                if (dirty) await api.editAnswers(live.id, edits)
+                if (dirty) await save(live.id)
                 await api.approve(live.id)
               })}
             >
               {dirty ? 'Save and approve' : 'Approve and submit'}
             </button>
-            <button type="button" disabled={busy || !dirty} onClick={() => void act(async () => { await api.editAnswers(live.id, edits) })}>
+            <button type="button" disabled={busy || !dirty} onClick={() => void act(async () => { await save(live.id) })}>
               Save changes
             </button>
             {skipButton}

@@ -2,7 +2,8 @@
 
 Steps: create-attempt (check, then insert the application), snapshot (freeze the JD),
 read-form (Playwright), map-fields (profile, resume, answer bank, drafted answers), then
-Needs input or Ready for review waits, then submit (cap and gap first) and
+cover-letter when the form's cover letter field is mandatory (C1), then Needs input or
+Ready for review waits, then submit (cap and gap first) and
 application/submitted for the email. Review mode always stops at Ready for review until I
 press Approve; nothing is submitted before.
 
@@ -56,6 +57,14 @@ async def map_step(app_id: str) -> dict[str, Any]:
         except flow.Stop as exc:
             return {"status": "stopped", "reason": str(exc)}
         return {"status": m.status, "drafted": m.drafted, "pending": m.pending}
+
+
+async def letter_step(app_id: str) -> dict[str, Any]:
+    async with get_sessionmaker()() as session:
+        try:
+            return await flow.write_cover_letter(session, app_id)
+        except flow.Stop as exc:
+            return {"status": "stopped", "reason": str(exc)}
 
 
 async def status_step(app_id: str) -> str:
@@ -141,6 +150,9 @@ async def apply_listing(ctx: inngest.Context) -> dict[str, Any]:
     for p in range(MAX_PASSES):
         mapped = await ctx.step.run(f"map-fields-{p}", map_step, app_id)
         status = str(mapped["status"])
+        if status == "cover_letter":
+            written = await ctx.step.run(f"cover-letter-{p}", letter_step, app_id)
+            status = str(written["status"])
         if status == "needs_input":
             status = await wait_for_me(
                 ctx, app_id, "application/answered", "needs_input", f"input-{p}"

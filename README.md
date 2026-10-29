@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.7.1 (Phase 6), 29 Oct 2026.**
+**Version 0.8.0 (Phase 7), 29 Oct 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -140,6 +140,33 @@ An Applied job has no Apply now, and a run never prepares it again, even when th
 reposts it (a repost joins the same listing). **Skip** cancels a prepared or waiting job;
 **Undo** brings it back. A **Failed** job shows the reason and screenshot, with **Retry**.
 
+## Cover letters
+
+JAP writes a cover letter only when the application form makes its cover letter field
+mandatory. An optional cover letter field stays empty, and a JD that asks for a letter on a
+form with no letter field gets none. The letter is written right before the job reaches
+Ready for review, as its own step (`cover-letter` in apply-listing):
+
+- It is written from the frozen JD, your active resume and the **Cover letter tone** note on
+  My profile, names the company and role, links two or three of your real skills or projects
+  to what the JD asks for, and stays under 250 words.
+- A second call lists every claim the letter makes about you and quotes your resume for each.
+  Code keeps a claim only if the quote really is in the resume, and also checks the length,
+  the company and role, and that every number in the letter is in the resume. Any problem
+  rewrites the letter once with the problems listed; if the second letter fails too, the job
+  stops at **Needs input**, where you can paste your own letter or Skip. Nothing is sent
+  without a required letter.
+- Like every model call, the prompt is redacted: the model sees `[NAME]`, `[EMAIL]` and
+  `[PHONE]`, signs off as `[NAME]`, and your name is filled in locally. The Inngest UI shows
+  the start of the redacted prompt in the `cover-letter` step's output, never the letter.
+- The letter goes in as the field takes it: pasted as text, or uploaded as a PDF built from a
+  plain template (your name and contact line, the date, role and company, the letter) and
+  named like `Your-Name-Cover-Letter-Company.pdf`. The PDF is kept in `data/cover_letters/`.
+
+In Ready for review the letter is editable, with a word count, the claim check and the PDF.
+Your edited version is what is sent and what the confirmation email attaches; the Applied
+panel shows the letter and the PDF as sent.
+
 ## Make targets
 
 | Target | Does |
@@ -174,6 +201,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.8.0 | 29 Oct 2026 | Phase 7: cover letters. Written only for a mandatory cover letter field (`cover_letter` prompt, as its own `cover-letter` step), claim check against the resume (`claim_check` prompt plus code checks for quotes, length, company and role, numbers), one rewrite, Needs input after two failures with your own letter accepted, text or PDF delivery, editable letter in Ready for review, letter and PDF in What was sent and attached to the email |
 | 0.7.1 | 29 Oct 2026 | Match rule fix: the rule in words, a warning for rows that can't narrow the list, one-click rules (Any one, Role and Location, Role and Skills, All three), per-condition counts in the preview, and locations typed with their region ("Bangalore, India") match by city |
 | 0.7.0 | 29 Oct 2026 | Phase 6: Apply in Review mode. Apply now and Skip in the job panel, apply-listing (JD snapshot, Playwright form reader, contact fields from My profile by code, resume upload, answer bank, drafted answers for required free text), Needs input with answers saved to the answer bank, Ready for review with every answer editable, Approve and submit (daily cap, 30 s gap, Submit pressed at most once), confirmation screenshot and trace, What was sent with the frozen JD, "Applied: Role at Company" email, Find and apply in the Run dialog, apply counts on the last run line, Retry for Failed; README history row for 0.6.0 moved here from the services table |
 | 0.6.0 | 29 Oct 2026 | Phase 5: Run dialog with role scope, Daily run switch and time (minute cron in `JAP_TZ`), background run after a profile save, run after accepting resume skills, one run at a time with repeats merged into the queued run, Runs card with last run line, run in progress and queued run |

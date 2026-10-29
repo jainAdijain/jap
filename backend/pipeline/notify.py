@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
 from database.models import Application, Company, Listing, Profile
+from pipeline.cover_letter import upload_name
 
 PLATFORMS = {"greenhouse": "Greenhouse", "lever": "Lever", "ashby": "Ashby"}
 
@@ -31,6 +32,7 @@ class Mail:
     subject: str
     body: str
     attachment: Path | None = None
+    attachment_name: str = "Cover-Letter.pdf"
 
 
 async def build(session: AsyncSession, app_id: uuid.UUID) -> Mail | None:
@@ -67,11 +69,14 @@ async def build(session: AsyncSession, app_id: uuid.UUID) -> Mail | None:
         f"Frozen JD in JAP: {panel}",
     ]
     letter = Path(app.cover_letter_path) if app.cover_letter_path else None
+    if letter is not None and letter.exists():
+        lines += ["", "Cover letter: attached, exactly as sent"]
     return Mail(
         to=profile.email,
         subject=f"Applied: {title} at {company_name}",
         body="\n".join(lines) + "\n",
         attachment=letter if letter and letter.exists() else None,
+        attachment_name=upload_name(profile.full_name, company_name),
     )
 
 
@@ -89,7 +94,7 @@ def _send_sync(mail: Mail) -> None:
             mail.attachment.read_bytes(),
             maintype="application",
             subtype="pdf",
-            filename=mail.attachment.name,
+            filename=mail.attachment_name,
         )
     smtp: smtplib.SMTP
     if settings.smtp_ssl:
