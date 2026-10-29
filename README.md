@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.5.0 (Phase 4), 29 Oct 2026.**
+**Version 0.6.0 (Phase 5), 29 Oct 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -12,6 +12,7 @@ the [build plan](https://claude.ai/artifact/1TrqC2jt8SuPVbULa8i6eU) and the
 
 | Service | URL (127.0.0.1 only) | What it is |
 | --- | --- | --- |
+| 0.6.0 | 29 Oct 2026 | Phase 5: Run dialog with role scope, Daily run switch and time (minute cron in `JAP_TZ`), background run after a profile save, run after accepting resume skills, one run at a time with repeats merged into the queued run, Runs card with last run line, run in progress and queued run |
 | ui | http://localhost:5173 | React + Vite UI: My profile, and a Dashboard with jobs, possible duplicates and the status checks |
 | app | http://localhost:8001 | FastAPI JSON API and Inngest functions (`/api/health`, `/api/inngest`) |
 | inngest | http://localhost:8290 | Inngest dev server, runs every pipeline step |
@@ -85,6 +86,25 @@ so you can see grouping, a possible duplicate, Merge and Split without waiting f
 boards. It also loads "Globex Demo" on an Ashby board with jobs for checking the filters:
 Remote - Worldwide, Remote - US, Remote - APAC, an Intern title, an unclear work mode and a
 job in Berlin. Runs skip demo boards; `make demo-clear` removes them.
+
+## What starts a run
+
+Four things start a run, and only one run is active at a time. A trigger that fires during a
+run queues one run behind it; more triggers join that queued run instead of adding another
+(a role-scoped ask widens the queued run's scope).
+
+- **Run dialog** (Run… on the Dashboard): every job on the companies you watch, or only some
+  of your target roles (only those roles' jobs are stored, updated or closed). Find only for
+  now; Find and apply arrives with Apply.
+- **Daily run**: the switch on the Runs card, at 06:00 in `JAP_TZ` unless you change the time
+  next to it. An Inngest cron ticks every minute and fires once per day in the first five
+  minutes after that time, so a run missed while the Mac sleeps is skipped, not caught up.
+- **Profile save**: the stored listings are re-filtered at once, then a fetch follows in the
+  background; new matching jobs appear on the Dashboard without a reload.
+- **Resume update**: accepting the skills from a new resume re-filters and starts a run.
+
+The Runs card shows the last run line (when, what triggered it, and its counts), plus the run
+going now and the one queued behind it.
 
 ## Make targets
 

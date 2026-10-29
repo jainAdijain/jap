@@ -8,7 +8,10 @@ import {
   type ListingFilters,
   type ListingPage,
   type ListingSummary,
-  type Run,
+  type Profile,
+  type RunRequest,
+  type RunState,
+  type Switches,
 } from '../api/client'
 import Duplicates from '../components/Duplicates'
 import ListingPanel from '../components/ListingPanel'
@@ -18,15 +21,17 @@ import Summary from '../components/Summary'
 import { CONDITION_LABELS, joinAnd, shortDate, STATUS_LABELS, workModeLabel } from '../format'
 
 const POLL_MS = 5000
+const IDLE_POLL_MS = 30000 // notices a Daily run or a background run started elsewhere
 
-const busy = (run: Run | null | undefined) =>
-  !!run && (run.status === 'queued' || run.status === 'running' || run.extracting > 0)
+const busy = (s: RunState | undefined) =>
+  !!s && (!!s.active || !!s.queued || (s.last?.extracting ?? 0) > 0)
 
 type Filters = Required<Omit<ListingFilters, 'page' | 'matched'>> & { matched: Condition | '' }
 const NO_FILTERS: Filters = { q: '', status: 'open', role: '', location: '', matched: '' }
 
 export default function DashboardPage() {
-  const [run, setRun] = useState<Run | null | undefined>(undefined)
+  const [runs, setRuns] = useState<RunState | undefined>(undefined)
+  const [profile, setProfile] = useState<Profile | null>(null)
   const [page, setPage] = useState<ListingPage | null>(null)
   const [summary, setSummary] = useState<ListingSummary | null>(null)
   const [pairs, setPairs] = useState<Duplicate[]>([])
@@ -39,8 +44,8 @@ export default function DashboardPage() {
 
   const refresh = useCallback(async () => {
     const { filters: f, pageNo } = query.current
-    const [latest, listings, totals, dupes] = await Promise.all([
-      api.latestRun(),
+    const [state, listings, totals, dupes] = await Promise.all([
+      api.runState(),
       api.listings({
         q: f.q.trim() || undefined,
         status: f.status,
@@ -52,7 +57,7 @@ export default function DashboardPage() {
       api.summary(),
       api.duplicates(),
     ])
-    setRun(latest)
+    setRuns(state)
     setPage(listings)
     setSummary(totals)
     setPairs(dupes)
@@ -62,18 +67,35 @@ export default function DashboardPage() {
   useEffect(() => {
     refresh().catch((err) => setError(String(err)))
   }, [refresh, filters, pageNo])
-
-  // New listings appear without a reload: poll while a run or its extraction is going (T2).
-  const polling = busy(run)
   useEffect(() => {
-    if (!polling) return
-    const timer = setInterval(() => void refresh().catch(() => undefined), POLL_MS)
-    return () => clearInterval(timer)
-  }, [polling, refresh])
+    api.profile().then(setProfile).catch((err) => setError(String(err)))
+  }, [])
 
-  const start = async () => {
+  // New listings appear without a reload: poll while a run or its extraction is going (T2),
+  // and check now and then for a run started by the Daily run or a profile change.
+  const polling = busy(runs)
+  const lastId = runs?.last?.id
+  useEffect(() => {
+    if (polling) {
+      const timer = setInterval(() => void refresh().catch(() => undefined), POLL_MS)
+      return () => clearInterval(timer)
+    }
+    const timer = setInterval(() => {
+      api
+        .runState()
+        .then((s) => (busy(s) || s.last?.id !== lastId ? refresh() : undefined))
+        .catch(() => undefined)
+    }, IDLE_POLL_MS)
+    return () => clearInterval(timer)
+  }, [polling, lastId, refresh])
+
+  const start = async (body: RunRequest) => {
+    await api.startRun(body)
+    await refresh()
+  }
+  const flip = async (s: Switches) => {
     try {
-      setRun(await api.startRun())
+      setProfile(await api.setSwitches(s))
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     }
@@ -90,7 +112,7 @@ export default function DashboardPage() {
 
   return (
     <>
-      <RunBar run={run} onRun={() => void start()} />
+      <RunBar state={runs} profile={profile} onRun={start} onSwitch={flip} />
       <Summary summary={summary} onRole={(role) => set('role', role ?? OTHER_ROLE)} />
       <Duplicates pairs={pairs} onChanged={changed} />
       <section className="card">

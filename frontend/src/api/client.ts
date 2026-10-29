@@ -56,6 +56,7 @@ export type ProfileFields = {
 export type Profile = ProfileFields & {
   apply_mode: 'review' | 'automatic'
   daily_run: boolean
+  daily_run_at: string // HH:MM:SS in JAP_TZ
   daily_cap: number
   spend: Spend
 }
@@ -111,16 +112,21 @@ export type RunCounts = {
 }
 export type Run = {
   id: string
-  trigger: 'resume_updated' | 'manual' | 'scheduled'
+  trigger: 'resume_updated' | 'manual' | 'scheduled' | 'profile_saved'
   mode: 'find_only' | 'find_and_apply'
   status: 'queued' | 'running' | 'succeeded' | 'failed'
   created_at: string
   started_at: string | null
   ended_at: string | null
+  scope: { roles?: string[]; board_ids?: string[] }
   counts: RunCounts
   error: string | null
   extracting: number
 }
+
+export type RunState = { last: Run | null; active: Run | null; queued: Run | null }
+export type RunRequest = { mode: 'find_only'; roles?: string[] }
+export type Switches = { apply_mode?: Profile['apply_mode']; daily_run?: boolean; daily_run_at?: string }
 
 export type Salary = { min: number | null; max: number | null; currency: string | null; period: string | null }
 export type Extracted = {
@@ -247,8 +253,10 @@ export const api = {
   addBoard: (b: Pick<Board, 'ats' | 'board_token' | 'display_name'>) =>
     request<Board>('/api/boards', json('POST', b)),
   detectBoard: (text: string) => request<Detected>('/api/boards/detect', json('POST', { text })),
-  startRun: () => request<Run>('/api/runs', json('POST', { mode: 'find_only' })),
+  startRun: (body: RunRequest = { mode: 'find_only' }) => request<Run>('/api/runs', json('POST', body)),
   latestRun: () => request<Run | null>('/api/runs/latest'),
+  runState: () => request<RunState>('/api/runs/state'),
+  setSwitches: (s: Switches) => request<Profile>('/api/profile', json('PATCH', s)),
   postings: (params: { q?: string; state?: 'open' | 'closed' | 'all'; page?: number }) => {
     const query = new URLSearchParams()
     if (params.q) query.set('q', params.q)

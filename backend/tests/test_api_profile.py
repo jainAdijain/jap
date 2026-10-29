@@ -64,6 +64,11 @@ async def test_switches(api: httpx.AsyncClient) -> None:
     assert body["apply_mode"] == "automatic" and body["daily_run"] is False
     body = (await api.patch("/api/profile", json={"daily_run": True})).json()
     assert body["apply_mode"] == "automatic" and body["daily_run"] is True
+    assert body["daily_run_at"] == "06:00:00"
+    body = (await api.patch("/api/profile", json={"daily_run_at": "16:42:31"})).json()
+    assert body["daily_run_at"] == "16:42:00" and body["daily_run"] is True
+    bad = await api.patch("/api/profile", json={"daily_run_at": "25:00"})
+    assert bad.status_code == 422
 
 
 async def test_spend_shows_this_month(api: httpx.AsyncClient, sql: psycopg.Connection[Any]) -> None:

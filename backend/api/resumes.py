@@ -11,10 +11,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.errors import ApiError
 from api.profile import load_profile
+from api.runs import request_run
 from config import get_settings
 from database.models import ResumeVersion
 from database.session import Session
 from functions.events import send
+from pipeline.matching import Criteria, refilter
 from pipeline.resume import (
     MAX_BYTES,
     BadResume,
@@ -112,6 +114,9 @@ async def accept(version_id: uuid.UUID, body: AcceptSkills, session: Session) ->
     )
     v.is_active = True
     v.accepted_at = datetime.now(UTC)
+    await session.flush()
+    # New skills change what is listed: re-filter now (T2), then fetch as a run (T1).
+    await refilter(session, Criteria.of(profile))
     await session.commit()
-    # The resume_updated run (T1 -> fetch, filter, apply) is wired up with triggers in Phase 5.
+    await request_run(session, "resume_updated")
     return to_out(await get_version(session, version_id))

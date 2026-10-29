@@ -1,5 +1,6 @@
 """run-pipeline (T4, T5, I7, D6, F1): one run. fetch, dedup, then filter (the match rule
-on every stored listing); the apply steps join it in a later phase.
+on every stored listing); the apply steps join it in a later phase. Runs are started by the
+Run dialog, the Daily run, a profile save and an accepted resume (functions/triggers.py).
 
 Concurrency 1 across the app, so a queued run waits for the active one. Each board is
 fetched by its own fetch-board run, invoked in parallel. Dedup waits (a few minutes at
@@ -25,10 +26,11 @@ from schemas.job import ATS
 from sources import ADAPTERS
 
 WAIT_ROUNDS, WAIT_SECONDS = 24, 5  # up to two minutes for embeddings
+TURN_ROUNDS, TURN_SECONDS = 360, 10  # up to an hour waiting for the run before this one
 COUNTED = ("fetched", "new", "changed", "unchanged", "reopened", "closed", "enrich_queued")
 
 
-async def start_step(run_id: str) -> list[dict[str, str]]:
+async def start_step(run_id: str) -> list[dict[str, Any]] | None:
     async with get_sessionmaker()() as session:
         return await start_run(session, uuid.UUID(run_id))
 
@@ -99,10 +101,17 @@ def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
 async def run_pipeline(ctx: inngest.Context) -> dict[str, Any]:
     run_id = str(ctx.event.data["run_id"])
     boards = await ctx.step.run("start", start_step, run_id)
+    for i in range(TURN_ROUNDS):  # one run at a time (T4); see pipeline/runs.py
+        if boards is not None:
+            break
+        await ctx.step.sleep(f"wait-turn-{i}", timedelta(seconds=TURN_SECONDS))
+        boards = await ctx.step.run(f"start-{i}", start_step, run_id)
+    if boards is None:
+        raise inngest.NonRetriableError("The run before this one did not finish within an hour")
 
-    def fetch(board: dict[str, str]) -> Any:
+    def fetch(board: dict[str, Any]) -> Any:
         async def go() -> dict[str, Any]:
-            data = {"run_id": run_id, "board_id": board["board_id"],
+            data = {"run_id": run_id, "board_id": board["board_id"], "roles": board.get("roles"),
                     "host": ADAPTERS[ATS(board["ats"])].host}  # fmt: skip
             try:
                 return await ctx.step.invoke(
