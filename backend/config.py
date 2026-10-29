@@ -12,7 +12,7 @@ class Settings(BaseSettings):
 
     openrouter_api_key: str = ""
     jap_model_extract: str = "openai/gpt-5.6-luna"
-    jap_model_write: str = "anthropic/claude-sonnet-4.5:batch"
+    jap_model_write: str = "anthropic/claude-sonnet-4.5"
     jap_model_embed: str = "nomic-embed-text"
     jap_embed_dim: int = 768
     ollama_base_url: str = "http://host.docker.internal:11434"
