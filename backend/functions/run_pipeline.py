@@ -14,14 +14,16 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import inngest
+from sqlalchemy import select
 
 from config import get_settings
-from database.models import Run
+from database.models import Profile, Run
 from database.session import get_sessionmaker
 from functions.client import inngest_client
 from functions.fetch_board import fetch_board
 from llm.ollama import ping_ollama
-from pipeline.apply.flow import pick
+from llm.spend import month_spend
+from pipeline.apply.flow import applied_today, pick
 from pipeline.dedup import dedup
 from pipeline.matching import refilter_from_profile
 from pipeline.runs import embeddings_pending, finish_run, start_run
@@ -67,6 +69,23 @@ async def pick_step(run_id: str) -> list[str]:
         return await pick(session, run_id)
 
 
+async def limits_step() -> dict[str, Any]:
+    """The caps that held this run back, for the Runs card: spend_cap_reached when this
+    month's model spend is at the cap (model steps stop), daily_cap_reached when today's
+    applications are at the daily cap (A1; nothing more is submitted until midnight)."""
+    async with get_sessionmaker()() as session:
+        spend = await month_spend(session)
+        profile = await session.scalar(select(Profile))
+        cap = profile.daily_cap if profile else 20
+        today = await applied_today(session, datetime.now(UTC))
+    out: dict[str, Any] = {}
+    if spend.reached:
+        out["spend_cap_reached"] = True
+    if today >= cap:
+        out["daily_cap_reached"] = True
+    return out
+
+
 async def finish_step(run_id: str, counts: dict[str, Any], error: str | None) -> None:
     async with get_sessionmaker()() as session:
         await finish_run(session, uuid.UUID(run_id), counts, error)
@@ -80,6 +99,7 @@ async def _failed(ctx: inngest.Context) -> None:
     message = error.get("message") if isinstance(error, dict) else None
     if isinstance(run_id, str):
         await finish_step(run_id, {}, message or "Run failed after retries")
+        await inngest_client.send(inngest.Event(name="run/failed", data={"run_id": run_id}))
 
 
 def summarize(results: list[dict[str, Any]]) -> dict[str, Any]:
@@ -150,5 +170,10 @@ async def run_pipeline(ctx: inngest.Context) -> dict[str, Any]:
             ],
         )
     counts["apply_queued"] = len(picked)
+    counts.update(await ctx.step.run("limits", limits_step))
     await ctx.step.run("finish", finish_step, run_id, counts, None)
+    if counts["boards_failed"]:
+        await ctx.step.send_event(
+            "send-failed", inngest.Event(name="run/failed", data={"run_id": run_id})
+        )
     return counts

@@ -3,7 +3,11 @@ import { useEffect, useRef, useState } from 'react'
 import { api, type Application, type Ats, type CoverLetter, type FormField, type ListingDetail } from '../api/client'
 import { atsLabel, shortDate } from '../format'
 
-type Props = { listing: ListingDetail; onChanged: (detail?: ListingDetail) => void }
+type Props = {
+  listing: ListingDetail
+  applyMode: 'review' | 'automatic'
+  onChanged: (detail?: ListingDetail) => void
+}
 
 const SOURCES: Record<string, string> = {
   resume: 'Your resume',
@@ -125,7 +129,7 @@ function LetterEditor({ letter, appId, value, onChange }: { letter: CoverLetter;
 }
 
 /** Apply now, Skip, Ready for review, Needs input, Applied and Failed (Statuses, U14, U15). */
-export default function ApplyPanel({ listing, onChanged }: Props) {
+export default function ApplyPanel({ listing, applyMode, onChanged }: Props) {
   const app: Application | null = listing.application
   const [edits, setEdits] = useState<Record<string, string>>({})
   const [letterEdit, setLetterEdit] = useState<string | null>(null)
@@ -287,7 +291,9 @@ export default function ApplyPanel({ listing, onChanged }: Props) {
             <p className="muted">{listing.apply_blocked}.</p>
           ) : (
             <p className="hint">
-              Review mode: JAP fills the form and stops at Ready for review. Nothing is sent until you press Approve.
+              {applyMode === 'automatic'
+                ? 'Automatic mode: JAP fills the form and submits it, within your daily cap, unless something about the job is unclear or only you can answer it.'
+                : 'Review mode: JAP fills the form and stops at Ready for review. Nothing is sent until you press Approve.'}
             </p>
           )}
           <div className="row-buttons">
@@ -375,6 +381,11 @@ export default function ApplyPanel({ listing, onChanged }: Props) {
             <strong>Ready for review.</strong> Nothing has been sent. Check every answer, edit any of them, then Approve
             and submit.
           </p>
+          {live.review_reason && (
+            <p className="hint warn" role="status">
+              Automatic mode left this one for you: {live.review_reason}.
+            </p>
+          )}
           <ul className="form-answers">
             {live.fields.map((f) => (
               <FieldInput key={f.key} f={f} value={valueOf(f)} onChange={(v) => setEdits({ ...edits, [f.key]: v })} />

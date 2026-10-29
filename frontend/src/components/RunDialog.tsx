@@ -5,12 +5,13 @@ import type { RunRequest } from '../api/client'
 type Props = {
   roles: string[]
   busy: boolean
+  automatic?: boolean
   onClose: () => void
   onStart: (body: RunRequest) => Promise<void>
 }
 
 /** The Run dialog (T3, U5): which roles to refresh, and Find only or Find and apply. */
-export default function RunDialog({ roles, busy, onClose, onStart }: Props) {
+export default function RunDialog({ roles, busy, automatic = false, onClose, onStart }: Props) {
   const [all, setAll] = useState(true)
   const [picked, setPicked] = useState<string[]>([])
   const [mode, setMode] = useState<RunRequest['mode']>('find_only')
@@ -76,8 +77,9 @@ export default function RunDialog({ roles, busy, onClose, onStart }: Props) {
           </label>
           {mode === 'find_and_apply' && (
             <p className="hint">
-              Review mode: each job stops at Ready for review, and nothing is sent until you approve it. Up to your daily
-              cap.
+              {automatic
+                ? 'Automatic mode: each job with nothing unclear is submitted, at least 30 seconds apart, up to your daily cap. The rest wait for you.'
+                : 'Review mode: each job stops at Ready for review, and nothing is sent until you approve it. Up to your daily cap.'}
             </p>
           )}
         </fieldset>

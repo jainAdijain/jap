@@ -22,7 +22,8 @@ from database import session as db_session
 
 BACKEND = Path(__file__).resolve().parent.parent
 TABLES = (
-    "llm_call, possible_duplicate, dedup_override, skill_alias, company_alias, answer_bank, "
+    "form_check, llm_call, possible_duplicate, dedup_override, skill_alias, company_alias, "
+    "answer_bank, "
     "application, run, posting, listing, watched_board, company, resume_version, profile"
 )
 
@@ -95,7 +96,14 @@ def events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
     import functions.events
 
     monkeypatch.setattr(functions.events, "send", fake_send)
-    for mod in ("api.profile", "api.resumes", "api.runs", "api.listings", "api.applications"):
+    for mod in (
+        "api.profile",
+        "api.resumes",
+        "api.runs",
+        "api.listings",
+        "api.applications",
+        "api.ops",
+    ):
         monkeypatch.setattr(f"{mod}.send", fake_send)
     return sent
 

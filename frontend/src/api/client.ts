@@ -114,6 +114,8 @@ export type RunCounts = {
   applied?: number
   failed?: number
   needs_input?: number
+  spend_cap_reached?: boolean
+  daily_cap_reached?: boolean
 }
 export type Run = {
   id: string
@@ -131,7 +133,13 @@ export type Run = {
 
 export type RunState = { last: Run | null; active: Run | null; queued: Run | null }
 export type RunRequest = { mode: 'find_only' | 'find_and_apply'; roles?: string[] }
-export type Switches = { apply_mode?: Profile['apply_mode']; daily_run?: boolean; daily_run_at?: string }
+export type Switches = {
+  apply_mode?: Profile['apply_mode']
+  daily_run?: boolean
+  daily_run_at?: string
+  daily_cap?: number
+  spend_cap_usd?: number
+}
 
 export type Salary = { min: number | null; max: number | null; currency: string | null; period: string | null }
 export type Extracted = {
@@ -260,6 +268,7 @@ export type Application = {
   cover_letter_text: string | null
   cover_letter: CoverLetter | null
   error: string | null
+  review_reason: string | null
   submitted_at: string | null
   email_sent_at: string | null
   has_screenshot: boolean
@@ -284,6 +293,24 @@ export type Duplicate = {
   b: DuplicateSide
   title_similarity: number
   description_similarity: number
+}
+
+export type FormCheck = {
+  id: string
+  ats: Ats
+  ok: boolean
+  fields: number
+  required: number
+  url: string | null
+  error: string | null
+  has_screenshot: boolean
+  checked_at: string
+}
+export type Ops = {
+  last_backup: { file: string; at: string; bytes: number } | null
+  backups: number
+  backup_today: boolean
+  form_checks: FormCheck[]
 }
 
 export const api = {
@@ -353,6 +380,10 @@ export const api = {
   editAnswer: (a: Answer) =>
     request<Answer>(`/api/answers/${a.id}`, json('PUT', { question: a.question, answer: a.answer })),
   removeAnswer: (id: string) => request<void>(`/api/answers/${id}`, { method: 'DELETE' }),
+  ops: (signal?: AbortSignal) => request<Ops>('/api/ops', { signal }),
+  backupNow: () => request<{ queued: boolean }>('/api/ops/backup', json('POST', {})),
+  formCheckNow: () => request<{ queued: boolean }>('/api/ops/form-check', json('POST', {})),
+  formCheckShotUrl: (id: string) => `${API_URL}/api/ops/form-check/${id}/screenshot`,
 }
 
 export const getHealth = api.health

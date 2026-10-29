@@ -254,7 +254,7 @@ export default function DashboardPage() {
           </div>
         )}
       </section>
-      {openId && <ListingPanel id={openId} onClose={() => setOpenId(null)} onChanged={changed} onOpen={setOpenId} />}
+      {openId && <ListingPanel id={openId} applyMode={profile?.apply_mode} onClose={() => setOpenId(null)} onChanged={changed} onOpen={setOpenId} />}
     </>
   )
 }

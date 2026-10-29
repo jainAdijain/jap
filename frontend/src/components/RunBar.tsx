@@ -29,8 +29,9 @@ function counts(run: Run): string {
   if (c.changed) parts.push(`${c.changed} changed`)
   if (c.closed) parts.push(`${c.closed} closed`)
   if (c.boards_failed) parts.push(`${n(c.boards_failed, 'board')} failed`)
+  if (c.spend_cap_reached) parts.push('spend cap reached, model steps stopped')
   if (run.mode === 'find_and_apply') {
-    parts.push(`${c.apply_queued ?? 0} to apply`)
+    parts.push(`${c.apply_queued ?? 0} to apply${c.daily_cap_reached && !c.apply_queued ? ' (daily cap reached)' : ''}`)
     if (c.ready_for_review) parts.push(`${c.ready_for_review} ready for review`)
     parts.push(`${c.applied ?? 0} applied`, `${c.failed ?? 0} failed`, `${c.needs_input ?? 0} need input`)
   }
@@ -47,6 +48,8 @@ type Props = {
 export default function RunBar({ state, profile, onRun, onSwitch }: Props) {
   const [dialog, setDialog] = useState(false)
   const [time, setTime] = useState<string | null>(null)
+  const [cap, setCap] = useState<string | null>(null)
+  const automatic = profile?.apply_mode === 'automatic'
   const last = state?.last ?? null
   const going = state?.active ?? null
   const queued = state?.queued ?? null
@@ -81,22 +84,67 @@ export default function RunBar({ state, profile, onRun, onSwitch }: Props) {
             }}
           />
           <span className="segmented" role="group" aria-label="Apply mode">
-            <button type="button" aria-pressed={profile?.apply_mode !== 'automatic'} disabled={!profile}>
+            <button
+              type="button"
+              aria-pressed={!automatic}
+              disabled={!profile}
+              title="Nothing is submitted until you press Approve"
+              onClick={() => automatic && void onSwitch({ apply_mode: 'review' })}
+            >
               Review
             </button>
-            <button type="button" aria-pressed={profile?.apply_mode === 'automatic'} disabled title="Automatic mode arrives in Phase 8; Review mode submits nothing until you approve">
+            <button
+              type="button"
+              aria-pressed={automatic}
+              disabled={!profile}
+              title="Submit jobs with nothing unclear, within the daily cap"
+              onClick={() => !automatic && void onSwitch({ apply_mode: 'automatic' })}
+            >
               Automatic
             </button>
           </span>
+          <label className="cap" title="Most applications submitted in one day (A1)">
+            Daily cap
+            <input
+              type="number"
+              min={0}
+              max={100}
+              aria-label="Daily cap"
+              value={cap ?? String(profile?.daily_cap ?? 20)}
+              disabled={!profile}
+              onChange={(e) => setCap(e.target.value)}
+              onBlur={() => {
+                const n = Number(cap)
+                if (profile && cap !== null && Number.isInteger(n) && n >= 0 && n <= 100 && n !== profile.daily_cap)
+                  void onSwitch({ daily_cap: n })
+                setCap(null)
+              }}
+            />
+          </label>
           <button type="button" className="primary" onClick={() => setDialog(true)}>
             Run…
           </button>
         </div>
       </div>
+      {automatic && profile && (
+        <p className="hint warn" role="status">
+          Automatic mode is on. From the next run, Find and apply submits every job with nothing unclear, up to{' '}
+          {profile.daily_cap} a day and at least 30 seconds apart. Jobs with an unclear work mode, a question only you
+          can answer, or already in Ready for review still wait for you.
+        </p>
+      )}
       {profile?.daily_run && (
         <p className="hint">
-          Daily run is on: every day at {hhmm(profile.daily_run_at)}, finding jobs only. It runs only while this
-          computer is awake.
+          Daily run is on: every day at {hhmm(profile.daily_run_at)},{' '}
+          {automatic ? 'finding and applying (Automatic mode)' : 'finding jobs only'}. It runs only while this computer
+          is awake.
+        </p>
+      )}
+      {profile?.spend.reached && (
+        <p className="hint error" role="status">
+          Spend cap reached: ${profile.spend.month_usd.toFixed(2)} of ${profile.spend.cap_usd.toFixed(2)} this month.
+          Model steps (reading job descriptions, drafted answers, cover letters) are stopped, and nothing that needs
+          them is sent. Raise the cap on My profile.
         </p>
       )}
       <p className={last?.status === 'failed' ? 'error' : 'lead'} role="status" data-testid="last-run">
@@ -138,6 +186,7 @@ export default function RunBar({ state, profile, onRun, onSwitch }: Props) {
         <RunDialog
           roles={profile?.target_roles ?? []}
           busy={!!going || !!queued}
+          automatic={automatic}
           onClose={() => setDialog(false)}
           onStart={async (body) => {
             await onRun(body)

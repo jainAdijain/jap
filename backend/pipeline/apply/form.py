@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from playwright.async_api import Browser, Error, FilePayload, Page, async_playwright
+from playwright.async_api import Error, FilePayload, Page, async_playwright
 
 NAV_TIMEOUT_MS = 30_000
 SETTLE_TIMEOUT_MS = 15_000
@@ -94,8 +94,7 @@ def to_fields(raw: list[dict[str, Any]]) -> list[FormField]:
     return out
 
 
-async def _open(browser: Browser, url: str) -> Page:
-    page = await browser.new_page()
+async def _open_page(page: Page, url: str) -> Page:
     page.set_default_timeout(SETTLE_TIMEOUT_MS)
     resp = await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
     if resp is not None and resp.status >= 400:
@@ -107,20 +106,38 @@ async def _open(browser: Browser, url: str) -> Page:
     return page
 
 
-async def read_form(url: str) -> FormRead:
+async def read_form(url: str, screenshot: Path | None = None) -> FormRead:
+    """Every field on the form. When the form can't be read, the page as it was is kept at
+    `screenshot` (when given) so a Failed job shows what JAP saw."""
     async with async_playwright() as pw:
         browser = await pw.chromium.launch()
+        page: Page | None = None
         try:
-            page = await _open(browser, url)
-            data = await page.evaluate(READ_JS)
-        except Error as exc:
-            raise FormError(f"Could not read the form: {exc.message.splitlines()[0]}") from exc
+            page = await browser.new_page()
+            try:
+                page = await _open_page(page, url)
+                data = await page.evaluate(READ_JS)
+            except Error as exc:
+                raise FormError(f"Could not read the form: {exc.message.splitlines()[0]}") from exc
+            fields = to_fields(data["fields"])
+            if not fields:
+                raise FormError("No application form found on the page")
+        except FormError:
+            if screenshot is not None and page is not None:
+                await _shot(page, screenshot)
+            raise
         finally:
             await browser.close()
-    fields = to_fields(data["fields"])
-    if not fields:
-        raise FormError("No application form found on the page")
     return FormRead(fields=fields, captcha=bool(data["captcha"]))
+
+
+async def _shot(page: Page, path: Path) -> bool:
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        await page.screenshot(path=str(path), full_page=True)
+    except Error:
+        return False
+    return True
 
 
 def selector(key: str) -> str:

@@ -73,6 +73,7 @@ class ApplicationOut(BaseModel):
     cover_letter_text: str | None
     cover_letter: CoverLetterOut | None
     error: str | None
+    review_reason: str | None = None  # why Automatic mode left it for me (A3)
     submitted_at: datetime | None
     email_sent_at: datetime | None
     has_screenshot: bool

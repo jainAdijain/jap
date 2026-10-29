@@ -114,3 +114,5 @@ class ProfileSwitches(BaseModel):
     apply_mode: ApplyMode | None = None
     daily_run: bool | None = None
     daily_run_at: time | None = None  # in JAP_TZ; 06:00 unless changed for testing
+    daily_cap: int | None = Field(default=None, ge=0, le=100)  # A1: 20 unless lowered
+    spend_cap_usd: float | None = Field(default=None, ge=0, le=100)  # $2 unless changed

@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.8.0 (Phase 7), 29 Oct 2026.**
+**Version 0.9.0 (Phase 8), 29 Oct 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -124,7 +124,7 @@ whether it is required, and fills it:
   or a CAPTCHA stops the job at **Needs input**. Answer in the panel; the answers go to the
   answer bank (untick the box to skip that) and JAP prepares the form again.
 
-In Review mode (the only mode until Phase 8) the job then waits at **Ready for review**:
+In Review mode (the default) the job then waits at **Ready for review**:
 every answer is shown, with where it came from, and editable. Nothing is sent until you
 press **Approve and submit**. JAP then opens the form fresh, fills it, presses Submit once,
 and keeps a screenshot of the confirmation and a Playwright trace in `data/`. The job
@@ -139,6 +139,51 @@ confirmation, the job becomes **Failed** with "Submit outcome unknown" so you ch
 An Applied job has no Apply now, and a run never prepares it again, even when the employer
 reposts it (a repost joins the same listing). **Skip** cancels a prepared or waiting job;
 **Undo** brings it back. A **Failed** job shows the reason and screenshot, with **Retry**.
+
+## Automatic mode
+
+The **Review | Automatic** switch on the Runs card sets the Apply mode (A4). In Automatic mode
+a job is submitted without asking you once its form is filled, unless something about it is
+unclear (A3):
+
+- a job whose posting doesn't say remote, hybrid or onsite (**Work mode unclear**) stops at
+  Ready for review, with "Automatic mode left this one for you" and the reason;
+- a question only you can answer, a required choice with no saved answer, a CAPTCHA or a
+  failed cover letter still stops at **Needs input**;
+- a job already waiting in Ready for review keeps waiting: the mode is fixed when a job is
+  prepared, so switching takes effect from the next run.
+
+Submissions are at most the **Daily cap** a day (next to the switch, 20 by default; set it to 2
+to try Automatic mode) and at least 30 seconds apart. A run at the cap prepares nothing and
+says "daily cap reached". The Daily run finds jobs only in Review mode, and finds and applies
+in Automatic mode. Switching back to Review makes the next run prepare without submitting.
+
+## When something fails
+
+- **A job fails** (the form page is gone, the form changed, Submit gave no confirmation): after
+  Inngest's retries it shows **Failed** with the reason, a screenshot of the page as JAP saw it
+  (also when the form couldn't even be read), and **Retry**.
+- **Alert emails** go to the address on My profile, once each: when a run fails, when a board
+  in a run can't be fetched, when an application ends Failed (with the screenshot attached),
+  and when the weekly form test can't read a form. They never carry answers or letters.
+- **Spend cap**: My profile has an **AI spend** card with this month's spend and the monthly cap
+  ($2, or `JAP_MONTHLY_COST_CAP_USD`). Once it is reached, model steps stop: job descriptions
+  aren't read, answers aren't drafted, and no cover letter is written, so a job that needs
+  one stops at Needs input ("Spend cap reached ...") and nothing is sent without it. The Runs
+  card and the last run line say so. Lower the cap to $0.05 to try it, then set it back.
+- **Daily backup**: an hourly Inngest cron (`daily-backup`) writes
+  `data/backups/jap-YYYYmmdd-HHMMSS.sql.gz` with `pg_dump` the first time each day the Mac is
+  awake, and keeps 14 days. **Back up now** on the Status card makes one at once;
+  `make restore FILE=...` brings one back.
+- **Weekly form test**: every Monday at 07:00 (`form-check`), JAP opens the newest open job's
+  form on each ATS you watch and reads it, submitting nothing. The Status card shows the
+  result per ATS; a failure sends an alert. **Test forms now** or `make form-check` runs it
+  at once.
+- **Dedup QA set**: `backend/tests/qa/dedup_pairs.yaml` holds 106 labelled job pairs (52 the
+  same job, 54 different). `make qa` places each pair with the real dedup and prints the
+  accuracy; CI fails below 95% or on any wrong merge. It found one: a bracket such as
+  "(Python)" vs "(Java)" was dropped from the role, so the two jobs merged. Brackets now drop
+  only places, work modes, requisition numbers and words like "full-time".
 
 ## Cover letters
 
@@ -179,7 +224,9 @@ panel shows the letter and the PDF as sent.
 | `make migrate` | `alembic upgrade head` in the app container |
 | `make seed` | Load `seed/companies.yaml` and `seed/skills.yaml` |
 | `make test` | ruff, mypy, pytest for app; lint and build for ui |
-| `make backup` / `make restore FILE=...` | Dump to / restore from `data/backups/` |
+| `make backup` / `make restore FILE=...` | Dump to / restore from `data/backups/` (the app also makes one every day) |
+| `make qa` | Dedup QA set: place the 106 labelled job pairs and print the accuracy |
+| `make form-check` | Read one live form per ATS now (the weekly form test); nothing is submitted |
 | `make llm-check` | One tiny test call to each OpenRouter model (no personal data) |
 | `make ollama-check` | Is Ollama answering with `nomic-embed-text` pulled |
 | `make demo` / `make demo-clear` | Load or remove the demo postings used to check dedup and the filters |
@@ -201,6 +248,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.9.0 | 29 Oct 2026 | Phase 8: Automatic mode and hardening. Review/Automatic switch and Daily cap on the Runs card, jobs with an unclear work mode held at Ready for review with the reason (A3), Daily run finds and applies in Automatic mode, "daily cap reached" and "spend cap reached" on the last run line, spend cap set on My profile (AI spend card), screenshot kept when a form can't be read, alert emails for failed runs, boards, applications and form tests (notify-failure), daily pg_dump backup (daily-backup, 14 days kept), weekly live form test per ATS (form-check), Backups and form tests on the Status card, dedup QA set of 106 labelled pairs (`make qa`) and the bracket fix it led to, `make form-check`, `make help` fixed when `.env` exists |
 | 0.8.0 | 29 Oct 2026 | Phase 7: cover letters. Written only for a mandatory cover letter field (`cover_letter` prompt, as its own `cover-letter` step), claim check against the resume (`claim_check` prompt plus code checks for quotes, length, company and role, numbers), one rewrite, Needs input after two failures with your own letter accepted, text or PDF delivery, editable letter in Ready for review, letter and PDF in What was sent and attached to the email |
 | 0.7.1 | 29 Oct 2026 | Match rule fix: the rule in words, a warning for rows that can't narrow the list, one-click rules (Any one, Role and Location, Role and Skills, All three), per-condition counts in the preview, and locations typed with their region ("Bangalore, India") match by city |
 | 0.7.0 | 29 Oct 2026 | Phase 6: Apply in Review mode. Apply now and Skip in the job panel, apply-listing (JD snapshot, Playwright form reader, contact fields from My profile by code, resume upload, answer bank, drafted answers for required free text), Needs input with answers saved to the answer bank, Ready for review with every answer editable, Approve and submit (daily cap, 30 s gap, Submit pressed at most once), confirmation screenshot and trace, What was sent with the frozen JD, "Applied: Role at Company" email, Find and apply in the Run dialog, apply counts on the last run line, Retry for Failed; README history row for 0.6.0 moved here from the services table |

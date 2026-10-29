@@ -116,7 +116,7 @@ def setup(db: str, sql: psycopg.Connection[Any], tmp_path: Path) -> dict[str, An
 def _fake_form(
     monkeypatch: pytest.MonkeyPatch, fields: list[FormField], captcha: bool = False
 ) -> None:
-    async def read(url: str) -> FormRead:
+    async def read(url: str, screenshot: Path | None = None) -> FormRead:
         return FormRead(fields=list(fields), captcha=captcha)
 
     monkeypatch.setattr(flow, "read_form", read)

@@ -15,6 +15,10 @@ from pipeline.canonical import canonical_role, clean_company, seniority_of
         ("Product Designer - Remote, US", [], "product designer"),
         ("Junior Backend Engineer", [], "junior backend engineer"),
         ("Senior Frontend Engineer", [], "senior frontend engineer"),
+        ("Backend Engineer (Python)", [], "backend engineer python"),  # a specialization
+        ("Data Analyst (Noida)", ["Noida, India"], "data analyst"),
+        ("Senior Data Engineer [Hybrid]", [], "senior data engineer"),
+        ("Solutions Engineer - EMEA", [], "solutions engineer"),
     ],
 )
 def test_canonical_role(title: str, locations: list[str], role: str) -> None:

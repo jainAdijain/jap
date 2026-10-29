@@ -12,10 +12,10 @@ OLLAMA_URL ?= http://127.0.0.1:11434
 EMBED_MODEL ?= nomic-embed-text
 
 .DEFAULT_GOAL := help
-.PHONY: help env start stop restart reset clean logs ps migrate seed test test-app test-ui backup restore ollama-check llm-check demo demo-clear
+.PHONY: help env start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore form-check ollama-check llm-check demo demo-clear
 
 help: ## List the targets
-	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
+	@grep -hE '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
 
 env: ## Create .env from .env.example if it is missing
 	@test -f .env || { cp .env.example .env; echo "Created .env from .env.example. Add your OpenRouter key and Gmail app password to it."; }
@@ -74,11 +74,18 @@ test-app:
 test-ui:
 	$(COMPOSE) exec ui sh -c 'npm run lint && npm run build'
 
+qa: ## Dedup QA set: place ~100 labelled job pairs and print the accuracy
+	$(COMPOSE) exec app pytest -q -s tests/test_dedup_qa.py
+
 backup: ## Dump the database to data/backups/
 	@COMPOSE="$(COMPOSE)" infra/scripts/backup.sh
 
 restore: ## Restore a backup: make restore FILE=data/backups/<file>.sql.gz
 	@COMPOSE="$(COMPOSE)" infra/scripts/restore.sh "$(FILE)"
+
+form-check: ## Read one live form per ATS now (the weekly form test; nothing is submitted)
+	@curl -fsS -X POST http://127.0.0.1:$(JAP_API_PORT)/api/ops/form-check > /dev/null && \
+		echo "Form test started. Results: Status card on the Dashboard, or the form-check run in Inngest."
 
 llm-check: ## One test call to each OpenRouter model (needs OPENROUTER_API_KEY in .env)
 	$(COMPOSE) exec app python -m llm.check
