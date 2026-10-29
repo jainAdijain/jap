@@ -19,6 +19,7 @@ from llm import PersonalDataBlocked, SpendCapReached
 from llm.client import MissingApiKey
 from pipeline.dedup import refresh_listings
 from pipeline.enrich import EmbedFailed, embed_posting, extract_posting
+from pipeline.matching import refilter_from_profile
 
 
 async def extract_step(posting_id: str) -> dict[str, Any]:
@@ -30,6 +31,7 @@ async def extract_step(posting_id: str) -> dict[str, Any]:
         posting = await session.get(Posting, uuid.UUID(posting_id))
         if posting is not None and posting.listing_id is not None and not result.skipped:
             await refresh_listings(session, {posting.listing_id})
+            await refilter_from_profile(session, [posting.listing_id])  # new skills, work mode
             await session.commit()
     return {
         "skipped": result.skipped,

@@ -94,6 +94,7 @@ export type Detected = {
 }
 
 export type RunCounts = {
+  listed?: number
   merged?: number
   new_listings?: number
   possible_duplicates?: number
@@ -157,17 +158,43 @@ export type PostingDetail = PostingRow & {
 }
 export type Answer = { id: string; question: string; answer: string }
 
+export type ListingStatus =
+  | 'not_applied'
+  | 'ready_for_review'
+  | 'applying'
+  | 'applied'
+  | 'needs_input'
+  | 'failed'
+  | 'manual_apply'
+  | 'skipped'
+  | 'closed'
 export type ListingRow = {
   id: string
   title: string
   company: string
   locations: string[]
   work_mode: string | null
-  status: string
+  status: ListingStatus
   last_posted_at: string | null
   platforms: Ats[]
   postings: number
+  role: string
+  matched: Condition[]
+  matched_role: string | null
+  nice_skills: string[]
 }
+export type ListingFilters = {
+  q?: string
+  status?: 'open' | 'all' | ListingStatus
+  role?: string
+  location?: string
+  matched?: Condition
+  page?: number
+}
+export type StatusCounts = { listings: number } & Record<Exclude<ListingStatus, 'closed'>, number>
+export type ListingSummary = { totals: StatusCounts; by_role: (StatusCounts & { role: string | null })[] }
+/** Role filter value for listings matched through Skills or Location only. */
+export const OTHER_ROLE = '__other'
 export type ListingPage = { total: number; page: number; page_size: number; rows: ListingRow[] }
 export type AlsoOn = {
   posting_id: string
@@ -180,7 +207,6 @@ export type AlsoOn = {
   posted_at: string | null
 }
 export type ListingDetail = ListingRow & {
-  canonical_role: string
   skills: string[]
   seniority: string | null
   remote_regions: string[]
@@ -203,6 +229,8 @@ export const api = {
   profile: () => request<Profile>('/api/profile'),
   saveProfile: (p: ProfileFields) =>
     request<Profile & { matching_count: number }>('/api/profile', json('PUT', p)),
+  previewProfile: (p: ProfileFields, signal?: AbortSignal) =>
+    request<{ matching_count: number }>('/api/profile/preview', { ...json('POST', p), signal }),
   resumes: () => request<Resume[]>('/api/resumes'),
   uploadResume: (file: File) => {
     const form = new FormData()
@@ -229,13 +257,14 @@ export const api = {
     return request<PostingPage>(`/api/postings?${query}`)
   },
   posting: (id: string) => request<PostingDetail>(`/api/postings/${id}`),
-  listings: (params: { q?: string; status?: 'open' | 'closed' | 'all'; page?: number }) => {
+  listings: (params: ListingFilters) => {
     const query = new URLSearchParams()
-    if (params.q) query.set('q', params.q)
-    if (params.status) query.set('status', params.status)
-    if (params.page) query.set('page', String(params.page))
+    for (const [key, value] of Object.entries(params)) {
+      if (value !== undefined && value !== '') query.set(key, String(value))
+    }
     return request<ListingPage>(`/api/listings?${query}`)
   },
+  summary: () => request<ListingSummary>('/api/listings/summary'),
   listing: (id: string) => request<ListingDetail>(`/api/listings/${id}`),
   merge: (id: string, other: string) =>
     request<ListingDetail>(`/api/listings/${id}/merge`, json('POST', { other_listing_id: other })),

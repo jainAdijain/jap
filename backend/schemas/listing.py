@@ -18,6 +18,10 @@ class ListingRow(BaseModel):
     last_posted_at: datetime | None
     platforms: list[ATS]  # boards with an open posting of this listing (the badge)
     postings: int
+    role: str  # canonical role
+    matched: list[str]  # conditions it met: role, skills, location (F3)
+    matched_role: str | None  # the target role it counts under in Jobs by role (U2)
+    nice_skills: list[str]  # my nice-to-have skills the job asks for, shown as tags
 
 
 class ListingPage(BaseModel):
@@ -25,6 +29,29 @@ class ListingPage(BaseModel):
     page: int
     page_size: int
     rows: list[ListingRow]
+
+
+class StatusCounts(BaseModel):
+    listings: int = 0
+    not_applied: int = 0
+    ready_for_review: int = 0
+    applying: int = 0
+    applied: int = 0
+    needs_input: int = 0
+    failed: int = 0
+    manual_apply: int = 0
+    skipped: int = 0
+
+
+class RoleCounts(StatusCounts):
+    role: str | None  # None: listed through Skills or Location only
+
+
+class ListingSummary(BaseModel):
+    """Totals (U1) and Jobs by role (U2) over the listed, not Closed listings."""
+
+    totals: StatusCounts
+    by_role: list[RoleCounts]
 
 
 class AlsoOn(BaseModel):
@@ -44,7 +71,6 @@ class ListingRef(BaseModel):
 
 
 class ListingDetail(ListingRow):
-    canonical_role: str
     skills: list[str]
     seniority: str | None
     remote_regions: list[str]

@@ -1,21 +1,25 @@
-"""Listings (U1 to U4, U11 to U13, D1 to D5): one row per company and role.
+"""Listings (U1 to U4, U11 to U13, D1 to D5, F1 to F3): one row per company and role.
 
-Until the match rule arrives (Phase 4) every listing is shown, newest first. A listing is
-hidden when none of its postings comes from a company I still watch.
+Only listings that match My profile are shown (listing.matched, written by
+pipeline.matching), newest first. A listing is hidden when none of its postings comes from a
+company I still watch. The filter bar narrows by role, location, status and matched
+condition without touching the profile (F2).
 """
 
 import uuid
 from collections import defaultdict
 
 from fastapi import APIRouter, Query
-from sqlalchemy import ColumnElement, exists, func, or_, select
+from sqlalchemy import ColumnElement, Text, cast, exists, func, or_, select
+from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.errors import ApiError
 from api.postings import detail
-from database.models import Company, Listing, Posting, WatchedBoard
+from database.models import Company, Listing, Posting, Profile, WatchedBoard
 from database.session import Session
 from pipeline.dedup import DedupConflict, merge_listings
+from pipeline.matching import refilter_from_profile
 from schemas.job import ATS
 from schemas.listing import (
     AlsoOn,
@@ -23,8 +27,18 @@ from schemas.listing import (
     ListingPage,
     ListingRef,
     ListingRow,
+    ListingSummary,
     MergeIn,
+    RoleCounts,
+    StatusCounts,
 )
+
+STATUSES = (
+    "not_applied", "ready_for_review", "applying", "applied", "needs_input", "failed",
+    "manual_apply", "skipped", "closed",
+)  # fmt: skip
+STATUS_FILTER = "^(open|all|" + "|".join(STATUSES) + ")$"
+OTHER_ROLE = "__other"  # role filter value for listings matched through Skills or Location
 
 router = APIRouter(prefix="/listings", tags=["listings"])
 
@@ -52,7 +66,12 @@ def platforms(postings: list[Posting]) -> list[ATS]:
     return [ATS(s) for s in sorted(found)]
 
 
-def to_row(listing: Listing, company: str, postings: list[Posting]) -> ListingRow:
+async def nice_to_have(session: AsyncSession) -> list[str]:
+    profile = await session.scalar(select(Profile))
+    return list(profile.nice_to_have_skills) if profile else []
+
+
+def to_row(listing: Listing, company: str, postings: list[Posting], nice: list[str]) -> ListingRow:
     return ListingRow(
         id=listing.id,
         title=listing.title_display,
@@ -63,22 +82,41 @@ def to_row(listing: Listing, company: str, postings: list[Posting]) -> ListingRo
         last_posted_at=listing.last_posted_at,
         platforms=platforms(postings),
         postings=len(postings),
+        role=listing.canonical_role,
+        matched=listing.matched or [],
+        matched_role=listing.matched_role,
+        nice_skills=[s for s in nice if s in listing.skills],
     )
+
+
+def listed() -> list[ColumnElement[bool]]:
+    return [Listing.matched.is_not(None), watched()]
 
 
 @router.get("", response_model=ListingPage)
 async def listings(
     session: Session,
-    status: str = Query("open", pattern="^(open|closed|all)$"),
+    status: str = Query("open", pattern=STATUS_FILTER),
+    role: str | None = Query(None, max_length=200),
+    location: str | None = Query(None, max_length=100),
+    matched: str | None = Query(None, pattern="^(role|skills|location)$"),
     q: str | None = Query(None, max_length=100),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ) -> ListingPage:
-    where: list[ColumnElement[bool]] = [watched()]
+    where = listed()
     if status == "open":
         where.append(Listing.status != "closed")
-    elif status == "closed":
-        where.append(Listing.status == "closed")
+    elif status != "all":
+        where.append(Listing.status == status)
+    if role == OTHER_ROLE:
+        where.append(Listing.matched_role.is_(None))
+    elif role:
+        where.append(Listing.matched_role == role)
+    if location:
+        where.append(func.array_to_string(Listing.locations, " | ").ilike(f"%{location.strip()}%"))
+    if matched:
+        where.append(Listing.matched.contains(cast([matched], ARRAY(Text))))
     if q:
         like = f"%{q}%"
         where.append(or_(Listing.title_display.ilike(like), Company.name.ilike(like)))
@@ -98,12 +136,34 @@ async def listings(
         )
     ).all()
     by_listing = await postings_of(session, [listing.id for listing, _ in rows])
+    nice = await nice_to_have(session)
     return ListingPage(
         total=int(total or 0),
         page=page,
         page_size=page_size,
-        rows=[to_row(listing, name, by_listing[listing.id]) for listing, name in rows],
+        rows=[to_row(listing, name, by_listing[listing.id], nice) for listing, name in rows],
     )
+
+
+@router.get("/summary", response_model=ListingSummary)
+async def summary(session: Session) -> ListingSummary:
+    """Totals and Jobs by role over the listed, not Closed listings (U1, U2). Each listing
+    counts once, under the first target role it matches; the rest count under Other."""
+    rows = await session.execute(
+        select(Listing.matched_role, Listing.status, func.count())
+        .where(*listed(), Listing.status != "closed")
+        .group_by(Listing.matched_role, Listing.status)
+    )
+    profile = await session.scalar(select(Profile))
+    roles: list[str | None] = [*(profile.target_roles if profile else []), None]
+    totals = StatusCounts()
+    by_role: dict[str | None, RoleCounts] = {r: RoleCounts(role=r) for r in roles}
+    for role, status, n in rows.all():
+        counts = by_role.setdefault(role, RoleCounts(role=role))
+        for c in (totals, counts):
+            c.listings += n
+            setattr(c, status, getattr(c, status) + n)
+    return ListingSummary(totals=totals, by_role=list(by_role.values()))
 
 
 async def load_detail(session: AsyncSession, listing_id: uuid.UUID) -> ListingDetail:
@@ -124,8 +184,7 @@ async def load_detail(session: AsyncSession, listing_id: uuid.UUID) -> ListingDe
         .order_by(Listing.title_display)
     )
     return ListingDetail(
-        **to_row(listing, company.name, postings).model_dump(),
-        canonical_role=listing.canonical_role,
+        **to_row(listing, company.name, postings, await nice_to_have(session)).model_dump(),
         skills=listing.skills,
         seniority=listing.seniority,
         remote_regions=listing.remote_regions,
@@ -157,6 +216,8 @@ async def merge(listing_id: uuid.UUID, body: MergeIn, session: Session) -> Listi
     """Merge the other listing into this one (D5); remembered on later runs."""
     try:
         await merge_listings(session, listing_id, body.other_listing_id)
+        await refilter_from_profile(session, [listing_id])
+        await session.commit()
     except LookupError as exc:
         raise ApiError(404, "not_found", str(exc)) from exc
     except DedupConflict as exc:

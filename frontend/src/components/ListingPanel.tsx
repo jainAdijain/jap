@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { api, type ListingDetail } from '../api/client'
-import { atsLabel, shortDate } from '../format'
+import { atsLabel, CONDITION_LABELS, joinAnd, shortDate, STATUS_LABELS, workModeLabel } from '../format'
 import JobFields from './JobFields'
 import Platforms from './Platforms'
 
@@ -69,6 +69,22 @@ export default function ListingPanel({ id, onClose, onChanged, onOpen }: Props) 
               {job?.department && ` · ${job.department}`}
               {job?.employment_type && ` · ${job.employment_type}`} · Posted {shortDate(listing.last_posted_at)}
             </p>
+            <p className="muted">
+              {workModeLabel(listing.work_mode)} · {STATUS_LABELS[listing.status]}
+            </p>
+            <div className="row-tags">
+              {listing.matched.length > 0 ? (
+                <span className="matched">Matched {joinAnd(listing.matched.map((c) => CONDITION_LABELS[c]))}</span>
+              ) : (
+                <span className="muted">Doesn&apos;t match your profile</span>
+              )}
+              {listing.matched_role && <span className="role-tag">{listing.matched_role}</span>}
+              {listing.nice_skills.map((s) => (
+                <span key={s} className="nice" title="One of your nice-to-have skills">
+                  {s}
+                </span>
+              ))}
+            </div>
             {job && (
               <p>
                 <a href={job.posting_url} target="_blank" rel="noreferrer">

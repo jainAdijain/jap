@@ -38,6 +38,7 @@ export default function ProfilePage() {
   const [form, setForm] = useState<ProfileFields | null>(null)
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
+  const [preview, setPreview] = useState<number | null>(null)
 
   const load = async () => {
     const p = await api.profile()
@@ -47,6 +48,29 @@ export default function ProfilePage() {
   useEffect(() => {
     load().catch((err) => setMessage({ kind: 'error', text: `Couldn't load your profile: ${err}` }))
   }, [])
+
+  // Before saving, show how many listings these settings would list (U10). Debounced.
+  const formKey = form ? JSON.stringify(form) : ''
+  const savedKey = profile ? JSON.stringify(fields(profile)) : ''
+  useEffect(() => {
+    if (!form || formKey === savedKey || form.work_modes.length === 0 || form.match_rule.length === 0) {
+      setPreview(null)
+      return
+    }
+    const ctrl = new AbortController()
+    const timer = setTimeout(() => {
+      api.previewProfile(form, ctrl.signal).then(
+        (r) => setPreview(r.matching_count),
+        () => setPreview(null),
+      )
+    }, 400)
+    return () => {
+      clearTimeout(timer)
+      ctrl.abort()
+    }
+    // formKey stands for form, so the effect runs once per actual change.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [formKey, savedKey])
 
   if (!form || !profile) {
     return <section className="card">{message ? <p className="error">{message.text}</p> : <p className="muted">Loading…</p>}</section>
@@ -187,8 +211,14 @@ export default function ProfilePage() {
           <span className={message.kind === 'ok' ? 'saved' : 'error'} role="status">
             {message.text}
           </span>
+        ) : dirty ? (
+          preview !== null && (
+            <span className="preview" role="status">
+              With these changes, {preview} listing{preview === 1 ? '' : 's'} will match.
+            </span>
+          )
         ) : (
-          !dirty && <span className="muted" role="status">No unsaved changes</span>
+          <span className="muted" role="status">No unsaved changes</span>
         )}
         <span className="row-buttons">
           <button type="button" disabled={!dirty || saving} onClick={() => setForm(fields(profile))}>

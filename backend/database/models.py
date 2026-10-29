@@ -133,7 +133,8 @@ class Listing(Timestamps, Base):
     seniority: Mapped[str | None] = mapped_column(Text)
     primary_posting_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     status: Mapped[str] = mapped_column(LISTING_STATUS, server_default="not_applied")
-    matched: Mapped[list[str] | None] = mapped_column(ARRAY(Text))
+    matched: Mapped[list[str] | None] = mapped_column(ARRAY(Text))  # null = not listed (F3)
+    matched_role: Mapped[str | None] = mapped_column(Text)  # target role it counts under (U2)
     first_posted_at: Mapped[datetime | None]
     last_posted_at: Mapped[datetime | None]
     applied_at: Mapped[datetime | None]

@@ -15,15 +15,24 @@ GH = "https://boards-api.greenhouse.io/v1/boards"
 
 
 def _listings(sql: psycopg.Connection[Any]) -> list[tuple[str, int]]:
+    """JAP Demo Co's listings (the Globex Demo jobs are there for the filters)."""
     return sql.execute(
         "SELECT l.title_display, count(p.id) FROM listing l JOIN posting p ON p.listing_id = l.id "
-        "GROUP BY l.id ORDER BY l.title_display"
+        "JOIN company c ON c.id = l.company_id WHERE c.name = %s "
+        "GROUP BY l.id ORDER BY l.title_display",
+        (demo.COMPANY,),
     ).fetchall()
+
+
+async def _list_engineers(api: httpx.AsyncClient) -> None:
+    """A profile whose rule lists every demo engineering job."""
+    saved = await api.put("/api/profile", json={"target_roles": ["Engineer"]})
+    assert saved.status_code == 200, saved.text
 
 
 async def test_demo_groups_postings(db: str, sql: psycopg.Connection[Any]) -> None:
     message = await demo.load()
-    assert "6 postings placed, 1 merged, 5 listings, 1 possible duplicate" in message
+    assert "12 postings placed, 1 merged, 11 listings, 1 possible duplicate" in message
     assert _listings(sql) == [
         ("Junior Backend Engineer", 1),
         ("Senior Backend Engineer - Bangalore", 2),  # newest posting is primary (D1)
@@ -35,10 +44,10 @@ async def test_demo_groups_postings(db: str, sql: psycopg.Connection[Any]) -> No
         "SELECT locations FROM listing WHERE canonical_role = 'senior backend engineer'"
     ).fetchone()
     assert locations == (["Bangalore, India", "Remote (India)"],)  # merged (D3)
-    assert sql.execute("SELECT count(*) FROM company").fetchone() == (1,)
+    assert sql.execute("SELECT count(*) FROM company").fetchone() == (2,)
     assert sql.execute(
         "SELECT count(*) FROM watched_board WHERE company_id IS NOT NULL"
-    ).fetchone() == (2,)
+    ).fetchone() == (3,)
     # Loading twice adds nothing; clearing removes everything.
     assert "0 postings placed" in await demo.load()
     await demo.clear()
@@ -50,6 +59,7 @@ async def test_merge_and_split_are_remembered(
     api: httpx.AsyncClient, sql: psycopg.Connection[Any]
 ) -> None:
     await demo.load()
+    await _list_engineers(api)
     rows = (await api.get("/api/listings")).json()["rows"]
     by_title = {r["title"]: r for r in rows}
     backend = by_title["Senior Backend Engineer - Bangalore"]
@@ -87,6 +97,7 @@ async def test_merge_and_split_are_remembered(
 
 async def test_possible_duplicate_decisions(api: httpx.AsyncClient) -> None:
     await demo.load()
+    await _list_engineers(api)
     [pair] = (await api.get("/api/duplicates")).json()
     assert {pair["a"]["title"], pair["b"]["title"]} == {
         "Senior Data Platform Engineer",

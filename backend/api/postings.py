@@ -12,6 +12,7 @@ from api.errors import ApiError
 from database.models import Posting, WatchedBoard
 from database.session import Session
 from pipeline.dedup import DedupConflict, split_posting
+from pipeline.matching import refilter_from_profile
 from schemas.extract import Extracted
 from schemas.job import ATS
 from schemas.listing import SplitOut
@@ -93,6 +94,8 @@ async def split(posting_id: uuid.UUID, session: Session) -> SplitOut:
     """Split this posting out of its listing (D5); remembered on later runs."""
     try:
         listing_id = await split_posting(session, posting_id)
+        await refilter_from_profile(session)  # both halves get their matched conditions
+        await session.commit()
     except LookupError as exc:
         raise ApiError(404, "not_found", str(exc)) from exc
     except DedupConflict as exc:
