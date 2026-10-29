@@ -4,7 +4,7 @@ import inngest.fast_api
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api import health
+from api import answers, boards, errors, health, profile, resumes
 from config import get_settings
 from functions import ALL_FUNCTIONS, inngest_client
 
@@ -17,6 +17,8 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-app.include_router(health.router, prefix="/api")
+errors.install(app)
+for module in (health, profile, resumes, boards, answers):
+    app.include_router(module.router, prefix="/api")
 
 inngest.fast_api.serve(app, inngest_client, ALL_FUNCTIONS, serve_path="/api/inngest")

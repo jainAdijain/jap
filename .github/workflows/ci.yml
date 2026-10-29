@@ -8,6 +8,22 @@ jobs:
   app:
     name: app (ruff, mypy, pytest)
     runs-on: ubuntu-latest
+    services:
+      db:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: jap
+          POSTGRES_PASSWORD: jap
+          POSTGRES_DB: jap
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U jap" --health-interval 2s --health-timeout 3s
+          --health-retries 30
+    env:
+      # Tests create and migrate their own jap_test database next to this one.
+      DATABASE_URL: postgresql+psycopg://jap:jap@localhost:5432/jap
+      JAP_REQUIRE_DB: "1"
     defaults:
       run:
         working-directory: backend

@@ -1,15 +1,20 @@
 """Loads seed/companies.yaml and seed/skills.yaml (make seed, make reset).
 
-Phase 0 only checks that both files parse. The upserts into watched_board and
-skill_alias are added with those tables (Phase 1 and Phase 2), and stay safe to repeat.
+Upserts, so it is safe to repeat: boards you removed in the UI stay removed, and
+aliases are refreshed from the file.
 """
 
+import asyncio
 import os
 import sys
 from pathlib import Path
 from typing import Any
 
 import yaml
+from sqlalchemy.dialects.postgresql import insert
+
+from database.models import SkillAlias, WatchedBoard
+from database.session import get_sessionmaker
 
 # In the app container seed/ is mounted at /seed; elsewhere it sits at the repo root.
 SEED_DIR = Path(os.environ.get("JAP_SEED_DIR", Path(__file__).resolve().parents[2] / "seed"))
@@ -41,10 +46,37 @@ def check_skills(data: Any) -> int:
     return len(data)
 
 
+async def upsert(companies: Any, skills: dict[str, str]) -> None:
+    async with get_sessionmaker()() as session:
+        for ats, boards in companies.items():
+            for board in boards or []:
+                await session.execute(
+                    insert(WatchedBoard)
+                    .values(
+                        ats=ats,
+                        board_token=str(board["token"]).lower(),
+                        display_name=board["name"],
+                        origin="seed",
+                    )
+                    .on_conflict_do_nothing(index_elements=["ats", "board_token"])
+                )
+        for alias, canonical in skills.items():
+            stmt = insert(SkillAlias).values(alias=alias.lower(), canonical=canonical.lower())
+            await session.execute(
+                stmt.on_conflict_do_update(
+                    index_elements=["alias"], set_={"canonical": stmt.excluded.canonical}
+                )
+            )
+        await session.commit()
+
+
 def main() -> int:
-    boards = check_companies(load("companies.yaml"))
-    skills = check_skills(load("skills.yaml"))
-    print(f"Seed files OK: {boards} boards, {skills} skill aliases (tables arrive in Phase 1)")
+    companies = load("companies.yaml")
+    skills = load("skills.yaml")
+    boards = check_companies(companies)
+    aliases = check_skills(skills)
+    asyncio.run(upsert(companies, skills))
+    print(f"Seeded {boards} boards and {aliases} skill aliases")
     return 0
 
 

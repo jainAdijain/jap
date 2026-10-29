@@ -26,6 +26,9 @@ class Settings(BaseSettings):
 
     jap_tz: str = "Asia/Kolkata"
 
+    # Resumes, screenshots, cover letters and backups (data/ on the Mac).
+    jap_data_dir: str = "/data"
+
     # The UI dev server is the only allowed browser origin.
     cors_origins: list[str] = ["http://localhost:5173"]
 

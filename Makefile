@@ -12,7 +12,7 @@ OLLAMA_URL ?= http://127.0.0.1:11434
 EMBED_MODEL ?= nomic-embed-text
 
 .DEFAULT_GOAL := help
-.PHONY: help env start stop restart reset clean logs ps migrate seed test test-app test-ui backup restore ollama-check
+.PHONY: help env start stop restart reset clean logs ps migrate seed test test-app test-ui backup restore ollama-check llm-check
 
 help: ## List the targets
 	@grep -E '^[a-z-]+:.*## ' $(MAKEFILE_LIST) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
@@ -20,9 +20,10 @@ help: ## List the targets
 env: ## Create .env from .env.example if it is missing
 	@test -f .env || { cp .env.example .env; echo "Created .env from .env.example. Add your OpenRouter key and Gmail app password to it."; }
 
-start: env ## Start the stack and wait for /api/health
+start: env ## Start the stack, wait for /api/health, apply migrations
 	$(COMPOSE) up -d --build
 	@infra/scripts/wait-for-health.sh $(HEALTH_URL)
+	@$(MAKE) --no-print-directory migrate
 	@$(MAKE) --no-print-directory ollama-check
 	@echo "UI http://localhost:$(JAP_UI_PORT)  API http://localhost:$(JAP_API_PORT)  Inngest http://localhost:$(JAP_INNGEST_PORT)  Adminer http://localhost:$(JAP_ADMINER_PORT)"
 
@@ -72,6 +73,9 @@ backup: ## Dump the database to data/backups/
 
 restore: ## Restore a backup: make restore FILE=data/backups/<file>.sql.gz
 	@COMPOSE="$(COMPOSE)" infra/scripts/restore.sh "$(FILE)"
+
+llm-check: ## One test call to each OpenRouter model (needs OPENROUTER_API_KEY in .env)
+	$(COMPOSE) exec app python -m llm.check
 
 ollama-check: ## Check that Ollama answers on the Mac and has the embedder pulled
 	@if ! curl -fsS --max-time 2 $(OLLAMA_URL)/api/tags > /tmp/jap-ollama-tags 2>/dev/null; then \

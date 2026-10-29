@@ -51,7 +51,7 @@ export default function StatusPage() {
   return (
     <section className="card">
       <div className="card-head">
-        <h1>Status</h1>
+        <h2>Status</h2>
         <button type="button" onClick={() => void refresh()}>
           Check now
         </button>

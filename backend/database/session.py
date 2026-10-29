@@ -2,7 +2,9 @@
 
 from collections.abc import AsyncIterator
 from functools import lru_cache
+from typing import Annotated
 
+from fastapi import Depends
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import (
     AsyncEngine,
@@ -20,9 +22,18 @@ def get_engine() -> AsyncEngine:
     return create_async_engine(get_settings().database_url, pool_pre_ping=True)
 
 
+@lru_cache
+def get_sessionmaker() -> async_sessionmaker[AsyncSession]:
+    return async_sessionmaker(get_engine(), expire_on_commit=False)
+
+
 async def get_session() -> AsyncIterator[AsyncSession]:
-    async with async_sessionmaker(get_engine(), expire_on_commit=False)() as session:
+    """FastAPI dependency: one session per request."""
+    async with get_sessionmaker()() as session:
         yield session
+
+
+Session = Annotated[AsyncSession, Depends(get_session)]
 
 
 async def ping_database() -> Check:
