@@ -109,6 +109,11 @@ export type RunCounts = {
   reopened?: number
   closed?: number
   enrich_queued?: number
+  apply_queued?: number
+  ready_for_review?: number
+  applied?: number
+  failed?: number
+  needs_input?: number
 }
 export type Run = {
   id: string
@@ -125,7 +130,7 @@ export type Run = {
 }
 
 export type RunState = { last: Run | null; active: Run | null; queued: Run | null }
-export type RunRequest = { mode: 'find_only'; roles?: string[] }
+export type RunRequest = { mode: 'find_only' | 'find_and_apply'; roles?: string[] }
 export type Switches = { apply_mode?: Profile['apply_mode']; daily_run?: boolean; daily_run_at?: string }
 
 export type Salary = { min: number | null; max: number | null; currency: string | null; period: string | null }
@@ -212,6 +217,43 @@ export type AlsoOn = {
   state: 'open' | 'closed'
   posted_at: string | null
 }
+export type FormField = {
+  key: string
+  label: string
+  type: string
+  required: boolean
+  options: string[]
+  max_chars: number | null
+  filled_from: string
+  value: string
+}
+export type Pending = { key: string; label: string; reason: string; options: string[]; blocked: boolean }
+export type ApplicationStatus =
+  | 'preparing'
+  | 'ready_for_review'
+  | 'applying'
+  | 'applied'
+  | 'needs_input'
+  | 'failed'
+  | 'cancelled'
+export type Application = {
+  id: string
+  listing_id: string
+  status: ApplicationStatus
+  mode: 'review' | 'automatic'
+  created_at: string
+  updated_at: string
+  resume: { id: string; original_name: string; uploaded_at: string } | null
+  jd: { title: string; text: string; posting_url: string; source: string; captured_at: string | null } | null
+  fields: FormField[]
+  pending: Pending[]
+  cover_letter_text: string | null
+  error: string | null
+  submitted_at: string | null
+  email_sent_at: string | null
+  has_screenshot: boolean
+  has_trace: boolean
+}
 export type ListingDetail = ListingRow & {
   skills: string[]
   seniority: string | null
@@ -219,6 +261,9 @@ export type ListingDetail = ListingRow & {
   primary: PostingDetail | null
   also_on: AlsoOn[]
   same_company: { id: string; title: string }[]
+  application: Application | null
+  attempts: number
+  apply_blocked: string | null
 }
 export type DuplicateSide = { id: string; title: string; platforms: Ats[]; locations: string[] }
 export type Duplicate = {
@@ -278,6 +323,16 @@ export const api = {
     request<ListingDetail>(`/api/listings/${id}/merge`, json('POST', { other_listing_id: other })),
   split: (postingId: string) =>
     request<{ listing_id: string }>(`/api/postings/${postingId}/split`, json('POST', {})),
+  applyNow: (id: string) => request<{ listing_id: string; queued: boolean }>(`/api/listings/${id}/apply`, json('POST', {})),
+  skip: (id: string) => request<ListingDetail>(`/api/listings/${id}/skip`, json('POST', {})),
+  unskip: (id: string) => request<ListingDetail>(`/api/listings/${id}/unskip`, json('POST', {})),
+  editAnswers: (appId: string, answers: Record<string, string>) =>
+    request<Application>(`/api/applications/${appId}`, json('PUT', { answers })),
+  approve: (appId: string) => request<Application>(`/api/applications/${appId}/approve`, json('POST', {})),
+  answer: (appId: string, answers: Record<string, string>, saveToBank: boolean) =>
+    request<Application>(`/api/applications/${appId}/answer`, json('POST', { answers, save_to_bank: saveToBank })),
+  retry: (appId: string) => request<{ listing_id: string; queued: boolean }>(`/api/applications/${appId}/retry`, json('POST', {})),
+  fileUrl: (kind: 'screenshot' | 'trace', appId: string) => `${API_URL}/api/files/${kind}/${appId}`,
   duplicates: () => request<Duplicate[]>('/api/duplicates'),
   decide: (id: string, decision: 'merged' | 'kept_apart') =>
     request<void>(`/api/duplicates/${id}`, json('POST', { decision })),

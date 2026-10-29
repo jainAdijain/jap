@@ -11,6 +11,8 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://jap:jap@db:5432/jap"
 
     openrouter_api_key: str = ""
+    # Empty means OpenRouter itself (llm/client.py); only a stand-in for testing sets it.
+    openrouter_url: str = ""
     jap_model_extract: str = "openai/gpt-5.6-luna"
     jap_model_write: str = "anthropic/claude-sonnet-4.5"
     jap_model_embed: str = "nomic-embed-text"
@@ -21,6 +23,10 @@ class Settings(BaseSettings):
 
     gmail_address: str = ""
     gmail_app_password: str = ""
+    # Gmail SMTP over SSL by default; a local test mailbox can take plain SMTP instead.
+    smtp_host: str = "smtp.gmail.com"
+    smtp_port: int = 465
+    smtp_ssl: bool = True
 
     inngest_base_url: str = "http://inngest:8288"
 
@@ -28,6 +34,12 @@ class Settings(BaseSettings):
 
     # Resumes, screenshots, cover letters and backups (data/ on the Mac).
     jap_data_dir: str = "/data"
+
+    # Where the confirmation email links back to (the frozen JD in the side panel).
+    jap_ui_url: str = "http://localhost:5173"
+
+    # Apply (A1): at least this many seconds between two submissions.
+    jap_apply_gap_seconds: int = 30
 
     # The UI dev server is the only allowed browser origin.
     cors_origins: list[str] = ["http://localhost:5173"]

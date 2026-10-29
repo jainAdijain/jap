@@ -307,3 +307,24 @@ input.time { width: auto; min-height: 30px; padding: 2px 6px; font: inherit; fon
 .dialog .choice input { margin: 0; flex: none; }
 .dialog .role-picks { padding-left: 24px; }
 .dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
+
+/* Phase 6: Apply now, Ready for review, Needs input, what was sent */
+.apply { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
+.apply h4 { font-size: 14px; margin: 14px 0 6px; }
+.apply .lead strong { color: var(--text); }
+.form-answers { list-style: none; padding: 0; margin: 10px 0; display: grid; gap: 12px; }
+.form-answer { display: grid; gap: 4px; }
+.form-answer .hint { margin: 0; }
+.form-answer-head { display: flex; justify-content: space-between; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.form-answer.drafted textarea { border-color: var(--accent); }
+.req { color: var(--down); }
+.from { font-size: 11px; padding: 1px 6px; border-radius: 4px; background: var(--chip); color: var(--muted); white-space: nowrap; }
+.from-drafted { background: var(--accent-soft); color: var(--accent-text); }
+.from-you { border: 1px solid var(--border); background: transparent; }
+.sent { display: grid; gap: 8px; margin: 0; }
+.sent dt { font-size: 12px; color: var(--muted); }
+.sent dd { margin: 0; font-size: 14px; white-space: pre-wrap; overflow-wrap: anywhere; }
+.shot { display: block; width: 100%; border: 1px solid var(--border); border-radius: 6px; margin-top: 4px; }
+.needs-input .check { margin: 4px 0 8px; }
+.failed { margin-bottom: 8px; }
+a.button { text-decoration: none; }

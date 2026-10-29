@@ -22,7 +22,7 @@ async def test_find_only_run_is_queued_once(
     assert events == [("run/requested", {"run_id": first.json()["id"]})]
     latest = await api.get("/api/runs/latest")
     assert latest.json()["id"] == first.json()["id"]
-    bad = await api.post("/api/runs", json={"mode": "find_and_apply"})
+    bad = await api.post("/api/runs", json={"mode": "find_everything"})
     assert bad.status_code == 422
 
 

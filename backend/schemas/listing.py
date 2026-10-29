@@ -4,6 +4,7 @@ from uuid import UUID
 
 from pydantic import BaseModel
 
+from schemas.application import ApplicationOut
 from schemas.job import ATS
 from schemas.posting import PostingDetail
 
@@ -77,6 +78,9 @@ class ListingDetail(ListingRow):
     primary: PostingDetail | None
     also_on: list[AlsoOn]
     same_company: list[ListingRef]  # merge targets
+    application: ApplicationOut | None  # the newest attempt: prepared, waiting or sent
+    attempts: int
+    apply_blocked: str | None  # why Apply now is not offered, None when it is
 
 
 class MergeIn(BaseModel):

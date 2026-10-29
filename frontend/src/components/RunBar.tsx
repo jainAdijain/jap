@@ -29,6 +29,11 @@ function counts(run: Run): string {
   if (c.changed) parts.push(`${c.changed} changed`)
   if (c.closed) parts.push(`${c.closed} closed`)
   if (c.boards_failed) parts.push(`${n(c.boards_failed, 'board')} failed`)
+  if (run.mode === 'find_and_apply') {
+    parts.push(`${c.apply_queued ?? 0} to apply`)
+    if (c.ready_for_review) parts.push(`${c.ready_for_review} ready for review`)
+    parts.push(`${c.applied ?? 0} applied`, `${c.failed ?? 0} failed`, `${c.needs_input ?? 0} need input`)
+  }
   return parts.join(' · ')
 }
 
@@ -79,7 +84,7 @@ export default function RunBar({ state, profile, onRun, onSwitch }: Props) {
             <button type="button" aria-pressed={profile?.apply_mode !== 'automatic'} disabled={!profile}>
               Review
             </button>
-            <button type="button" aria-pressed={profile?.apply_mode === 'automatic'} disabled title="Automatic mode arrives in a later phase">
+            <button type="button" aria-pressed={profile?.apply_mode === 'automatic'} disabled title="Automatic mode arrives in Phase 8; Review mode submits nothing until you approve">
               Automatic
             </button>
           </span>

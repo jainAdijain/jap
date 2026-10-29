@@ -6,10 +6,9 @@ from pydantic import BaseModel, field_validator
 
 
 class RunIn(BaseModel):
-    """The Run dialog (T3): what to fetch and whether to apply. find_and_apply arrives with
-    Apply (Phase 6)."""
+    """The Run dialog (T3): what to fetch, and Find only or Find and apply."""
 
-    mode: Literal["find_only"] = "find_only"
+    mode: Literal["find_only", "find_and_apply"] = "find_only"
     board_ids: list[UUID] | None = None  # None means every active board
     roles: list[str] | None = None  # None means every job; else only these roles' jobs
 
