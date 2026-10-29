@@ -342,7 +342,7 @@ export default function ApplyPanel({ listing, onChanged }: Props) {
               </li>
             ))}
           </ul>
-          {live.pending.some((q) => !q.blocked) && (
+          {live.pending.some((q) => !q.blocked && !LETTER.test(q.label)) && (
             <label className="check">
               <input type="checkbox" checked={saveToBank} onChange={(e) => setSaveToBank(e.target.checked)} />
               Save my answers to the answer bank for next time

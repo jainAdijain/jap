@@ -199,6 +199,7 @@ async def test_edited_letter_is_what_is_sent_and_attached(
     async with get_sessionmaker()() as session:
         mail = await notify.build(session, uuid.UUID(app_id))
     assert mail is not None and mail.attachment is not None
+    assert mail.attachment_name == "Asha-Rao-Cover-Letter-Acme.pdf"
     assert mail.attachment.read_bytes() == sent["pdf"]  # the email attaches what was sent
     assert "Cover letter: attached" in mail.body
     app = (await api.get(f"/api/applications/{app_id}")).json()
