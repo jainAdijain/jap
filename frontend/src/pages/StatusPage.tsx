@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 
 import { getHealth, type Health } from '../api/client'
+import OpsCard from '../components/OpsCard'
 import StatusRow from '../components/StatusRow'
 
 const SERVICES: { key: string; name: string }[] = [
@@ -65,6 +66,7 @@ export default function StatusPage() {
       <p className="muted">
         {checkedAt ? `Last checked ${checkedAt.toLocaleTimeString()}, refreshes every 5 seconds.` : 'Checking…'}
       </p>
+      <OpsCard />
     </section>
   )
 }

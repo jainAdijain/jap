@@ -33,6 +33,45 @@ const fields = (p: Profile): ProfileFields => ({
 
 const money = (n: number) => `$${n < 1 ? n.toFixed(2) : n.toFixed(2).replace(/\.00$/, '')}`
 
+/** This month's model spend and the cap that stops model steps (Phase 8). */
+function SpendCap({ profile, onSaved }: { profile: Profile; onSaved: (p: Profile) => void }) {
+  const [value, setValue] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const shown = value ?? profile.spend.cap_usd.toFixed(2)
+  const n = Number(shown)
+  const valid = shown.trim() !== '' && Number.isFinite(n) && n >= 0 && n <= 100
+  const save = async () => {
+    try {
+      onSaved(await api.setSwitches({ spend_cap_usd: n }))
+      setValue(null)
+      setError(null)
+    } catch (err) {
+      setError(String(err))
+    }
+  }
+  return (
+    <section className="card">
+      <h2>AI spend</h2>
+      <p className={profile.spend.reached ? 'error' : 'lead'} role="status">
+        This month: {money(profile.spend.month_usd)} of {money(profile.spend.cap_usd)}.{' '}
+        {profile.spend.reached
+          ? 'Spend cap reached: model steps are stopped, and nothing that needs a letter or a drafted answer is sent.'
+          : 'Model steps stop when this month reaches the cap.'}
+      </p>
+      <div className="row-buttons">
+        <label className="cap">
+          Monthly cap ($)
+          <input type="number" min={0} max={100} step={0.01} aria-label="Monthly spend cap in dollars" value={shown} onChange={(e) => setValue(e.target.value)} />
+        </label>
+        <button type="button" disabled={!valid || n === profile.spend.cap_usd} onClick={() => void save()}>
+          Set cap
+        </button>
+        {error && <span className="error">{error}</span>}
+      </div>
+    </section>
+  )
+}
+
 export default function ProfilePage() {
   const [profile, setProfile] = useState<Profile | null>(null)
   const [form, setForm] = useState<ProfileFields | null>(null)
@@ -201,6 +240,8 @@ export default function ProfilePage() {
         <label className="sr-only" htmlFor="tone">Tone note</label>
         <textarea id="tone" rows={2} placeholder='e.g. "concise, no buzzwords"' value={form.tone_note ?? ''} onChange={(e) => set('tone_note', e.target.value || null)} />
       </section>
+
+      <SpendCap profile={profile} onSaved={setProfile} />
 
       <div className="savebar">
         <span className={profile.spend.reached ? 'spend error' : 'spend'}>

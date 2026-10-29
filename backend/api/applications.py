@@ -104,6 +104,7 @@ async def to_out(session: AsyncSession, app: Application) -> ApplicationOut:
         cover_letter_text=app.cover_letter_text,
         cover_letter=_letter_out(app),
         error=app.error,
+        review_reason=app.review_reason,
         submitted_at=app.submitted_at,
         email_sent_at=app.email_sent_at,
         has_screenshot=_exists(app.screenshot_path),

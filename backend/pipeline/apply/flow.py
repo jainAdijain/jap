@@ -32,7 +32,7 @@ from llm import PersonalDataBlocked, SpendCapReached
 from llm.client import ModelCallError
 from pipeline.apply import fields as rules
 from pipeline.apply.answers import bank_answer, draft_answer, pick_option
-from pipeline.apply.form import FormField, FormRead, Upload, read_form, submit_form
+from pipeline.apply.form import FormError, FormField, FormRead, Upload, read_form, submit_form
 from pipeline.cover_letter import LetterFailed, generate, upload_name, write_pdf
 from pipeline.resume import sensitive_from_profile
 from pipeline.runs import in_scope, role_matcher
@@ -277,12 +277,23 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
     return Mapped(status=app.status, drafted=drafted, pending=len(pending))
 
 
+async def unclear(session: AsyncSession, app: Application) -> str | None:
+    """Why Automatic mode must not submit this job on its own (A3), or None. A job whose
+    work mode the posting doesn't state (Work mode unclear) waits for me."""
+    listing = await session.get(Listing, app.listing_id)
+    if listing is not None and listing.work_mode is None:
+        return "Work mode unclear: the posting doesn't say remote, hybrid or onsite"
+    return None
+
+
 async def settle(session: AsyncSession, app: Application, pending: list[dict[str, Any]]) -> None:
-    """Needs input when anything is pending, else Ready for review (or applying)."""
+    """Needs input when anything is pending, else Ready for review, or applying in
+    Automatic mode when nothing about the job is unclear (A3)."""
     app.pending_questions = pending or None
+    app.review_reason = await unclear(session, app) if app.mode == "automatic" else None
     if pending:
         app.status = "needs_input"
-    elif app.mode == "automatic":
+    elif app.mode == "automatic" and app.review_reason is None:
         app.status = "applying"
     else:
         app.status = "ready_for_review"
@@ -373,9 +384,17 @@ async def write_cover_letter(session: AsyncSession, app_id: str) -> dict[str, An
     except LetterFailed as exc:
         app = await _app(session, app_id)
         f = fields[0]
-        pending.append({"key": f["key"], "label": f["label"],
-                        "reason": "JAP could not write a cover letter that passed the resume "
-                        f"check twice ({exc}). Paste your own letter here, or Skip."})  # fmt: skip
+        if str(exc).startswith("Spend cap reached"):  # no model call was made (Phase 8)
+            reason = (
+                f"{exc}, so JAP wrote no cover letter, and nothing is sent without one. "
+                "Paste your own letter here, raise the cap on My profile, or Skip."
+            )
+        else:
+            reason = (
+                "JAP could not write a cover letter that passed the resume check twice "
+                f"({exc}). Paste your own letter here, or Skip."
+            )
+        pending.append({"key": f["key"], "label": f["label"], "reason": reason})
         await settle(session, app, pending)
         return {"status": app.status, "letter": "failed twice", "error": str(exc)[:500]}
     app = await _app(session, app_id)
@@ -532,8 +551,17 @@ async def expire(session: AsyncSession, app_id: str, what: str) -> None:
 
 
 async def read_and_save(session: AsyncSession, app_id: str, url: str) -> int:
-    """read-form: open the form with Playwright and keep its fields. FormError retries."""
-    read = await read_form(url)
+    """read-form: open the form with Playwright and keep its fields. A FormError keeps a
+    screenshot of the page on the application (U15), then Inngest retries the step."""
+    shot = data_path("screenshots", f"{app_id}.png")
+    try:
+        read = await read_form(url, shot)
+    except FormError:
+        if shot.exists():
+            app = await _app(session, app_id)
+            app.screenshot_path = str(shot)
+            await session.commit()
+        raise
     await save_form(session, app_id, read)
     return len(read.fields)
 

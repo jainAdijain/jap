@@ -1,5 +1,7 @@
 """GET, PUT and PATCH /api/profile (U7 to U10)."""
 
+from decimal import Decimal
+
 from fastapi import APIRouter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -99,6 +101,10 @@ async def flip_switches(body: ProfileSwitches, session: Session) -> ProfileOut:
         profile.daily_run = body.daily_run
     if body.daily_run_at is not None:
         profile.daily_run_at = body.daily_run_at.replace(second=0, microsecond=0, tzinfo=None)
+    if body.daily_cap is not None:
+        profile.daily_cap = body.daily_cap
+    if body.spend_cap_usd is not None:
+        profile.spend_cap_usd = Decimal(str(round(body.spend_cap_usd, 2)))
     await session.commit()
     await session.refresh(profile)
     return await to_out(session, profile)

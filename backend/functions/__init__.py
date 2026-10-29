@@ -8,10 +8,13 @@ from typing import Any
 import inngest
 
 from functions.apply_listing import apply_listing
+from functions.backup import daily_backup
 from functions.client import inngest_client
 from functions.enrich_posting import enrich_posting
 from functions.fetch_board import fetch_board
+from functions.form_check import form_check_fn
 from functions.notify_applied import notify_applied
+from functions.notify_failure import notify_failure
 from functions.parse_resume import parse_resume
 from functions.ping import ping
 from functions.run_pipeline import run_pipeline
@@ -27,6 +30,9 @@ ALL_FUNCTIONS: list[inngest.Function[Any]] = [
     daily_schedule,
     apply_listing,
     notify_applied,
+    notify_failure,
+    daily_backup,
+    form_check_fn,
 ]
 
 __all__ = ["ALL_FUNCTIONS", "inngest_client"]

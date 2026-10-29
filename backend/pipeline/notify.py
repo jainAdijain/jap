@@ -1,5 +1,6 @@
 """The confirmation email (E1 to E3): "Applied: Role at Company" to the address on My profile,
 sent once per Applied application by notify-applied. Gmail SMTP with an app password.
+pipeline/alerts.py sends the failure alerts through the same send().
 """
 
 import asyncio
@@ -33,6 +34,7 @@ class Mail:
     body: str
     attachment: Path | None = None
     attachment_name: str = "Cover-Letter.pdf"
+    attachment_type: str = "application/pdf"
 
 
 async def build(session: AsyncSession, app_id: uuid.UUID) -> Mail | None:
@@ -90,10 +92,11 @@ def _send_sync(mail: Mail) -> None:
     msg["Subject"] = mail.subject
     msg.set_content(mail.body)
     if mail.attachment is not None:
+        maintype, subtype = mail.attachment_type.split("/", 1)
         msg.add_attachment(
             mail.attachment.read_bytes(),
-            maintype="application",
-            subtype="pdf",
+            maintype=maintype,
+            subtype=subtype,
             filename=mail.attachment_name,
         )
     smtp: smtplib.SMTP

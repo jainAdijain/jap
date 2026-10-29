@@ -5,7 +5,8 @@ read-form (Playwright), map-fields (profile, resume, answer bank, drafted answer
 cover-letter when the form's cover letter field is mandatory (C1), then Needs input or
 Ready for review waits, then submit (cap and gap first) and
 application/submitted for the email. Review mode always stops at Ready for review until I
-press Approve; nothing is submitted before.
+press Approve; nothing is submitted before. Automatic mode submits unless something about
+the job is unclear (A3). A Failed attempt sends application/failed for the alert email.
 
 Concurrency 1: Inngest counts executing steps, not runs, so this means one browser at a
 time while attempts waiting for me (Ready for review, Needs input) hold no slot. A press
@@ -102,6 +103,17 @@ async def _failed(ctx: inngest.Context) -> None:
         )
         if app_id is not None:
             await flow.fail_by_id(session, str(app_id), message or "Apply failed after retries")
+    if app_id is not None:
+        await inngest_client.send(
+            inngest.Event(name="application/failed", data={"application_id": str(app_id)})
+        )
+
+
+async def _alert(ctx: inngest.Context, app_id: str) -> None:
+    """The failure alert email (notify-failure)."""
+    await ctx.step.send_event(
+        "send-failed", inngest.Event(name="application/failed", data={"application_id": app_id})
+    )
 
 
 async def wait_for_me(ctx: inngest.Context, app_id: str, event: str, waiting: str, tag: str) -> str:
@@ -166,6 +178,7 @@ async def apply_listing(ctx: inngest.Context) -> dict[str, Any]:
         break
     if status == "expired":
         await ctx.step.run("expire", expire_step, app_id, "answer or approval")
+        await _alert(ctx, app_id)
         return {"application_id": app_id, "status": "failed"}
     if status != "applying":
         return {"application_id": app_id, "status": status}
@@ -182,5 +195,7 @@ async def apply_listing(ctx: inngest.Context) -> dict[str, Any]:
                 "send-submitted",
                 inngest.Event(name="application/submitted", data={"application_id": app_id}),
             )
+        elif result.get("status") == "failed":
+            await _alert(ctx, app_id)
         return {"application_id": app_id, **result}
     raise inngest.NonRetriableError("Waited too long for the daily cap")

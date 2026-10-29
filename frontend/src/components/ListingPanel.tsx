@@ -6,9 +6,15 @@ import ApplyPanel from './ApplyPanel'
 import JobFields from './JobFields'
 import Platforms from './Platforms'
 
-type Props = { id: string; onClose: () => void; onChanged: () => void; onOpen: (id: string) => void }
+type Props = {
+  id: string
+  applyMode?: 'review' | 'automatic'
+  onClose: () => void
+  onChanged: () => void
+  onOpen: (id: string) => void
+}
 
-export default function ListingPanel({ id, onClose, onChanged, onOpen }: Props) {
+export default function ListingPanel({ id, applyMode, onClose, onChanged, onOpen }: Props) {
   const [listing, setListing] = useState<ListingDetail | null>(null)
   const [mergeWith, setMergeWith] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -101,6 +107,7 @@ export default function ListingPanel({ id, onClose, onChanged, onOpen }: Props) 
 
             <ApplyPanel
               listing={listing}
+              applyMode={applyMode ?? 'review'}
               onChanged={(detail) => {
                 if (detail) setListing(detail)
                 else void load()

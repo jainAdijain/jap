@@ -12,6 +12,7 @@ from api import (
     errors,
     health,
     listings,
+    ops,
     postings,
     profile,
     resumes,
@@ -22,7 +23,7 @@ from functions import ALL_FUNCTIONS, inngest_client
 
 settings = get_settings()
 
-app = FastAPI(title="JAP", version="0.7.0")
+app = FastAPI(title="JAP", version="0.9.0")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -32,6 +33,7 @@ app.add_middleware(
 errors.install(app)
 for module in (
     health, profile, resumes, boards, answers, runs, postings, listings, duplicates, applications,
+    ops,
 ):  # fmt: skip
     app.include_router(module.router, prefix="/api")
 

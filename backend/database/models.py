@@ -74,6 +74,7 @@ class Profile(Timestamps, Base):
     daily_run_at: Mapped[time] = mapped_column(Time, server_default="06:00")
     daily_run_last_at: Mapped[datetime | None]
     daily_cap: Mapped[int] = mapped_column(Integer, server_default="20")
+    spend_cap_usd: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))  # None: .env cap
 
 
 class ResumeVersion(Timestamps, Base):
@@ -223,6 +224,7 @@ class Run(Timestamps, Base):
     counts: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
     error: Mapped[str | None] = mapped_column(Text)
     inngest_run_id: Mapped[str | None] = mapped_column(Text)
+    alert_sent_at: Mapped[datetime | None]
 
 
 class Application(Timestamps, Base):
@@ -252,6 +254,8 @@ class Application(Timestamps, Base):
     submit_started_at: Mapped[datetime | None]
     submitted_at: Mapped[datetime | None]
     email_sent_at: Mapped[datetime | None]
+    review_reason: Mapped[str | None] = mapped_column(Text)  # why Automatic mode still waits
+    alert_sent_at: Mapped[datetime | None]
     inngest_run_id: Mapped[str | None] = mapped_column(Text)
 
 
@@ -287,3 +291,19 @@ class LlmCall(Timestamps, Base):
     latency_ms: Mapped[int | None]
     error: Mapped[str | None] = mapped_column(Text)
     run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+
+
+class FormCheck(Timestamps, Base):
+    """One weekly live form test: a real open posting's form read, nothing submitted."""
+
+    __tablename__ = "form_check"
+
+    id: Mapped[uuid.UUID] = _id()
+    ats: Mapped[str] = mapped_column(ATS)
+    posting_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    url: Mapped[str | None] = mapped_column(Text)
+    ok: Mapped[bool] = mapped_column(Boolean)
+    fields: Mapped[int] = mapped_column(Integer, server_default="0")
+    required: Mapped[int] = mapped_column(Integer, server_default="0")
+    error: Mapped[str | None] = mapped_column(Text)
+    screenshot_path: Mapped[str | None] = mapped_column(Text)

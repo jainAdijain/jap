@@ -1,0 +1,126 @@
+# Dedup QA set (PRD QA and testing: about 100 labelled job pairs). Version 1.0, 29 Oct 2026.
+#
+# Each pair is two postings from different boards: "company | title | locations | req id".
+# Locations are separated by ";" and the requisition ID is optional. cos is how alike the
+# two descriptions are, as the embedder would see them (1.0 = the same text). same says
+# whether they are one job (one listing) or two. tests/test_dedup_qa.py places each pair
+# with the real dedup and reports the accuracy; make qa prints the table.
+#
+# History: 1.0 (29 Oct 2026) first set, 106 pairs: 52 same, 54 different.
+pairs:
+  # Same job: title spelled differently
+  - {a: "Acme | Sr. Backend Engineer | Bangalore, India", b: "Acme | Senior Backend Engineer | Bangalore, India", cos: 1.0, same: true}
+  - {a: "Acme | Senior Backend Engineer (Remote) | Remote (India)", b: "Acme | Senior Backend Engineer - Bangalore | Bangalore, India", cos: 0.98, same: true}
+  - {a: "Acme | Backend Engineer, Remote | Remote", b: "Acme | Backend Engineer | Pune, India", cos: 0.97, same: true}
+  - {a: "Acme | Jr. Frontend Developer | Pune, India", b: "Acme | Junior Frontend Developer | Pune, India", cos: 1.0, same: true}
+  - {a: "Acme | SWE II | Hyderabad, India", b: "Acme | Software Engineer II | Hyderabad, India", cos: 0.99, same: true}
+  - {a: "Acme | Sr SRE | Remote", b: "Acme | Senior Site Reliability Engineer | Remote", cos: 0.98, same: true}
+  - {a: "Acme | ML Engineer | Bangalore, India", b: "Acme | Machine Learning Engineer | Bangalore, India", cos: 0.97, same: true}
+  - {a: "Acme | QA Engineer | Chennai, India", b: "Acme | Quality Assurance Engineer | Chennai, India", cos: 0.99, same: true}
+  - {a: "Acme | Senior Data Engineer [Hybrid] | Mumbai, India", b: "Acme | Senior Data Engineer | Mumbai, India", cos: 1.0, same: true}
+  - {a: "Acme | Staff Engineer - Platform | Remote", b: "Acme | Staff Engineer, Platform | Remote", cos: 1.0, same: true}
+  - {a: "Acme | Product Designer | London, UK", b: "Acme | Product Designer - London | London, UK", cos: 1.0, same: true}
+  - {a: "Acme | Senior Product Manager (Payments) | Remote - US", b: "Acme | Senior Product Manager | Remote - US", cos: 0.96, same: true}
+  - {a: "Acme | Engineering Manager | Berlin, Germany", b: "Acme | Engineering Mgr | Berlin, Germany", cos: 0.99, same: true}
+  - {a: "Acme | Senior DevOps Engineer | Remote - Worldwide", b: "Acme | Sr. DevOps Engineer - Remote | Remote - Worldwide", cos: 1.0, same: true}
+  - {a: "Acme | Data Analyst | Noida, India", b: "Acme | Data Analyst (Noida) | Noida, India", cos: 1.0, same: true}
+  - {a: "Acme | Backend Engineer | Remote", b: "Acme | Backend Engineer | Remote", cos: 1.0, same: true}
+  - {a: "Acme | Full Stack Developer | Gurgaon, India", b: "Acme | Full Stack Developer - Gurgaon | Gurgaon, India", cos: 0.99, same: true}
+  - {a: "Acme | Sr. iOS Engineer | Remote (India)", b: "Acme | Senior iOS Engineer | Bangalore, India", cos: 0.97, same: true}
+  - {a: "Acme | Android Developer | Remote", b: "Acme | Android Dev | Remote", cos: 0.99, same: true}
+  - {a: "Acme | Security Engineer - Cloud | New York, NY", b: "Acme | Security Engineer, Cloud | New York, NY; San Francisco, CA", cos: 1.0, same: true}
+  # Same job: company spelled differently
+  - {a: "Globex Inc. | Senior Backend Engineer | Remote", b: "Globex | Senior Backend Engineer | Remote", cos: 1.0, same: true}
+  - {a: "Initech Technologies | Data Engineer | Pune, India", b: "Initech | Data Engineer | Pune, India", cos: 1.0, same: true}
+  - {a: "Umbrella Labs | ML Engineer | Remote", b: "Umbrella | Machine Learning Engineer | Remote", cos: 0.98, same: true}
+  - {a: "Hooli Pvt Ltd | Frontend Engineer | Bangalore, India", b: "Hooli | Frontend Engineer | Bangalore, India", cos: 1.0, same: true}
+  - {a: "Stark Industries LLC | Platform Engineer | Remote", b: "Stark Industries | Platform Engineer | Remote", cos: 1.0, same: true}
+  - {a: "Wayne Enterprises, Inc. | Security Analyst | Remote - US", b: "Wayne Enterprises | Security Analyst | Remote - US", cos: 1.0, same: true}
+  - {a: "Cyberdyne GmbH | Senior Data Scientist | Berlin, Germany", b: "Cyberdyne | Senior Data Scientist | Berlin, Germany", cos: 0.99, same: true}
+  - {a: "Soylent Corp | QA Engineer | Remote", b: "Soylent Corporation | QA Engineer | Remote", cos: 1.0, same: true}
+  - {a: "Tyrell Group Holdings | Backend Developer | London, UK", b: "Tyrell | Backend Developer | London, UK", cos: 1.0, same: true}
+  - {a: "Pied Piper Inc | Senior Software Engineer | Remote", b: "Pied Piper | Sr. Software Engineer | Remote", cos: 1.0, same: true}
+  # Same job: one role in two cities is one listing (D3)
+  - {a: "Acme | Senior Backend Engineer | Bangalore, India", b: "Acme | Senior Backend Engineer | Hyderabad, India", cos: 0.99, same: true}
+  - {a: "Acme | Data Engineer | Pune, India", b: "Acme | Data Engineer | Remote (India)", cos: 0.98, same: true}
+  - {a: "Acme | Product Manager | New York, NY", b: "Acme | Product Manager | Austin, TX", cos: 0.97, same: true}
+  - {a: "Acme | Site Reliability Engineer | London, UK", b: "Acme | Site Reliability Engineer | Dublin, Ireland", cos: 0.99, same: true}
+  # Same job: shared requisition ID, different wording
+  - {a: "Acme | Software Engineer, Backend | Remote | R-1001", b: "Acme | Backend Software Engineer | Remote | R-1001", cos: 0.95, same: true}
+  - {a: "Acme | Senior Engineer, Payments Platform | Bangalore, India | REQ-2201", b: "Acme | Senior Payments Engineer | Bangalore, India | REQ-2201", cos: 0.93, same: true}
+  - {a: "Acme | Data Platform Engineer | Pune, India | 77812", b: "Acme | Engineer, Data Platform | Pune, India | 77812", cos: 0.96, same: true}
+  - {a: "Acme | Frontend Engineer (React) | Remote | JR-3003", b: "Acme | React Engineer | Remote | JR-3003", cos: 0.94, same: true}
+  - {a: "Acme | Cloud Infrastructure Engineer | Remote | R-4004", b: "Acme | Infrastructure Engineer, Cloud | Remote | R-4004", cos: 0.97, same: true}
+  # Same job: near match (a word added or dropped, descriptions alike)
+  - {a: "Acme | Senior Backend Engineer, Payments | Remote", b: "Acme | Senior Backend Engineer Payments | Remote", cos: 0.99, same: true}
+  - {a: "Acme | Data Engineer - Analytics Platform | Pune, India", b: "Acme | Data Engineer, Analytics Platform | Pune, India", cos: 0.98, same: true}
+  - {a: "Acme | Software Engineer - Search | Remote", b: "Acme | Software Engineer, Search | Remote", cos: 0.99, same: true}
+  - {a: "Acme | Senior Machine Learning Engineer | Remote", b: "Acme | Senior Machine-Learning Engineer | Remote", cos: 0.99, same: true}
+  - {a: "Acme | Backend Engineer (Go) | Remote", b: "Acme | Backend Engineer | Remote", cos: 0.97, same: true}
+  - {a: "Acme | Senior Full-Stack Engineer | Remote", b: "Acme | Senior Full Stack Engineer | Remote", cos: 1.0, same: true}
+  - {a: "Acme | Front End Engineer | Remote", b: "Acme | Front-End Engineer | Remote", cos: 1.0, same: true}
+  - {a: "Acme | Solutions Engineer | London, UK", b: "Acme | Solutions Engineer - EMEA | London, UK", cos: 0.96, same: true}
+  - {a: "Acme | Technical Writer | Remote", b: "Acme | Technical Writer (Remote) | Remote", cos: 1.0, same: true}
+  - {a: "Acme | Senior Backend Engineer #12345 | Remote", b: "Acme | Senior Backend Engineer | Remote", cos: 1.0, same: true}
+  - {a: "Acme | Backend Engineer – Remote | Remote", b: "Acme | Backend Engineer | Remote", cos: 1.0, same: true}
+  - {a: "Acme | DevOps Engineer | Remote / Anywhere", b: "Acme | DevOps Engineer | Remote", cos: 1.0, same: true}
+  - {a: "Acme | Senior Data Analyst | Remote", b: "Acme | Sr Data Analyst | Remote", cos: 1.0, same: true}
+
+  # Different jobs: seniority differs (always two listings)
+  - {a: "Acme | Senior Backend Engineer | Bangalore, India", b: "Acme | Junior Backend Engineer | Bangalore, India", cos: 0.98, same: false}
+  - {a: "Acme | Backend Engineer | Remote", b: "Acme | Senior Backend Engineer | Remote", cos: 0.97, same: false}
+  - {a: "Acme | Staff Software Engineer | Remote", b: "Acme | Senior Software Engineer | Remote", cos: 0.96, same: false}
+  - {a: "Acme | Software Engineer II | Remote", b: "Acme | Software Engineer III | Remote", cos: 0.98, same: false}
+  - {a: "Acme | Software Engineer I | Remote", b: "Acme | Software Engineer II | Remote", cos: 0.98, same: false}
+  - {a: "Acme | Backend Engineer Intern | Bangalore, India", b: "Acme | Backend Engineer | Bangalore, India", cos: 0.9, same: false}
+  - {a: "Acme | Principal Engineer | Remote", b: "Acme | Staff Engineer | Remote", cos: 0.95, same: false}
+  - {a: "Acme | Lead Data Engineer | Pune, India", b: "Acme | Data Engineer | Pune, India", cos: 0.95, same: false}
+  - {a: "Acme | Associate Product Manager | Remote", b: "Acme | Product Manager | Remote", cos: 0.94, same: false}
+  - {a: "Acme | Senior Product Designer | Remote", b: "Acme | Product Designer | Remote", cos: 0.97, same: false}
+  - {a: "Acme | Director of Engineering | Remote", b: "Acme | Engineering Manager | Remote", cos: 0.9, same: false}
+  - {a: "Acme | Graduate Software Engineer | London, UK", b: "Acme | Software Engineer | London, UK", cos: 0.92, same: false}
+  - {a: "Acme | Fresher - Software Developer | Pune, India", b: "Acme | Software Developer | Pune, India", cos: 0.9, same: false}
+  - {a: "Acme | Senior Backend Engineer | Remote | R-5005", b: "Acme | Junior Backend Engineer | Remote | R-5005", cos: 0.96, same: false}
+  - {a: "Acme | Sr. Data Scientist | Remote", b: "Acme | Data Scientist | Remote", cos: 0.97, same: false}
+  - {a: "Acme | Senior SRE | Remote", b: "Acme | Staff SRE | Remote", cos: 0.97, same: false}
+  - {a: "Acme | Trainee Analyst | Mumbai, India", b: "Acme | Analyst | Mumbai, India", cos: 0.92, same: false}
+  # Different jobs: specialization differs
+  - {a: "Acme | Senior Backend Engineer | Remote", b: "Acme | Senior Frontend Engineer | Remote", cos: 0.8, same: false}
+  - {a: "Acme | Data Engineer | Pune, India", b: "Acme | Data Scientist | Pune, India", cos: 0.82, same: false}
+  - {a: "Acme | Machine Learning Engineer | Remote", b: "Acme | Machine Learning Researcher | Remote", cos: 0.88, same: false}
+  - {a: "Acme | iOS Engineer | Remote", b: "Acme | Android Engineer | Remote", cos: 0.86, same: false}
+  - {a: "Acme | Product Manager | Remote", b: "Acme | Product Designer | Remote", cos: 0.7, same: false}
+  - {a: "Acme | Software Engineer, Payments | Remote", b: "Acme | Software Engineer, Search | Remote", cos: 0.83, same: false}
+  - {a: "Acme | Senior Data Platform Engineer | Pune, India", b: "Acme | Senior Data Platform Engineer, Streaming | Pune, India", cos: 0.9, same: false}
+  - {a: "Acme | Security Engineer | Remote", b: "Acme | Security Analyst | Remote", cos: 0.8, same: false}
+  - {a: "Acme | Engineering Manager | Remote", b: "Acme | Software Engineer | Remote", cos: 0.75, same: false}
+  - {a: "Acme | Account Executive | New York, NY", b: "Acme | Account Manager | New York, NY", cos: 0.8, same: false}
+  - {a: "Acme | Sales Engineer | London, UK", b: "Acme | Solutions Architect | London, UK", cos: 0.78, same: false}
+  - {a: "Acme | QA Engineer | Remote", b: "Acme | QA Automation Engineer | Remote", cos: 0.86, same: false}
+  - {a: "Acme | Backend Engineer, Payments | Remote", b: "Acme | Backend Engineer, Identity | Remote", cos: 0.84, same: false}
+  - {a: "Acme | Data Analyst | Remote", b: "Acme | Business Analyst | Remote", cos: 0.78, same: false}
+  - {a: "Acme | Site Reliability Engineer | Remote", b: "Acme | DevOps Engineer | Remote", cos: 0.88, same: false}
+  - {a: "Acme | Technical Writer | Remote", b: "Acme | Content Writer | Remote", cos: 0.7, same: false}
+  - {a: "Acme | Cloud Engineer, AWS | Remote", b: "Acme | Cloud Engineer, GCP | Remote", cos: 0.9, same: false}
+  - {a: "Acme | Frontend Engineer, Growth | Remote", b: "Acme | Frontend Engineer, Design Systems | Remote", cos: 0.85, same: false}
+  - {a: "Acme | Recruiter | Remote", b: "Acme | Technical Recruiter | Remote", cos: 0.88, same: false}
+  - {a: "Acme | Data Engineer | Remote", b: "Acme | Analytics Engineer | Remote", cos: 0.86, same: false}
+  - {a: "Acme | Customer Success Manager | Remote", b: "Acme | Customer Support Specialist | Remote", cos: 0.75, same: false}
+  - {a: "Acme | Product Marketing Manager | Remote", b: "Acme | Product Manager | Remote", cos: 0.7, same: false}
+  - {a: "Acme | Backend Engineer (Python) | Remote", b: "Acme | Backend Engineer (Java) | Remote", cos: 0.88, same: false}
+  - {a: "Acme | Software Engineer - Mobile | Remote", b: "Acme | Software Engineer - Web | Remote", cos: 0.85, same: false}
+  # Different jobs: same title, different companies
+  - {a: "Acme | Senior Backend Engineer | Remote", b: "Globex | Senior Backend Engineer | Remote", cos: 0.9, same: false}
+  - {a: "Initech | Data Engineer | Pune, India", b: "Initrode | Data Engineer | Pune, India", cos: 0.88, same: false}
+  - {a: "Hooli | Product Manager | Remote", b: "Hooli XYZ | Product Manager | Remote", cos: 0.8, same: false}
+  - {a: "Stark Industries | Platform Engineer | Remote", b: "Stark Bank | Platform Engineer | Remote", cos: 0.85, same: false}
+  - {a: "Acme Robotics | ML Engineer | Remote", b: "Acme Foods | ML Engineer | Remote", cos: 0.7, same: false}
+  - {a: "Wayne Enterprises | Security Analyst | Remote", b: "Wayne Security | Security Analyst | Remote", cos: 0.85, same: false}
+  - {a: "Umbrella | Frontend Engineer | Remote", b: "Umbrella Health | Frontend Engineer | Remote", cos: 0.8, same: false}
+  - {a: "Cyberdyne | Data Scientist | Berlin, Germany", b: "Skynet | Data Scientist | Berlin, Germany", cos: 0.9, same: false}
+  # Different jobs: alike words, different descriptions
+  - {a: "Acme | Software Engineer | Remote", b: "Acme | Software Engineer, Infrastructure | Remote", cos: 0.7, same: false}
+  - {a: "Acme | Senior Engineer | Remote", b: "Acme | Senior Engineer, Hardware | Remote", cos: 0.6, same: false}
+  - {a: "Acme | Engineer | Bangalore, India", b: "Acme | Engineer, Firmware | Bangalore, India", cos: 0.65, same: false}
+  - {a: "Acme | Operations Manager | Remote", b: "Acme | Operations Analyst | Remote", cos: 0.75, same: false}
+  - {a: "Acme | Designer | Remote", b: "Acme | Brand Designer | Remote", cos: 0.7, same: false}

@@ -35,6 +35,13 @@ SENIORITY = {
     "chief", "i", "ii", "iii", "iv",
 }  # fmt: skip
 
+# Bracket words that never make a role different: regions, employment types, and the like.
+FILLER = {
+    "us", "uk", "eu", "emea", "apac", "latam", "india", "worldwide", "global", "only",
+    "m/f/d", "f/m/d", "m/w/d", "w/m/d", "full-time", "fulltime", "part-time", "contract",
+    "permanent", "temporary", "fixed-term", "new", "urgent", "and", "or", "in", "based",
+}  # fmt: skip
+
 REQUISITION = re.compile(r"\b(?:req|requisition|job|id)?\s*#?\s*[a-z]{0,3}-?\d{4,}\b")
 BRACKETS = re.compile(r"[\(\[\{][^\)\]\}]*[\)\]\}]")
 
@@ -58,17 +65,26 @@ def _location_words(locations: list[str]) -> set[str]:
 
 
 def canonical_role(title: str, locations: list[str] | None = None) -> str:
-    """Sr. Backend Engineer (Remote) - Bangalore -> senior backend engineer."""
-    text = BRACKETS.sub(" ", title.lower())
-    text = REQUISITION.sub(" ", text)
+    """Sr. Backend Engineer (Remote) - Bangalore -> senior backend engineer.
+
+    Brackets holding only a place, a work mode, a requisition number or an employment
+    type are dropped; any other bracket is a specialization and stays, so Backend Engineer
+    (Python) and Backend Engineer (Java) are two roles (the dedup QA set checks this)."""
     places = _location_words(locations or [])
+
+    def bracket(m: re.Match[str]) -> str:
+        inner = REQUISITION.sub(" ", m.group(0)[1:-1])
+        tokens = set(re.findall(r"[a-z0-9/-]+", inner))
+        return " " if tokens <= WORK_MODE_WORDS | places | FILLER else f" {inner} "
+
+    text = REQUISITION.sub(" ", BRACKETS.sub(bracket, title.lower()))
     # Drop " - Bangalore", " | Remote", ", Remote (US)" segments that are only places or modes.
     parts = [p.strip() for p in re.split(r"\s+[-–—|]\s+|\s*,\s*|\s*/\s*(?=remote)", text)]
     kept = []
     for i, part in enumerate(parts):
         tokens = set(re.findall(r"[a-z0-9-]+", part))
         is_place = part in places or (
-            bool(tokens) and tokens <= (WORK_MODE_WORDS | places | {"us", "uk"})
+            bool(tokens) and tokens <= (WORK_MODE_WORDS | places | FILLER)
         )
         if i > 0 and is_place:
             continue
