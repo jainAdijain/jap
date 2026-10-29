@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 
 import { api, type ListingDetail } from '../api/client'
 import { atsLabel, CONDITION_LABELS, joinAnd, shortDate, STATUS_LABELS, workModeLabel } from '../format'
+import ApplyPanel from './ApplyPanel'
 import JobFields from './JobFields'
 import Platforms from './Platforms'
 
@@ -27,10 +28,13 @@ export default function ListingPanel({ id, onClose, onChanged, onOpen }: Props) 
     window.addEventListener('keydown', onKey)
     return () => window.removeEventListener('keydown', onKey)
   }, [onClose])
-  // While the primary posting's description is still being read, check again.
+  // While the primary posting's description is still being read, or JAP is filling or
+  // submitting the form, check again.
   useEffect(() => {
-    if (!listing?.primary || listing.primary.extracted) return
-    const timer = setTimeout(() => void load(), 5000)
+    if (!listing) return
+    const working = listing.status === 'applying' || listing.application?.status === 'preparing'
+    if (!working && (!listing.primary || listing.primary.extracted)) return
+    const timer = setTimeout(() => void load(), working ? 2000 : 5000)
     return () => clearTimeout(timer)
   }, [listing, load])
 
@@ -48,6 +52,8 @@ export default function ListingPanel({ id, onClose, onChanged, onOpen }: Props) 
   }
 
   const job = listing?.primary
+  // U12: the frozen snapshot once an attempt has started, else the latest fetched copy.
+  const frozen = listing?.application?.status === 'applied' ? listing.application.jd : null
   return (
     <div className="panel-backdrop" onClick={onClose}>
       <aside className="panel" role="dialog" aria-modal="true" aria-labelledby="panel-title" onClick={(e) => e.stopPropagation()}>
@@ -92,6 +98,15 @@ export default function ListingPanel({ id, onClose, onChanged, onOpen }: Props) 
                 </a>
               </p>
             )}
+
+            <ApplyPanel
+              listing={listing}
+              onChanged={(detail) => {
+                if (detail) setListing(detail)
+                else void load()
+                onChanged()
+              }}
+            />
 
             <section>
               <h3>Also on</h3>
@@ -152,11 +167,19 @@ export default function ListingPanel({ id, onClose, onChanged, onOpen }: Props) 
               <h3>What JAP read from it</h3>
               {job?.fields && job.extracted ? <JobFields f={job.fields} /> : <p className="muted">Still reading this description…</p>}
             </section>
-            {job && (
+            {frozen ? (
               <section>
                 <h3>Description</h3>
-                <div className="jd">{job.description_text}</div>
+                <p className="hint">As it was when you applied: captured {frozen.captured_at ? new Date(frozen.captured_at).toLocaleString() : '–'}.</p>
+                <div className="jd">{frozen.text}</div>
               </section>
+            ) : (
+              job && (
+                <section>
+                  <h3>Description</h3>
+                  <div className="jd">{job.description_text}</div>
+                </section>
+              )
             )}
           </div>
         )}

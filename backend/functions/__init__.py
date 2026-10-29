@@ -7,9 +7,11 @@ from typing import Any
 
 import inngest
 
+from functions.apply_listing import apply_listing
 from functions.client import inngest_client
 from functions.enrich_posting import enrich_posting
 from functions.fetch_board import fetch_board
+from functions.notify_applied import notify_applied
 from functions.parse_resume import parse_resume
 from functions.ping import ping
 from functions.run_pipeline import run_pipeline
@@ -23,6 +25,8 @@ ALL_FUNCTIONS: list[inngest.Function[Any]] = [
     enrich_posting,
     profile_saved,
     daily_schedule,
+    apply_listing,
+    notify_applied,
 ]
 
 __all__ = ["ALL_FUNCTIONS", "inngest_client"]

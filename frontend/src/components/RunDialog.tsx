@@ -13,6 +13,7 @@ type Props = {
 export default function RunDialog({ roles, busy, onClose, onStart }: Props) {
   const [all, setAll] = useState(true)
   const [picked, setPicked] = useState<string[]>([])
+  const [mode, setMode] = useState<RunRequest['mode']>('find_only')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -30,7 +31,7 @@ export default function RunDialog({ roles, busy, onClose, onStart }: Props) {
     setSaving(true)
     setError(null)
     try {
-      await onStart(all ? { mode: 'find_only' } : { mode: 'find_only', roles: picked })
+      await onStart(all ? { mode } : { mode, roles: picked })
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
       setSaving(false)
@@ -66,13 +67,19 @@ export default function RunDialog({ roles, busy, onClose, onStart }: Props) {
         <fieldset>
           <legend>What to do</legend>
           <label className="choice">
-            <input type="radio" name="mode" checked readOnly />
+            <input type="radio" name="mode" checked={mode === 'find_only'} onChange={() => setMode('find_only')} />
             Find only: list the jobs, don&apos;t apply
           </label>
-          <label className="choice muted">
-            <input type="radio" name="mode" disabled />
-            Find and apply (arrives with Apply in Review mode)
+          <label className="choice">
+            <input type="radio" name="mode" checked={mode === 'find_and_apply'} onChange={() => setMode('find_and_apply')} />
+            Find and apply: prepare every Not applied job
           </label>
+          {mode === 'find_and_apply' && (
+            <p className="hint">
+              Review mode: each job stops at Ready for review, and nothing is sent until you approve it. Up to your daily
+              cap.
+            </p>
+          )}
         </fieldset>
         {busy && <p className="hint">A run is going. This one waits for it, and joins any run already queued.</p>}
         {error && <p className="error" role="alert">{error}</p>}

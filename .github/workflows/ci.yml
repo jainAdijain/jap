@@ -35,6 +35,8 @@ jobs:
           cache: pip
           cache-dependency-path: backend/pyproject.toml
       - run: pip install ".[dev]"
+      # The apply tests read and submit local forms in a real headless Chromium.
+      - run: python -m playwright install --with-deps chromium
       - run: ruff check .
       - run: ruff format --check .
       - run: mypy .

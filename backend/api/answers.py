@@ -1,6 +1,5 @@
 """Answer bank (U9): saved answers to application form questions."""
 
-import re
 import uuid
 
 from fastapi import APIRouter
@@ -11,14 +10,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from api.errors import ApiError
 from database.models import AnswerBank
 from database.session import Session
+from pipeline.apply.answers import normalize_question
 from schemas.answer import AnswerIn, AnswerOut
 
 router = APIRouter(prefix="/answers", tags=["answers"])
-
-
-def normalize_question(q: str) -> str:
-    """Lowercased, punctuation stripped, spaces collapsed (answer_bank.question_norm)."""
-    return " ".join(re.sub(r"[^\w\s]", " ", q.lower()).split())
 
 
 def to_out(a: AnswerBank) -> AnswerOut:

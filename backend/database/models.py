@@ -1,7 +1,7 @@
 """SQLAlchemy mappings for the tables the app writes so far.
 
 The schema itself lives in migrations/versions (0001_initial); these classes only map it.
-Tables used from Phase 4 on (application, ...) get their classes when their code arrives.
+Every table the app writes has its class here.
 """
 
 import uuid
@@ -26,6 +26,10 @@ RUN_MODE = ENUM("find_only", "find_and_apply", name="run_mode", create_type=Fals
 LISTING_STATUS = ENUM(
     "not_applied", "ready_for_review", "applying", "applied", "needs_input", "failed",
     "manual_apply", "skipped", "closed", name="listing_status", create_type=False,
+)  # fmt: skip
+APPLICATION_STATUS = ENUM(
+    "preparing", "ready_for_review", "applying", "applied", "needs_input", "failed",
+    "cancelled", name="application_status", create_type=False,
 )  # fmt: skip
 RUN_STATUS = ENUM("queued", "running", "succeeded", "failed", name="run_status", create_type=False)
 
@@ -218,6 +222,36 @@ class Run(Timestamps, Base):
     ended_at: Mapped[datetime | None]
     counts: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
     error: Mapped[str | None] = mapped_column(Text)
+    inngest_run_id: Mapped[str | None] = mapped_column(Text)
+
+
+class Application(Timestamps, Base):
+    """One apply attempt on a listing (Apply flow, A2). Frozen once Applied (a trigger)."""
+
+    __tablename__ = "application"
+
+    id: Mapped[uuid.UUID] = _id()
+    listing_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    posting_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    status: Mapped[str] = mapped_column(APPLICATION_STATUS, server_default="preparing")
+    mode: Mapped[str] = mapped_column(APPLY_MODE)
+    resume_version_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True))
+    jd_snapshot: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    captured_at: Mapped[datetime | None]
+    form_fields: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    answers: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
+    cover_letter_text: Mapped[str | None] = mapped_column(Text)
+    cover_letter_path: Mapped[str | None] = mapped_column(Text)
+    claim_check: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    pending_questions: Mapped[list[dict[str, Any]] | None] = mapped_column(JSONB)
+    screenshot_path: Mapped[str | None] = mapped_column(Text)
+    trace_path: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    attempts: Mapped[int] = mapped_column(Integer, server_default="0")
+    submit_started_at: Mapped[datetime | None]
+    submitted_at: Mapped[datetime | None]
+    email_sent_at: Mapped[datetime | None]
     inngest_run_id: Mapped[str | None] = mapped_column(Text)
 
 

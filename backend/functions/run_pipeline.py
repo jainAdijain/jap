@@ -1,6 +1,8 @@
 """run-pipeline (T4, T5, I7, D6, F1): one run. fetch, dedup, then filter (the match rule
-on every stored listing); the apply steps join it in a later phase. Runs are started by the
-Run dialog, the Daily run, a profile save and an accepted resume (functions/triggers.py).
+on every stored listing), and for Find and apply, pick: one listing/apply.requested per
+passing Not applied listing, within today's cap (sent, not invoked, so a listing waiting
+days for review never holds the run open). Runs are started by the Run dialog, the Daily
+run, a profile save and an accepted resume (functions/triggers.py).
 
 Concurrency 1 across the app, so a queued run waits for the active one. Each board is
 fetched by its own fetch-board run, invoked in parallel. Dedup waits (a few minutes at
@@ -19,6 +21,7 @@ from database.session import get_sessionmaker
 from functions.client import inngest_client
 from functions.fetch_board import fetch_board
 from llm.ollama import ping_ollama
+from pipeline.apply.flow import pick
 from pipeline.dedup import dedup
 from pipeline.matching import refilter_from_profile
 from pipeline.runs import embeddings_pending, finish_run, start_run
@@ -57,6 +60,11 @@ async def filter_step() -> dict[str, int]:
         listed = await refilter_from_profile(session)
         await session.commit()
     return {"listed": listed}
+
+
+async def pick_step(run_id: str) -> list[str]:
+    async with get_sessionmaker()() as session:
+        return await pick(session, run_id)
 
 
 async def finish_step(run_id: str, counts: dict[str, Any], error: str | None) -> None:
@@ -130,5 +138,17 @@ async def run_pipeline(ctx: inngest.Context) -> dict[str, Any]:
         await ctx.step.sleep(f"wait-embeddings-{i}", timedelta(seconds=WAIT_SECONDS))
     counts.update(await ctx.step.run("dedup", dedup_step, run_id))
     counts.update(await ctx.step.run("filter", filter_step))
+    picked = await ctx.step.run("pick", pick_step, run_id)
+    if picked:
+        await ctx.step.send_event(
+            "apply",
+            [
+                inngest.Event(
+                    name="listing/apply.requested", data={"listing_id": lid, "run_id": run_id}
+                )
+                for lid in picked
+            ],
+        )
+    counts["apply_queued"] = len(picked)
     await ctx.step.run("finish", finish_step, run_id, counts, None)
     return counts

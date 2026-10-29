@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.6.1 (Phase 5), 29 Oct 2026.**
+**Version 0.7.1 (Phase 6), 29 Oct 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -12,7 +12,6 @@ the [build plan](https://claude.ai/artifact/1TrqC2jt8SuPVbULa8i6eU) and the
 
 | Service | URL (127.0.0.1 only) | What it is |
 | --- | --- | --- |
-| 0.6.0 | 29 Oct 2026 | Phase 5: Run dialog with role scope, Daily run switch and time (minute cron in `JAP_TZ`), background run after a profile save, run after accepting resume skills, one run at a time with repeats merged into the queued run, Runs card with last run line, run in progress and queued run |
 | ui | http://localhost:5173 | React + Vite UI: My profile, and a Dashboard with jobs, possible duplicates and the status checks |
 | app | http://localhost:8001 | FastAPI JSON API and Inngest functions (`/api/health`, `/api/inngest`) |
 | inngest | http://localhost:8290 | Inngest dev server, runs every pipeline step |
@@ -94,8 +93,8 @@ run queues one run behind it; more triggers join that queued run instead of addi
 (a role-scoped ask widens the queued run's scope).
 
 - **Run dialog** (Run… on the Dashboard): every job on the companies you watch, or only some
-  of your target roles (only those roles' jobs are stored, updated or closed). Find only for
-  now; Find and apply arrives with Apply.
+  of your target roles (only those roles' jobs are stored, updated or closed), and Find only
+  or Find and apply (see Applying).
 - **Daily run**: the switch on the Runs card, at 06:00 in `JAP_TZ` unless you change the time
   next to it. An Inngest cron ticks every minute and fires once per day in the first five
   minutes after that time, so a run missed while the Mac sleeps is skipped, not caught up.
@@ -105,6 +104,41 @@ run queues one run behind it; more triggers join that queued run instead of addi
 
 The Runs card shows the last run line (when, what triggered it, and its counts), plus the run
 going now and the one queued behind it.
+
+## Applying (Review mode)
+
+Open a job and press **Apply now**, or pick **Find and apply** in the Run dialog to prepare
+every Not applied job (up to your daily cap, 20 by default). JAP freezes the job description,
+opens the posting's public form in a headless Chromium (Playwright), lists every field and
+whether it is required, and fills it:
+
+- Contact fields (name, first and last name, email, phone, LinkedIn, GitHub, website,
+  location) come from My profile, by code. No model ever sees or fills them.
+- The resume field gets your active resume, under its original file name.
+- Other questions are looked up in the answer bank (exact question, or 80% alike).
+- A required free-text question with no saved answer gets an answer drafted for this job
+  from the JD and your resume (the `answer` prompt, redacted like every model call). Drafts
+  are not saved to the answer bank unless you save them.
+- A question only you can answer (notice period, salary, start date, work authorisation,
+  relocation and the like), a required choice with no saved answer, a file JAP doesn't have,
+  or a CAPTCHA stops the job at **Needs input**. Answer in the panel; the answers go to the
+  answer bank (untick the box to skip that) and JAP prepares the form again.
+
+In Review mode (the only mode until Phase 8) the job then waits at **Ready for review**:
+every answer is shown, with where it came from, and editable. Nothing is sent until you
+press **Approve and submit**. JAP then opens the form fresh, fills it, presses Submit once,
+and keeps a screenshot of the confirmation and a Playwright trace in `data/`. The job
+becomes **Applied**, and its panel shows what was sent: the date, the resume version, every
+answer, the screenshot and the frozen JD. One email, "Applied: Role at Company", goes to the
+address on My profile through Gmail SMTP (`GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD` in
+`.env`), with a link to the posting and to the job in JAP.
+
+Submissions are at least 30 seconds apart and stop at the daily cap until midnight in
+`JAP_TZ`. Submit is never pressed twice: if a retry finds it was pressed without a
+confirmation, the job becomes **Failed** with "Submit outcome unknown" so you check by hand.
+An Applied job has no Apply now, and a run never prepares it again, even when the employer
+reposts it (a repost joins the same listing). **Skip** cancels a prepared or waiting job;
+**Undo** brings it back. A **Failed** job shows the reason and screenshot, with **Retry**.
 
 ## Make targets
 
@@ -140,6 +174,9 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.7.1 | 29 Oct 2026 | Match rule fix: the rule in words, a warning for rows that can't narrow the list, one-click rules (Any one, Role and Location, Role and Skills, All three), per-condition counts in the preview, and locations typed with their region ("Bangalore, India") match by city |
+| 0.7.0 | 29 Oct 2026 | Phase 6: Apply in Review mode. Apply now and Skip in the job panel, apply-listing (JD snapshot, Playwright form reader, contact fields from My profile by code, resume upload, answer bank, drafted answers for required free text), Needs input with answers saved to the answer bank, Ready for review with every answer editable, Approve and submit (daily cap, 30 s gap, Submit pressed at most once), confirmation screenshot and trace, What was sent with the frozen JD, "Applied: Role at Company" email, Find and apply in the Run dialog, apply counts on the last run line, Retry for Failed; README history row for 0.6.0 moved here from the services table |
+| 0.6.0 | 29 Oct 2026 | Phase 5: Run dialog with role scope, Daily run switch and time (minute cron in `JAP_TZ`), background run after a profile save, run after accepting resume skills, one run at a time with repeats merged into the queued run, Runs card with last run line, run in progress and queued run |
 | 0.5.0 | 29 Oct 2026 | Phase 4: match rule as one SQL query (Role, Skills, Location, Remote regions, work mode, exclusions), re-filter on profile save and after every run, match preview on My profile, Totals and Jobs by role, filter bar (role, location, status, matched condition), matched-condition tags, Globex Demo jobs in `make demo` |
 | 0.4.0 | 29 Oct 2026 | Phase 3: canonical company and role, dedup into listings (requisition ID, exact and near match), Possible duplicates with Merge and Keep apart, Merge and Split in the job panel remembered across runs, merged count on the last run line, `make demo` |
 | 0.3.0 | 29 Oct 2026 | Phase 2: Greenhouse, Lever and Ashby adapters, board detection from a URL or name, Find only runs (run-pipeline, fetch-board, enrich-posting), extraction cached by description hash, Closed postings, job list with the JD side panel |
