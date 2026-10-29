@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 
-import { api, type Link, type Profile, type ProfileFields, type WorkMode } from '../api/client'
+import { api, type Link, type MatchPreview, type Profile, type ProfileFields, type WorkMode } from '../api/client'
 import AnswerBank from '../components/AnswerBank'
 import BoardsSection from '../components/BoardsSection'
 import ChipList from '../components/ChipList'
@@ -38,7 +38,7 @@ export default function ProfilePage() {
   const [form, setForm] = useState<ProfileFields | null>(null)
   const [message, setMessage] = useState<{ kind: 'ok' | 'error'; text: string } | null>(null)
   const [saving, setSaving] = useState(false)
-  const [preview, setPreview] = useState<number | null>(null)
+  const [preview, setPreview] = useState<MatchPreview | null>(null)
 
   const load = async () => {
     const p = await api.profile()
@@ -60,7 +60,7 @@ export default function ProfilePage() {
     const ctrl = new AbortController()
     const timer = setTimeout(() => {
       api.previewProfile(form, ctrl.signal).then(
-        (r) => setPreview(r.matching_count),
+        (r) => setPreview(r),
         () => setPreview(null),
       )
     }, 400)
@@ -214,7 +214,9 @@ export default function ProfilePage() {
         ) : dirty ? (
           preview !== null && (
             <span className="preview" role="status">
-              With these changes, {preview} listing{preview === 1 ? '' : 's'} will match.
+              With these changes, {preview.matching_count} listing{preview.matching_count === 1 ? '' : 's'} will
+              match (on their own: Role {preview.by_condition.role}, Skills {preview.by_condition.skills},
+              Location {preview.by_condition.location}).
             </span>
           )
         ) : (

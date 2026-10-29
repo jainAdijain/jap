@@ -105,10 +105,16 @@ def role_pattern(role: str) -> str | None:
 
 
 def place_pattern(place: str) -> str | None:
-    """Bangalore -> matches Bangalore or Bengaluru as whole words. Remote words give None."""
-    name = " ".join(place.lower().split())
-    if not name or name in REMOTE_WORDS:
+    """Bangalore -> matches Bangalore or Bengaluru as whole words. Remote words give None.
+
+    A place typed with its region ("Bangalore, India", "Pune - Maharashtra") goes by its
+    first part, the most specific one, so it still matches "Bengaluru, Karnataka, India".
+    """
+    parts = [" ".join(p.split()) for p in re.split(r"[,/|;()·]+|\s+-\s+", place.lower())]
+    parts = [p for p in parts if p and p not in REMOTE_WORDS]
+    if not parts:
         return None
+    name = parts[0]
     names = {name}
     for group in PLACE_SYNONYMS:
         if name in group:
@@ -181,7 +187,8 @@ def matches_sql(c: Criteria) -> tuple[str, dict[str, Any]]:
       CASE WHEN f.keep AND ({_rule_sql(c.match_rule)}) THEN array_remove(ARRAY[
         CASE WHEN f.r THEN 'role' END, CASE WHEN f.s THEN 'skills' END,
         CASE WHEN f.g THEN 'location' END], NULL) END AS matched,
-      CASE WHEN f.keep AND ({_rule_sql(c.match_rule)}) THEN f.mrole END AS matched_role
+      CASE WHEN f.keep AND ({_rule_sql(c.match_rule)}) THEN f.mrole END AS matched_role,
+      f.keep AND f.r AS role_ok, f.keep AND f.s AS skills_ok, f.keep AND f.g AS location_ok
     FROM f
     """
     return sql, params
@@ -225,18 +232,23 @@ async def listed_count(session: AsyncSession) -> int:
     return int(count or 0)
 
 
-async def preview_count(session: AsyncSession, criteria: Criteria) -> int:
-    """How many listings would be listed with these settings, without saving anything."""
+async def preview_counts(session: AsyncSession, criteria: Criteria) -> dict[str, int]:
+    """How many listings would be listed with these settings, and how many pass each
+    condition on its own (after work mode and exclusions), without saving anything."""
     sql, params = matches_sql(criteria)
     params["ids"] = None
-    count = await session.scalar(
-        text(
-            f"SELECT count(*) FROM ({sql}) m JOIN listing l ON l.id = m.id "
-            f"WHERE m.matched IS NOT NULL AND {VISIBLE}"
-        ),
-        params,
-    )
-    return int(count or 0)
+    row = (
+        await session.execute(
+            text(
+                "SELECT count(*) FILTER (WHERE m.matched IS NOT NULL), "
+                "count(*) FILTER (WHERE m.role_ok), count(*) FILTER (WHERE m.skills_ok), "
+                f"count(*) FILTER (WHERE m.location_ok) FROM ({sql}) m "
+                f"JOIN listing l ON l.id = m.id WHERE {VISIBLE}"
+            ),
+            params,
+        )
+    ).one()
+    return dict(zip(("matching", "role", "skills", "location"), map(int, row), strict=True))
 
 
 async def refilter_from_profile(

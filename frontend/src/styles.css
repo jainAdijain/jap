@@ -308,6 +308,10 @@ input.time { width: auto; min-height: 30px; padding: 2px 6px; font: inherit; fon
 .dialog .role-picks { padding-left: 24px; }
 .dialog .actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 16px; }
 
+/* Match rule: presets and how the rule reads */
+.presets button[aria-pressed='true'] { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-text); }
+.rule-text { font-size: 13px; margin: 8px 0 4px; }
+
 /* Phase 6: Apply now, Ready for review, Needs input, what was sent */
 .apply { border: 1px solid var(--border); border-radius: 8px; padding: 12px 14px; }
 .apply h4 { font-size: 14px; margin: 14px 0 6px; }

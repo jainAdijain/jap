@@ -8,7 +8,7 @@ from database.models import Profile
 from database.session import Session
 from functions.events import send
 from llm.spend import month_spend
-from pipeline.matching import Criteria, preview_count, refilter
+from pipeline.matching import Criteria, preview_counts, refilter
 from pipeline.resume import normalize_skills, skill_aliases
 from schemas.profile import MatchPreview, ProfileIn, ProfileOut, ProfileSaved, ProfileSwitches
 
@@ -79,7 +79,15 @@ async def preview(body: ProfileIn, session: Session) -> MatchPreview:
     """How many listings these settings would list, before saving (U10). Saves nothing."""
     data = await normalized(session, body)
     criteria = Criteria.of(ProfileIn.model_validate(data))
-    return MatchPreview(matching_count=await preview_count(session, criteria))
+    counts = await preview_counts(session, criteria)
+    return MatchPreview(
+        matching_count=counts.pop("matching"),
+        by_condition={
+            "role": counts["role"],
+            "skills": counts["skills"],
+            "location": counts["location"],
+        },  # fmt: skip
+    )
 
 
 @router.patch("", response_model=ProfileOut)

@@ -169,6 +169,7 @@ export type PostingDetail = PostingRow & {
 }
 export type Answer = { id: string; question: string; answer: string }
 
+export type MatchPreview = { matching_count: number; by_condition: Record<Condition, number> }
 export type ListingStatus =
   | 'not_applied'
   | 'ready_for_review'
@@ -281,7 +282,7 @@ export const api = {
   saveProfile: (p: ProfileFields) =>
     request<Profile & { matching_count: number }>('/api/profile', json('PUT', p)),
   previewProfile: (p: ProfileFields, signal?: AbortSignal) =>
-    request<{ matching_count: number }>('/api/profile/preview', { ...json('POST', p), signal }),
+    request<MatchPreview>('/api/profile/preview', { ...json('POST', p), signal }),
   resumes: () => request<Resume[]>('/api/resumes'),
   uploadResume: (file: File) => {
     const form = new FormData()

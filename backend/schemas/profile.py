@@ -106,6 +106,8 @@ class ProfileSaved(ProfileOut):
 
 class MatchPreview(BaseModel):
     matching_count: int
+    # Listings that pass each condition on its own, so a rule that lists nothing shows why.
+    by_condition: dict[Condition, int]
 
 
 class ProfileSwitches(BaseModel):

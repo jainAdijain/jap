@@ -60,6 +60,12 @@ def test_role_pattern(role: str, title: str, hit: bool) -> None:
 
 
 def test_place_and_word_patterns() -> None:
+    # A place typed with its region goes by the city: "Bangalore, India" still finds Bengaluru.
+    typed = place_pattern("Bangalore, India")
+    assert typed and re.search(typed, "bengaluru, karnataka, india")
+    assert not re.search(typed, "pune, india")
+    remote_india = place_pattern("Remote, India")
+    assert remote_india and re.search(remote_india, "new delhi, india")
     bangalore = place_pattern("Bangalore")
     assert bangalore and re.search(bangalore, "bengaluru, karnataka, india")
     us = place_pattern("US")
@@ -96,7 +102,10 @@ async def test_rule_change_refilters_without_a_fetch(
     await _save(api)
     rule = [["role", "location"]]
     preview = await api.post("/api/profile/preview", json={**PROFILE, "match_rule": rule})
-    assert preview.json() == {"matching_count": 4}
+    assert preview.json() == {
+        "matching_count": 4,
+        "by_condition": {"role": 4, "skills": 6, "location": 5},
+    }
     assert len(await _titles(api)) == len(DEFAULT)  # preview saved nothing
     saved = await _save(api, match_rule=rule)
     assert saved["matching_count"] == 4
@@ -184,3 +193,17 @@ async def test_merge_keeps_matched_up_to_date(api: httpx.AsyncClient) -> None:
         f"/api/listings/{senior['id']}/merge", json={"other_listing_id": junior["id"]}
     )
     assert merged.status_code == 200 and merged.json()["matched"] == ["role", "skills", "location"]
+
+
+async def test_role_and_location_row_beside_the_default_rows_changes_nothing(
+    api: httpx.AsyncClient,
+) -> None:
+    """Ticking Role and Location in the first default row keeps the Skills and Location rows,
+    so the list stays the same; only the single row narrows it (the UI now says so)."""
+    await demo.load()
+    kept = await _save(api, match_rule=[["role", "location"], ["skills"], ["location"]])
+    assert kept["matching_count"] == len(DEFAULT)
+    only = await _save(api, match_rule=[["role", "location"]])
+    assert only["matching_count"] == 4
+    typed = await _save(api, match_rule=[["role", "location"]], locations=["Bangalore, India"])
+    assert typed["matching_count"] == 4
