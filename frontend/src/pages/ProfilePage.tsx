@@ -56,7 +56,9 @@ export default function ProfilePage() {
     setForm({ ...form, [key]: value })
     setMessage(null)
   }
-  const dirty = JSON.stringify(form) !== JSON.stringify(fields(profile))
+  // Work modes compare as a set, so unticking and re-ticking one counts as no change.
+  const comparable = (f: ProfileFields) => JSON.stringify({ ...f, work_modes: [...f.work_modes].sort() })
+  const dirty = comparable(form) !== comparable(fields(profile))
 
   const save = async () => {
     setSaving(true)
@@ -150,13 +152,14 @@ export default function ProfilePage() {
                   type="checkbox"
                   checked={form.work_modes.includes(key)}
                   onChange={() =>
-                    set('work_modes', form.work_modes.includes(key) ? form.work_modes.filter((m) => m !== key) : [...form.work_modes, key])
+                    set('work_modes', form.work_modes.includes(key) ? form.work_modes.filter((m) => m !== key) : MODES.map((m) => m.key).filter((m) => m === key || form.work_modes.includes(m)))
                   }
                 />
                 {label}
               </label>
             ))}
           </div>
+          {form.work_modes.length === 0 && <p className="error">Tick at least one work mode before you save.</p>}
         </fieldset>
       </section>
 
@@ -180,10 +183,12 @@ export default function ProfilePage() {
           AI spend this month: {money(profile.spend.month_usd)} of {money(profile.spend.cap_usd)}
           {profile.spend.reached && ' (cap reached)'}
         </span>
-        {message && (
+        {message ? (
           <span className={message.kind === 'ok' ? 'saved' : 'error'} role="status">
             {message.text}
           </span>
+        ) : (
+          !dirty && <span className="muted" role="status">No unsaved changes</span>
         )}
         <span className="row-buttons">
           <button type="button" disabled={!dirty || saving} onClick={() => setForm(fields(profile))}>
