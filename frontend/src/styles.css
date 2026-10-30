@@ -120,7 +120,10 @@ p { margin: 0; }
 .toolbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; padding: 12px; border-bottom: 1px solid var(--line); min-height: 59px; }
 .toolbar .search { position: relative; flex: 1 1 260px; min-width: 0; }
 .toolbar .search svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); width: 16px; height: 16px; stroke: var(--muted); fill: none; stroke-width: 2; }
-.toolbar .search input { padding-left: 34px; }
+.toolbar .search input { padding-left: 34px; padding-right: 36px; }
+.toolbar .search kbd { position: absolute; right: 8px; top: 50%; transform: translateY(-50%); min-width: 20px; padding: 1px 6px; border: 1px solid var(--line-strong); border-radius: 4px; background: var(--bg); color: var(--muted); font: 12px/18px var(--mono); text-align: center; pointer-events: none; }
+.toolbar .search input:focus + kbd { display: none; }
+@media (hover: none) { .toolbar .search kbd { display: none; } }
 .toolbar select { width: auto; flex: 0 1 auto; max-width: 200px; }
 .bulk { background: var(--accent-soft); }
 .bulk b { font-weight: 600; margin-right: 4px; }

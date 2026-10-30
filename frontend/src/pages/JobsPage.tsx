@@ -539,6 +539,11 @@ export default function JobsPage() {
                 <path d="m20 20-3.5-3.5" />
               </svg>
               <input id="job-search" type="search" placeholder="Search title, company or location" aria-label="Search jobs" value={q} onChange={(e) => setQ(e.target.value)} />
+              {!q && (
+                <kbd aria-hidden="true">
+                  /
+                </kbd>
+              )}
             </div>
             <select aria-label="Job title" value={filters.role} onChange={(e) => set('role', e.target.value)}>
               <option value="">All job titles</option>
