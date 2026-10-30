@@ -62,16 +62,19 @@ async def normalized(session: AsyncSession, body: ProfileIn) -> dict[str, object
 
 @router.put("", response_model=ProfileSaved)
 async def save_profile(body: ProfileIn, session: Session) -> ProfileSaved:
-    """Save, then re-filter the stored listings at once (T2, F1). profile/saved then starts
-    a fetch in the background (profile-saved, debounced), so new matching jobs follow."""
+    """Save, then re-filter the stored listings at once (T2, F1). When a job preference
+    changed, profile/saved then starts a fetch in the background (profile-saved, debounced),
+    so new matching jobs follow."""
     profile = await load_profile(session)
+    before = Criteria.of(profile)
     for field, value in (await normalized(session, body)).items():
         setattr(profile, field, value)
     await session.flush()
     matching = await refilter(session, Criteria.of(profile))
     await session.commit()
     await session.refresh(profile)
-    await send("profile/saved")
+    if Criteria.of(profile) != before:  # contact details or the letter style alone: no search
+        await send("profile/saved")
     out = await to_out(session, profile)
     return ProfileSaved(**out.model_dump(), matching_count=matching)
 

@@ -45,6 +45,9 @@ async def test_save_and_reload(
     assert body["match_rule"] == [["location", "role"], ["skills"]]
     assert body["links"] == [{"label": "GitHub", "url": "https://github.com/asharao"}]
     assert events == [("profile/saved", {})]
+    contact = await api.put("/api/profile", json={**PROFILE, "phone": "+91 99999 00000"})
+    assert contact.status_code == 200
+    assert events == [("profile/saved", {})]  # contact details alone start no search
 
 
 async def test_work_mode_is_required(api: httpx.AsyncClient) -> None:
