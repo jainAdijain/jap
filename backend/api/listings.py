@@ -8,6 +8,7 @@ condition without touching the profile (F2).
 
 import uuid
 from collections import defaultdict
+from datetime import timedelta
 
 from fastapi import APIRouter, Query
 from sqlalchemy import ColumnElement, Text, cast, exists, func, or_, select
@@ -43,6 +44,14 @@ STATUSES = (
 )  # fmt: skip
 STATUS_FILTER = "^(open|all|" + "|".join(STATUSES) + ")$"
 OTHER_ROLE = "__other"  # role filter value for listings matched through Skills or Location
+SORTS = {
+    "title": Listing.title_display,
+    "company": Company.name,
+    "location": func.array_to_string(Listing.locations, " | "),
+    "work_mode": cast(Listing.work_mode, Text),
+    "status": cast(Listing.status, Text),
+    "posted": Listing.last_posted_at,
+}
 
 router = APIRouter(prefix="/listings", tags=["listings"])
 
@@ -105,6 +114,10 @@ async def listings(
     location: str | None = Query(None, max_length=100),
     matched: str | None = Query(None, pattern="^(role|skills|location)$"),
     q: str | None = Query(None, max_length=100),
+    work_mode: str | None = Query(None, pattern="^(remote|hybrid|onsite|unknown)$"),
+    posted_days: int | None = Query(None, ge=1, le=365),
+    sort: str = Query("posted", pattern="^(" + "|".join(SORTS) + ")$"),
+    dir: str = Query("desc", pattern="^(asc|desc)$"),
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=200),
 ) -> ListingPage:
@@ -121,10 +134,24 @@ async def listings(
         where.append(func.array_to_string(Listing.locations, " | ").ilike(f"%{location.strip()}%"))
     if matched:
         where.append(Listing.matched.contains(cast([matched], ARRAY(Text))))
+    if work_mode == "unknown":
+        where.append(Listing.work_mode.is_(None))
+    elif work_mode:
+        where.append(cast(Listing.work_mode, Text) == work_mode)
+    if posted_days:
+        where.append(Listing.last_posted_at >= func.now() - timedelta(days=posted_days))
     if q:
-        like = f"%{q}%"
-        where.append(or_(Listing.title_display.ilike(like), Company.name.ilike(like)))
+        like = f"%{q.strip()}%"
+        where.append(
+            or_(
+                Listing.title_display.ilike(like),
+                Company.name.ilike(like),
+                func.array_to_string(Listing.locations, " | ").ilike(like),
+            )
+        )
     base = select(Listing, Company.name).join(Company, Company.id == Listing.company_id)
+    key = SORTS[sort]
+    order = (key.desc() if dir == "desc" else key.asc()).nulls_last()
     total = await session.scalar(
         select(func.count())
         .select_from(Listing)
@@ -134,7 +161,7 @@ async def listings(
     rows = (
         await session.execute(
             base.where(*where)
-            .order_by(Listing.last_posted_at.desc().nulls_last(), Listing.title_display)
+            .order_by(order, Listing.title_display, Listing.id)
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
@@ -167,7 +194,20 @@ async def summary(session: Session) -> ListingSummary:
         for c in (totals, counts):
             c.listings += n
             setattr(c, status, getattr(c, status) + n)
-    return ListingSummary(totals=totals, by_role=list(by_role.values()))
+    each = (
+        select(func.unnest(Listing.locations).label("loc"))
+        .where(*listed(), Listing.status != "closed")
+        .subquery()
+    )
+    places = await session.execute(
+        select(each.c.loc, func.count())
+        .group_by(each.c.loc)
+        .order_by(func.count().desc(), each.c.loc)
+        .limit(40)
+    )
+    return ListingSummary(
+        totals=totals, by_role=list(by_role.values()), locations=[p for p, _ in places.all()]
+    )
 
 
 async def load_detail(session: AsyncSession, listing_id: uuid.UUID) -> ListingDetail:

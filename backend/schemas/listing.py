@@ -53,6 +53,7 @@ class ListingSummary(BaseModel):
 
     totals: StatusCounts
     by_role: list[RoleCounts]
+    locations: list[str] = []  # job locations in the list, most common first (Location filter)
 
 
 class AlsoOn(BaseModel):

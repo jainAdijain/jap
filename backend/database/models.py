@@ -60,6 +60,7 @@ class Profile(Timestamps, Base):
     nice_to_have_skills: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     locations: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     remote_regions: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    remote_any: Mapped[bool] = mapped_column(Boolean, server_default="false")  # all remote jobs
     match_rule: Mapped[list[list[str]]] = mapped_column(
         JSONB, server_default='[["role"], ["skills"], ["location"]]'
     )

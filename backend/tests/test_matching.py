@@ -132,6 +132,18 @@ async def test_remote_regions_and_worldwide(api: httpx.AsyncClient) -> None:
     assert "Platform Engineer" in await _titles(api)  # USA = US
 
 
+async def test_all_remote_jobs(api: httpx.AsyncClient) -> None:
+    """All remote jobs (remote_any): every remote job passes Location, whatever its regions."""
+    await demo.load()
+    await _save(api, match_rule=[["location"]], remote_regions=[], remote_any=True)
+    titles = await _titles(api)
+    assert {"Platform Engineer", "Site Reliability Engineer", "Backend Engineer"} <= titles
+    saved = (await api.get("/api/profile")).json()
+    assert saved["remote_any"] is True
+    await _save(api, match_rule=[["location"]], remote_regions=[], remote_any=False)
+    assert "Platform Engineer" not in await _titles(api)
+
+
 async def test_exclusions_and_work_mode(api: httpx.AsyncClient) -> None:
     await demo.load()
     await _save(api, excluded_title_words=["intern"])
@@ -207,3 +219,25 @@ async def test_role_and_location_row_beside_the_default_rows_changes_nothing(
     assert only["matching_count"] == 4
     typed = await _save(api, match_rule=[["role", "location"]], locations=["Bangalore, India"])
     assert typed["matching_count"] == 4
+
+
+async def test_list_sort_and_filters(api: httpx.AsyncClient) -> None:
+    """Jobs table: sort by any column, Work mode and Posted filters, search over locations."""
+    await demo.load()
+    await _save(api)
+    page = (await api.get("/api/listings", params={"sort": "title", "dir": "asc"})).json()
+    titles = [r["title"] for r in page["rows"]]
+    assert titles == sorted(titles)
+    desc = (await api.get("/api/listings", params={"sort": "company", "dir": "desc"})).json()
+    companies = [r["company"] for r in desc["rows"]]
+    assert companies == sorted(companies, reverse=True)
+    assert await _titles(api, work_mode="unknown") == {"Python Developer"}
+    assert all(
+        r["work_mode"] == "remote"
+        for r in (await api.get("/api/listings", params={"work_mode": "remote"})).json()["rows"]
+    )
+    recent = (await api.get("/api/listings", params={"posted_days": 1})).json()["rows"]
+    assert len(recent) < len(DEFAULT)
+    assert await _titles(api, q="london") == {"Python Developer"}
+    summary = (await api.get("/api/listings/summary")).json()
+    assert summary["locations"] and all(isinstance(p, str) for p in summary["locations"])
