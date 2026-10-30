@@ -3,6 +3,7 @@ forms, in a real headless Chromium. Skipped when Chromium is not installed (CI i
 """
 
 import threading
+import time
 from collections.abc import Iterator
 from email.parser import BytesParser
 from email.policy import default
@@ -39,6 +40,10 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self) -> None:
+        if self.path == "/slow":  # the page's own code, arriving late (greenhouse_boards.html)
+            time.sleep(0.8)
+            self._send(b"ok")
+            return
         path = FORMS / self.path.lstrip("/")
         if not path.is_file():
             self.send_response(404)
@@ -180,6 +185,71 @@ async def test_submit_without_a_form_is_not_clicked(site: str, tmp_path: Path) -
         f"{site}/missing.html", fields, {"nope": "x"}, {}, tmp_path / "s.png", tmp_path / "t.zip"
     )
     assert not result.confirmed and not result.clicked and result.error
+
+
+@needs_browser
+async def test_reads_a_combobox_as_a_select(site: str) -> None:
+    read = await read_form(f"{site}/greenhouse_boards.html")
+    by_key = {f.key: f for f in read.fields}
+    office = by_key["id:q_office"]
+    assert (office.type, office.widget, office.required) == ("select", "combobox", True)
+    assert office.options == ["Yes", "No"]
+    assert office.label.startswith("Are you open to working in-person")
+    assert by_key["first_name"].required and by_key["why"].type == "textarea"
+
+
+GH_ANSWERS = {
+    "first_name": "Asha",
+    "email": "asha@example.com",
+    "id:q_office": "Yes",
+    "why": "To make AI systems safer.",
+}
+
+
+@needs_browser
+async def test_submit_waits_for_the_page_and_fills_again_what_it_cleared(
+    site: str, tmp_path: Path
+) -> None:  # fmt: skip
+    """The Approve bug on Greenhouse job-boards pages: every field came out empty."""
+    read = await read_form(f"{site}/greenhouse_boards.html")
+    _Handler.posts.clear()
+    result = await submit_form(
+        f"{site}/greenhouse_boards.html", read.fields, GH_ANSWERS, {},
+        tmp_path / "s.png", tmp_path / "t.zip",
+    )  # fmt: skip
+    assert result.confirmed, result.error
+    assert _Handler.posts[-1] == {
+        "first_name": "Asha",
+        "email": "asha@example.com",
+        "q_office": "Yes",
+        "why": "To make AI systems safer.",
+    }
+
+
+@needs_browser
+async def test_a_form_that_refuses_submit_is_rejected_not_sent(site: str, tmp_path: Path) -> None:
+    read = await read_form(f"{site}/greenhouse_boards.html")
+    _Handler.posts.clear()
+    answers = {k: v for k, v in GH_ANSWERS.items() if k != "why"}
+    result = await submit_form(
+        f"{site}/greenhouse_boards.html", read.fields, answers, {},
+        tmp_path / "s.png", tmp_path / "t.zip",
+    )  # fmt: skip
+    assert result.clicked and result.rejected and not result.confirmed
+    assert result.error is not None and "Why Anthropic?" in result.error
+    assert "First Name" not in result.error and _Handler.posts == []
+
+
+@needs_browser
+async def test_an_option_the_combobox_lacks_stops_before_submit(site: str, tmp_path: Path) -> None:
+    read = await read_form(f"{site}/greenhouse_boards.html")
+    _Handler.posts.clear()
+    result = await submit_form(
+        f"{site}/greenhouse_boards.html", read.fields, {**GH_ANSWERS, "id:q_office": "Maybe"},
+        {}, tmp_path / "s.png", tmp_path / "t.zip",
+    )  # fmt: skip
+    assert not result.clicked and not result.confirmed and _Handler.posts == []
+    assert result.error is not None and 'No option "Maybe"' in result.error
 
 
 def test_contact_rules() -> None:

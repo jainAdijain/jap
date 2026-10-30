@@ -1,0 +1,68 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Research Engineer</title>
+<style>.menu{border:1px solid #ccc}.menu[hidden]{display:none}</style></head><body>
+<!-- Like Greenhouse's job-boards pages: the form is in the first HTML, then a script takes it
+     over. Whatever was typed before that is lost, the yes/no questions are comboboxes
+     (react-select), and the page checks required fields itself before it posts. -->
+<h1>Research Engineer</h1>
+<form id="application-form" method="post" action="/submit" enctype="multipart/form-data" novalidate>
+  <label for="first_name">First Name<span>*</span></label>
+  <input type="text" id="first_name" name="first_name" aria-required="true">
+  <label for="email">Email<span>*</span></label>
+  <input type="text" id="email" name="email" aria-required="true">
+  <div class="select">
+    <label id="q_office-label" for="q_office">Are you open to working in-person in one of our offices 25% of the time?<span>*</span></label>
+    <div class="control"><div class="shown"></div>
+      <input type="text" id="q_office" role="combobox" aria-required="true" aria-expanded="false" autocomplete="off">
+    </div>
+    <input type="hidden" name="q_office" value="">
+    <div class="menu" role="listbox" hidden></div>
+  </div>
+  <label for="why">Why Anthropic?<span>*</span></label>
+  <textarea id="why" name="why" aria-required="true"></textarea>
+  <button type="submit">Submit application</button>
+</form>
+<script>
+  // "Hydration": once the app's code has loaded (/slow answers late), every field is reset.
+  fetch('/slow').then(() => {
+    for (const el of document.querySelectorAll('input[type=text], textarea')) el.value = '';
+    // A later re-render clears First Name once more, after it was first typed into.
+    const first = document.getElementById('first_name');
+    first.addEventListener('input', () => setTimeout(() => { first.value = '' }, 300), { once: true });
+    document.body.dataset.hydrated = '1';
+  });
+  const box = document.getElementById('q_office');
+  const menu = document.querySelector('.menu');
+  const hidden = document.querySelector('input[type=hidden][name=q_office]');
+  const shown = document.querySelector('.shown');
+  const options = ['Yes', 'No'];
+  const render = () => {
+    const q = box.value.toLowerCase();
+    menu.innerHTML = '';
+    for (const o of options.filter((o) => o.toLowerCase().includes(q))) {
+      const d = document.createElement('div');
+      d.setAttribute('role', 'option');
+      d.textContent = o;
+      d.addEventListener('mousedown', (e) => {
+        e.preventDefault();
+        hidden.value = o; shown.textContent = o; box.value = ''; menu.hidden = true;
+        box.removeAttribute('aria-invalid');
+      });
+      menu.appendChild(d);
+    }
+    menu.hidden = false;
+  };
+  box.addEventListener('focus', render);
+  box.addEventListener('click', render);
+  box.addEventListener('input', render);
+  box.addEventListener('keydown', (e) => { if (e.key === 'Escape') menu.hidden = true; });
+  box.addEventListener('blur', () => { box.value = ''; menu.hidden = true; });
+  document.getElementById('application-form').addEventListener('submit', (e) => {
+    let bad = false;
+    for (const el of document.querySelectorAll('#first_name, #email, #why')) {
+      if (!el.value.trim()) { el.setAttribute('aria-invalid', 'true'); bad = true; }
+    }
+    if (!hidden.value) { box.setAttribute('aria-invalid', 'true'); bad = true; }
+    if (bad) e.preventDefault();
+  });
+</script></body></html>

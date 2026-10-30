@@ -457,9 +457,35 @@ async def test_unconfirmed_submit_fails_and_unpressed_submit_retries(
         assert await flow.submit(session, app_id) == {"status": "failed"}
     detail = (await api.get(f"/api/listings/{setup['listing']}")).json()
     assert detail["status"] == "failed" and detail["application"]["error"] == "no thanks page"
-    assert detail["apply_blocked"] is None
+    assert detail["apply_blocked"] is None and detail["application"]["submit_pressed"]
+    # Submit may have gone through: Retry and Apply now ask me to check first.
     retry = await api.post(f"/api/applications/{app_id}/retry")
+    assert retry.status_code == 409 and retry.json()["error"]["code"] == "submit_maybe_sent"
+    again = await api.post(f"/api/listings/{setup['listing']}/apply")
+    assert again.status_code == 409 and again.json()["error"]["code"] == "submit_maybe_sent"
+    retry = await api.post(f"/api/applications/{app_id}/retry", json={"checked": True})
     assert retry.status_code == 202
+
+
+async def test_a_refused_submit_was_not_sent_and_retries_freely(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+    api: httpx.AsyncClient,
+) -> None:  # fmt: skip
+    _fake_form(monkeypatch, FORM)
+    app_id = await _prepare(setup["listing"])
+    sql.execute("UPDATE application SET status = 'applying' WHERE id = %s", (app_id,))
+
+    async def refused(*args: Any) -> SubmitResult:
+        return SubmitResult(
+            confirmed=False, screenshot=True, clicked=True, rejected=True, error="Refused"
+        )
+
+    monkeypatch.setattr(flow, "submit_form", refused)
+    async with get_sessionmaker()() as session:
+        assert await flow.submit(session, app_id) == {"status": "failed"}
+    app = (await api.get(f"/api/applications/{app_id}")).json()
+    assert app["status"] == "failed" and not app["submit_pressed"]
+    assert (await api.post(f"/api/applications/{app_id}/retry")).status_code == 202
 
 
 async def test_cap_and_gap(setup: dict[str, Any], sql: psycopg.Connection[Any]) -> None:

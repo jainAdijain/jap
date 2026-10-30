@@ -5,6 +5,12 @@ form has: inputs, text areas and selects with a label, a required flag (the requ
 attribute, aria-required, or a trailing *), and a submit button. Each call opens a fresh
 browser, so no session outlives a step (no browser survives a wait, design doc Apply).
 
+A dropdown built from a text input (role="combobox", as on Greenhouse's job-boards pages)
+is read as a select: its options are listed by opening it, and it is filled by picking the
+option. Newer boards render the form with JavaScript and can clear what was typed before
+the page settled, so submit waits for the page to settle, reads every value back, fills
+again what didn't stick, and never presses Submit while a field is still empty.
+
 No model is involved here: which fields are required comes from the page itself.
 """
 
@@ -34,6 +40,21 @@ OPTION_LABEL_JS = """(o) => {
 }"""
 REQUIRED_MARK = re.compile(r"\s*([*✱★]|\(required\)|required)\s*$", re.I)
 
+# The text a combobox shows once an option is picked: the control around its input.
+COMBO_SHOWN_JS = """(el) => {
+  let p = el.parentElement;
+  for (let i = 0; i < 4 && p; i++, p = p.parentElement) {
+    const t = (p.innerText || '').replace(/\\s+/g, ' ').trim();
+    if (t) return t;
+  }
+  return el.value || '';
+}"""
+SELECTED_JS = "(el) => el.selectedIndex >= 0 ? [el.options[el.selectedIndex].text, el.value] : []"
+# Fields the page marks invalid after Submit: the form refused it, so nothing was sent.
+INVALID_JS = """() => [...document.querySelectorAll('[aria-invalid="true"], :invalid')]
+  .filter((el) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName))
+  .map((el) => el.name || el.id).filter(Boolean)"""
+
 
 @dataclass
 class FormField:
@@ -43,6 +64,7 @@ class FormField:
     required: bool
     options: list[str] = field(default_factory=list)
     max_chars: int | None = None
+    widget: str = ""  # "combobox": a select built from a text input
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -52,6 +74,7 @@ class FormField:
             "required": self.required,
             "options": self.options,
             "max_chars": self.max_chars,
+            "widget": self.widget,
         }
 
 
@@ -67,6 +90,8 @@ class SubmitResult:
     screenshot: bool
     clicked: bool  # Submit was pressed: never press it again for this attempt
     error: str | None = None
+    # Pressed, but the form marked fields invalid and stayed: nothing was sent
+    rejected: bool = False
 
 
 class FormError(Exception):
@@ -89,6 +114,7 @@ def to_fields(raw: list[dict[str, Any]]) -> list[FormField]:
                 required=required,
                 options=[str(o) for o in r.get("options") or [] if str(o).strip()],
                 max_chars=r.get("max_chars"),
+                widget=str(r.get("widget") or ""),
             )
         )
     return out
@@ -117,6 +143,9 @@ async def read_form(url: str, screenshot: Path | None = None) -> FormRead:
             try:
                 page = await _open_page(page, url)
                 data = await page.evaluate(READ_JS)
+                for r in data["fields"]:
+                    if r.get("widget") == "combobox":
+                        r["options"] = await _combo_options(page, str(r["key"]))
             except Error as exc:
                 raise FormError(f"Could not read the form: {exc.message.splitlines()[0]}") from exc
             fields = to_fields(data["fields"])
@@ -138,6 +167,23 @@ async def _shot(page: Page, path: Path) -> bool:
     except Error:
         return False
     return True
+
+
+async def _combo_options(page: Page, key: str) -> list[str]:
+    """Open a combobox, list its options, close it again."""
+    loc = page.locator(selector(key)).first
+    try:
+        await loc.click()
+        options = page.get_by_role("option")
+        await options.first.wait_for(timeout=3_000)
+        texts = await options.all_inner_texts()
+    except Error:
+        texts = []
+    try:
+        await page.keyboard.press("Escape")
+    except Error:
+        pass
+    return [t for t in (" ".join(x.split()) for x in texts) if t]
 
 
 def selector(key: str) -> str:
@@ -182,9 +228,27 @@ class Upload:
     mime: str
 
 
+async def _combo(page: Page, f: FormField, value: str) -> None:
+    """Pick the option of a combobox: type to filter it, then click it."""
+    loc = page.locator(selector(f.key)).first
+    await loc.click()
+    await loc.fill(value)
+    option = page.get_by_role("option", name=value, exact=True)
+    try:
+        await option.first.wait_for(timeout=3_000)
+    except Error:
+        option = page.get_by_role("option", name=re.compile(re.escape(value), re.I))
+        if await option.count() == 0:
+            await page.keyboard.press("Escape")
+            raise FormError(f'No option "{value}" for "{f.label}"') from None
+    await option.first.click()
+
+
 async def _fill(page: Page, f: FormField, value: str, files: dict[str, Upload]) -> None:
     loc = page.locator(selector(f.key)).first
-    if f.type == "file":
+    if f.widget == "combobox":
+        await _combo(page, f, value)
+    elif f.type == "file":
         if f.key in files:
             up = files[f.key]
             data = await asyncio.to_thread(up.path.read_bytes)
@@ -199,6 +263,60 @@ async def _fill(page: Page, f: FormField, value: str, files: dict[str, Upload]) 
         await _choose(page, f, value)
     elif value:
         await loc.fill(value)
+
+
+def _same(shown: str, value: str) -> bool:
+    a, b = " ".join(shown.split()).lower(), " ".join(value.split()).lower()
+    return bool(a) and (a == b or b.startswith(a) or b in a)  # maxlength may cut a long answer
+
+
+async def _unfilled(
+    page: Page, fields: list[FormField], answers: dict[str, str]
+) -> list[FormField]:
+    """The fields whose value on the page is not the one JAP put there."""
+    out: list[FormField] = []
+    for f in fields:
+        value = answers.get(f.key, "")
+        if not value or f.type in ("file", "radio", "checkbox", "checkboxes"):
+            continue
+        loc = page.locator(selector(f.key)).first
+        try:
+            if f.widget == "combobox":
+                ok = _same(str(await loc.evaluate(COMBO_SHOWN_JS)), value)
+            elif f.type == "select":
+                picked = [str(x) for x in await loc.evaluate(SELECTED_JS)]
+                ok = any(_same(p, value) for p in picked)
+            else:
+                ok = _same(await loc.input_value(), value)
+        except Error:
+            ok = False
+        if not ok:
+            out.append(f)
+    return out
+
+
+async def _fill_all(
+    page: Page, fields: list[FormField], answers: dict[str, str], files: dict[str, Upload]
+) -> None:
+    """Fill every field, read the values back, fill again what didn't stick (a page that
+    was still starting up clears it), and stop before Submit if anything is still empty."""
+    if fields:
+        await page.locator(selector(fields[0].key)).first.wait_for(state="attached")
+    for f in fields:
+        value = answers.get(f.key, "")
+        if value or f.type == "file":
+            await _fill(page, f, value, files)
+    for _ in range(2):
+        missing = await _unfilled(page, fields, answers)
+        if not missing:
+            return
+        await page.wait_for_timeout(1_000)
+        for f in missing:
+            await _fill(page, f, answers[f.key], files)
+    missing = await _unfilled(page, fields, answers)
+    if missing:
+        labels = "; ".join(f.label for f in missing)
+        raise FormError(f"These fields would not keep their value, so nothing was sent: {labels}")
 
 
 async def submit_form(
@@ -222,13 +340,8 @@ async def submit_form(
         page.set_default_timeout(SETTLE_TIMEOUT_MS)
         shot = clicked = False
         try:
-            resp = await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
-            if resp is not None and resp.status >= 400:
-                raise FormError(f"The form page answered {resp.status}")
-            for f in fields:
-                value = answers.get(f.key, "")
-                if value or f.type == "file":
-                    await _fill(page, f, value, files)
+            page = await _open_page(page, url)
+            await _fill_all(page, fields, answers, files)
             button = page.locator(
                 'form button[type="submit"], form input[type="submit"], button[type="submit"]'
             )
@@ -256,6 +369,17 @@ async def submit_form(
             shot = True
             if CONFIRMATION.search(body) or form_left:
                 return SubmitResult(confirmed=True, screenshot=True, clicked=True)
+            keys = {f.key.removeprefix("id:"): f.label for f in fields}
+            invalid = [keys[k] for k in await page.evaluate(INVALID_JS) if k in keys]
+            if invalid:
+                return SubmitResult(
+                    confirmed=False,
+                    screenshot=True,
+                    clicked=True,
+                    rejected=True,
+                    error="The form refused the submission, so nothing was sent. It marked: "
+                    + "; ".join(dict.fromkeys(invalid)),
+                )
             return SubmitResult(
                 confirmed=False,
                 screenshot=True,

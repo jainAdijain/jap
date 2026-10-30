@@ -274,6 +274,7 @@ export type Application = {
   email_sent_at: string | null
   has_screenshot: boolean
   has_trace: boolean
+  submit_pressed: boolean
 }
 export type ListingDetail = ListingRow & {
   skills: string[]
@@ -370,7 +371,8 @@ export const api = {
   approve: (appId: string) => request<Application>(`/api/applications/${appId}/approve`, json('POST', {})),
   answer: (appId: string, answers: Record<string, string>, saveToBank: boolean) =>
     request<Application>(`/api/applications/${appId}/answer`, json('POST', { answers, save_to_bank: saveToBank })),
-  retry: (appId: string) => request<{ listing_id: string; queued: boolean }>(`/api/applications/${appId}/retry`, json('POST', {})),
+  retry: (appId: string, checked = false) =>
+    request<{ listing_id: string; queued: boolean }>(`/api/applications/${appId}/retry`, json('POST', { checked })),
   fileUrl: (kind: 'screenshot' | 'trace' | 'cover_letter', appId: string) => `${API_URL}/api/files/${kind}/${appId}`,
   duplicates: () => request<Duplicate[]>('/api/duplicates'),
   decide: (id: string, decision: 'merged' | 'kept_apart') =>

@@ -79,6 +79,8 @@ class ApplicationOut(BaseModel):
     email_sent_at: datetime | None
     has_screenshot: bool
     has_trace: bool
+    # Failed after Submit was pressed, outcome unknown: Retry asks me to check first
+    submit_pressed: bool = False
 
 
 class AnswersIn(BaseModel):
@@ -93,6 +95,12 @@ class AnswerQuestionsIn(AnswersIn):
     """Answers to Needs input questions, and whether to keep them in the answer bank."""
 
     save_to_bank: bool = True
+
+
+class RetryIn(BaseModel):
+    """I checked the employer's site: the earlier Submit did not go through."""
+
+    checked: bool = False
 
 
 class ApplyQueued(BaseModel):

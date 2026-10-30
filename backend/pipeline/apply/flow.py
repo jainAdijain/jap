@@ -59,6 +59,24 @@ async def _app(session: AsyncSession, app_id: str, *, lock: bool = False) -> App
     return app
 
 
+MAYBE_SENT = (
+    "Submit was pressed on this job before and JAP couldn't tell whether it went through. "
+    "Check the employer's site or your email first, then confirm to try again"
+)
+
+
+async def maybe_sent(session: AsyncSession, listing_id: uuid.UUID) -> bool:
+    """The latest attempt failed after Submit was pressed, without knowing the outcome:
+    trying again could apply twice, so I confirm I checked first."""
+    last = await session.scalar(
+        select(Application)
+        .where(Application.listing_id == listing_id)
+        .order_by(Application.created_at.desc())
+        .limit(1)
+    )
+    return last is not None and last.status == "failed" and last.submit_started_at is not None
+
+
 async def why_not(session: AsyncSession, listing_id: uuid.UUID) -> str | None:
     """None when the listing may be prepared now, else the reason it may not."""
     listing = await session.get(Listing, listing_id)
@@ -149,6 +167,7 @@ def form_of(app: Application) -> list[FormField]:
             required=bool(f["required"]),
             options=list(f.get("options") or []),
             max_chars=f.get("max_chars"),
+            widget=str(f.get("widget") or ""),
         )
         for f in app.form_fields or []
     ]
@@ -481,7 +500,8 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     """submit: {"wait_until": iso} when the cap or the gap says not yet, else
     {"status": "applied" | "failed"}. Submit is pressed at most once per attempt: a retry
     that finds submit_started_at set without a confirmation fails the attempt as "submit
-    outcome unknown", so I check by hand."""
+    outcome unknown", so I check by hand. submit_started_at stays set on a Failed attempt
+    whose Submit may have gone through, and Retry asks me to check first."""
     now = datetime.now(UTC)
     app = await _app(session, app_id, lock=True)
     if app.status != "applying":
@@ -517,6 +537,8 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     if not result.confirmed:
         app.screenshot_path = str(shot) if result.screenshot else None
         app.trace_path = str(trace) if trace.exists() else None
+        if result.rejected:  # the form kept its invalid fields: nothing was sent
+            app.submit_started_at = None
         await fail(session, app, result.error or "No confirmation after submit")
         return {"status": "failed"}
     submitted = datetime.now(UTC)

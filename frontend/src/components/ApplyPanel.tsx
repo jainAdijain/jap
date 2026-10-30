@@ -33,6 +33,9 @@ const when = (iso: string) =>
   new Date(iso).toLocaleString(undefined, { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 
 /** One form field while Ready for review: every answer is shown and editable. */
+const MAYBE_SENT =
+  "JAP pressed Submit on this job last time and couldn't tell whether it went through. Check the employer's site or your email first.\n\nPress OK only if it wasn't sent."
+
 function FieldInput({ f, value, onChange }: { f: FormField; value: string; onChange: (v: string) => void }) {
   const id = `field-${f.key}`
   let input
@@ -298,7 +301,10 @@ export default function ApplyPanel({ listing, applyMode, onChanged }: Props) {
           )}
           <div className="row-buttons">
             {status === 'failed' && app ? (
-              <button type="button" className="primary" disabled={busy || queued} onClick={() => void act(async () => { await api.retry(app.id); setQueued(true) })}>
+              <button type="button" className="primary" disabled={busy || queued} onClick={() => {
+                if (app.submit_pressed && !window.confirm(MAYBE_SENT)) return
+                void act(async () => { await api.retry(app.id, app.submit_pressed); setQueued(true) })
+              }}>
                 Retry
               </button>
             ) : (
