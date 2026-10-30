@@ -239,5 +239,6 @@ async def test_list_sort_and_filters(api: httpx.AsyncClient) -> None:
     recent = (await api.get("/api/listings", params={"posted_days": 1})).json()["rows"]
     assert len(recent) < len(DEFAULT)
     assert await _titles(api, q="london") == {"Python Developer"}
+    assert len(await _titles(api, status="active")) == len(DEFAULT)  # nothing sent or hidden
     summary = (await api.get("/api/listings/summary")).json()
     assert summary["locations"] and all(isinstance(p, str) for p in summary["locations"])

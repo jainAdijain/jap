@@ -42,7 +42,7 @@ STATUSES = (
     "not_applied", "ready_for_review", "applying", "applied", "needs_input", "failed",
     "manual_apply", "skipped", "closed",
 )  # fmt: skip
-STATUS_FILTER = "^(open|all|" + "|".join(STATUSES) + ")$"
+STATUS_FILTER = "^(open|active|all|" + "|".join(STATUSES) + ")$"
 OTHER_ROLE = "__other"  # role filter value for listings matched through Skills or Location
 SORTS = {
     "title": Listing.title_display,
@@ -124,6 +124,8 @@ async def listings(
     where = listed()
     if status == "open":
         where.append(Listing.status != "closed")
+    elif status == "active":  # All open on Jobs: still to do, so not Sent, hidden or Closed
+        where.append(Listing.status.not_in(("closed", "skipped", "applied")))
     elif status != "all":
         where.append(Listing.status == status)
     if role == OTHER_ROLE:
