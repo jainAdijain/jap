@@ -40,6 +40,7 @@ class PendingOut(BaseModel):
     reason: str
     options: list[str] = []
     blocked: bool = False  # a CAPTCHA or a file: can't be answered here
+    draft_failed: bool = False  # a free-text question the writer model couldn't draft
 
 
 class ClaimOut(BaseModel):

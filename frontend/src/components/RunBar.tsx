@@ -34,6 +34,7 @@ function counts(run: Run): string {
     parts.push(`${c.apply_queued ?? 0} to apply${c.daily_cap_reached && !c.apply_queued ? ' (daily cap reached)' : ''}`)
     if (c.ready_for_review) parts.push(`${c.ready_for_review} ready for review`)
     parts.push(`${c.applied ?? 0} applied`, `${c.failed ?? 0} failed`, `${c.needs_input ?? 0} need input`)
+    if (c.draft_failed) parts.push(`${n(c.draft_failed, 'answer')} not drafted (writer model failed)`)
   }
   return parts.join(' · ')
 }

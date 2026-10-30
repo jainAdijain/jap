@@ -74,6 +74,35 @@ async def test_one_retry_on_invalid_output(db: str, monkeypatch: pytest.MonkeyPa
     assert await _count() == 2
 
 
+async def test_json_in_a_fence_or_sentence_is_accepted(
+    db: str, monkeypatch: pytest.MonkeyPatch
+) -> None:  # fmt: skip
+    """Not every provider behind a model id honours response_format (the writer bug)."""
+    monkeypatch.setattr(client, "chat", Stub([f"```json\n{GOOD}\n```", f"Here it is: {GOOD}"]))
+    async with get_sessionmaker()() as session:
+        for _ in range(2):
+            result = await call(
+                session, "resume_parse", {"resume_text": "Python"}, ParsedResume,
+                sensitive=Sensitive(),
+            )  # fmt: skip
+            assert result.output.titles == ["Backend Engineer"]
+    assert await _count() == 2
+
+
+async def test_two_invalid_replies_are_logged_as_errors(
+    db: str, monkeypatch: pytest.MonkeyPatch
+) -> None:  # fmt: skip
+    monkeypatch.setattr(client, "chat", Stub(["I'd love to work at Acme.", "Still prose."]))
+    async with get_sessionmaker()() as session:
+        with pytest.raises(client.ModelCallError, match="without the JSON asked for"):
+            await call(
+                session, "resume_parse", {"resume_text": "Python"}, ParsedResume,
+                sensitive=Sensitive(),
+            )  # fmt: skip
+        rows = (await session.scalars(select(LlmCall))).all()
+    assert [r.error for r in rows] == ["Output did not match the schema"] * 2
+
+
 async def test_guard_blocks_and_nothing_is_sent(db: str, monkeypatch: pytest.MonkeyPatch) -> None:
     stub = Stub([GOOD])
     monkeypatch.setattr(client, "chat", stub)

@@ -6,6 +6,7 @@ changes it (Approve, an answer, Skip) and then sends an event, and apply-listing
 row when it wakes, so a press that lands before the function starts waiting is not lost.
 """
 
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -39,6 +40,8 @@ from pipeline.runs import in_scope, role_matcher
 
 ACTIVE = ("preparing", "ready_for_review", "applying", "needs_input")
 CHOICE = ("select", "radio", "checkbox", "checkboxes")
+
+log = logging.getLogger(__name__)
 
 
 class Stop(Exception):
@@ -194,6 +197,7 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
     out: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     drafted = 0
+    draft_failed = 0
     need_letter = False
     for f in form_of(app):
         prev = old.get(f.key, {})
@@ -250,8 +254,10 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
                     sensitive=sensitive,
                 )
             except (ModelCallError, SpendCapReached, PersonalDataBlocked) as exc:
-                pending.append({"key": f.key, "label": f.label,
-                                "reason": f"JAP could not draft this: {exc}"})  # fmt: skip
+                log.warning("draft failed for %s (%s): %s", app.id, f.label, exc)
+                pending.append({"key": f.key, "label": f.label, "draft_failed": True,
+                                "reason": f"JAP couldn't draft an answer: {exc}"})  # fmt: skip
+                draft_failed += 1
             else:
                 if draft.answer is None:
                     reason = f"Only you know this ({draft.missing_fact})"
@@ -267,6 +273,8 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
         out.append(entry)
 
     pending = captcha + pending
+    if draft_failed and app.run_id:
+        await bump(session, app.run_id, "draft_failed", draft_failed)
     app.form_fields = out
     app.answers = answers
     if need_letter:  # the cover-letter step writes it, then settles the status
@@ -418,12 +426,13 @@ async def status_of(session: AsyncSession, app_id: str) -> str:
     return (await _app(session, app_id)).status
 
 
-async def bump(session: AsyncSession, run_id: uuid.UUID, key: str) -> None:
-    """Add one to a run's count (applied, failed, needs input), as each attempt ends."""
+async def bump(session: AsyncSession, run_id: uuid.UUID, key: str, by: int = 1) -> None:
+    """Add to a run's count (applied, failed, needs input, answers not drafted), as each
+    attempt ends."""
     run = await session.get(Run, run_id, with_for_update=True)
     if run is not None:
         counts = dict(run.counts or {})
-        counts[key] = int(counts.get(key) or 0) + 1
+        counts[key] = int(counts.get(key) or 0) + by
         run.counts = counts
 
 

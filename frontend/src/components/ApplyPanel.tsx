@@ -325,7 +325,14 @@ export default function ApplyPanel({ listing, applyMode, onChanged }: Props) {
 
       {live?.status === 'needs_input' && (
         <div className="needs-input">
-          <p className="lead">JAP stopped at {live.pending.length === 1 ? 'a question' : 'questions'} only you can answer.</p>
+          {live.pending.some((q) => q.draft_failed) ? (
+            <p className="hint warn" role="alert">
+              JAP couldn't draft {live.pending.filter((q) => q.draft_failed).length === 1 ? 'an answer' : 'some answers'}: the writer
+              model failed (the reason is under each question). Write your own, or Skip and Apply now again later.
+            </p>
+          ) : (
+            <p className="lead">JAP stopped at {live.pending.length === 1 ? 'a question' : 'questions'} only you can answer.</p>
+          )}
           <ul className="form-answers">
             {live.pending.map((q) => (
               <li key={q.key} className="form-answer">
@@ -342,6 +349,8 @@ export default function ApplyPanel({ listing, applyMode, onChanged }: Props) {
                   </select>
                 ) : LETTER.test(q.label) ? (
                   <textarea id={`q-${q.key}`} rows={10} placeholder="Paste your cover letter" value={answers[q.key] ?? ''} onChange={(e) => setAnswers({ ...answers, [q.key]: e.target.value })} />
+                ) : q.draft_failed ? (
+                  <textarea id={`q-${q.key}`} rows={6} value={answers[q.key] ?? ''} onChange={(e) => setAnswers({ ...answers, [q.key]: e.target.value })} />
                 ) : (
                   <input id={`q-${q.key}`} type="text" value={answers[q.key] ?? ''} onChange={(e) => setAnswers({ ...answers, [q.key]: e.target.value })} />
                 )}

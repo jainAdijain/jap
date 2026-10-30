@@ -224,6 +224,55 @@ async def test_required_free_text_is_drafted_from_the_jd(
     assert bank == (0,)  # a draft is not saved unless I save it
 
 
+def test_answer_prompt_asks_for_json() -> None:
+    """Every prompt names its JSON: a provider that ignores response_format otherwise
+    replies in prose, and the draft fails (the Apply now bug of 30 Oct 2026)."""
+    from llm.call import PROMPTS
+
+    for path in PROMPTS.glob("*.md"):
+        assert "JSON" in path.read_text(), f"{path.name} doesn't ask for JSON"
+
+
+async def test_drafted_answer_in_a_code_fence_still_reaches_review(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    _fake_form(monkeypatch, [*FORM, WHY])
+    reply = json.dumps(
+        {"answer": "Acme's payment APIs.", "needs_my_fact": False, "missing_fact": ""}
+    )
+    stub = Stub([f"```json\n{reply}\n```"])
+    monkeypatch.setattr(client, "chat", stub)
+    app_id = await _prepare(setup["listing"])
+    assert _status(sql, app_id)[0] == "ready_for_review"
+    assert stub.bodies[0]["model"] == "anthropic/claude-sonnet-4.5"  # the writer slot
+
+
+async def test_writer_failure_shows_on_the_question_and_the_run(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+    api: httpx.AsyncClient,
+) -> None:  # fmt: skip
+    _fake_form(monkeypatch, [*FORM, WHY])
+    monkeypatch.setattr(client, "chat", Stub(["Prose, not JSON.", "Prose again."]))
+    run = sql.execute(
+        "INSERT INTO run (trigger, mode, status, counts) VALUES ('manual', 'find_and_apply',"
+        " 'running', '{}') RETURNING id"
+    ).fetchone()
+    assert run is not None
+    async with get_sessionmaker()() as session:
+        app_id = await flow.create_attempt(session, setup["listing"], str(run[0]))
+        url = await flow.snapshot(session, app_id)
+        await flow.read_and_save(session, app_id, url)
+        await flow.map_fields(session, app_id)
+    assert _status(sql, app_id)[0] == "needs_input"
+    app = (await api.get(f"/api/applications/{app_id}")).json()
+    (q,) = app["pending"]
+    assert q["key"] == "why" and q["draft_failed"] is True
+    assert q["reason"].startswith("JAP couldn't draft an answer: anthropic/claude-sonnet-4.5")
+    counts = sql.execute("SELECT counts FROM run WHERE id = %s", (run[0],)).fetchone()
+    assert counts is not None
+    assert counts[0]["draft_failed"] == 1 and counts[0]["needs_input"] == 1
+
+
 async def test_facts_only_i_know_go_to_needs_input_and_the_answer_bank(
     setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
     api: httpx.AsyncClient, events: list[tuple[str, dict[str, Any]]],

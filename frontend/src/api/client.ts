@@ -114,6 +114,7 @@ export type RunCounts = {
   applied?: number
   failed?: number
   needs_input?: number
+  draft_failed?: number
   spend_cap_reached?: boolean
   daily_cap_reached?: boolean
 }
@@ -236,7 +237,7 @@ export type FormField = {
   filled_from: string
   value: string
 }
-export type Pending = { key: string; label: string; reason: string; options: string[]; blocked: boolean }
+export type Pending = { key: string; label: string; reason: string; options: string[]; blocked: boolean; draft_failed: boolean }
 export type ApplicationStatus =
   | 'preparing'
   | 'ready_for_review'
