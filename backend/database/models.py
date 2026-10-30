@@ -62,7 +62,7 @@ class Profile(Timestamps, Base):
     remote_regions: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     remote_any: Mapped[bool] = mapped_column(Boolean, server_default="false")  # all remote jobs
     match_rule: Mapped[list[list[str]]] = mapped_column(
-        JSONB, server_default='[["role"], ["skills"], ["location"]]'
+        JSONB, server_default='[["location", "role"]]'
     )
     work_modes: Mapped[list[str]] = mapped_column(
         ARRAY(WORK_MODE), server_default="{remote,hybrid,onsite}"

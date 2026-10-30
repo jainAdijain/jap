@@ -93,6 +93,7 @@ def to_row(listing: Listing, company: str, postings: list[Posting], nice: list[s
         work_mode=listing.work_mode,
         status=listing.status,
         last_posted_at=listing.last_posted_at,
+        found_at=listing.created_at,
         platforms=platforms(postings),
         postings=len(postings),
         role=listing.canonical_role,

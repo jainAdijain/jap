@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.9.0 (Phase 8), 29 Oct 2026.**
+**Version 0.10.0 (new design), 30 Oct 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -12,7 +12,7 @@ the [build plan](https://claude.ai/artifact/1TrqC2jt8SuPVbULa8i6eU) and the
 
 | Service | URL (127.0.0.1 only) | What it is |
 | --- | --- | --- |
-| ui | http://localhost:5173 | React + Vite UI: My profile, and a Dashboard with jobs, possible duplicates and the status checks |
+| ui | http://localhost:5173 | React + Vite UI: Jobs, Profile, Job preferences and Settings |
 | app | http://localhost:8001 | FastAPI JSON API and Inngest functions (`/api/health`, `/api/inngest`) |
 | inngest | http://localhost:8290 | Inngest dev server, runs every pipeline step |
 | db | localhost:5432 | Postgres 16 with pgvector, pg_trgm, pgcrypto |
@@ -24,6 +24,28 @@ other projects on 8000 and 8288-8289 (an Inngest dev server publishes both). Ins
 
 Ollama is **not** in Docker. It runs natively on the Mac so it can use the GPU, and the app
 reaches it at `http://host.docker.internal:11434`.
+
+## The screens
+
+The UI follows the [redesign mockup v0.5](https://claude.ai/artifact/5V2SRvBgWZu5stN5KY4H7L)
+(PRD 1.5, U1 to U20): a sidebar with four sections, which becomes a top bar on a phone.
+
+- **Jobs**: the last search line, **Find new jobs**, a status strip (All open, New, Needs you,
+  Ready to send, Sent, Failed), a toolbar with search and filters, and the jobs table. Tick
+  rows to **Apply** or **Hide** several at once; click a row to open the job panel, whose
+  actions and content follow the job's status. `/` jumps to the search box.
+- **Profile**: what is sent to employers. Resume and its versions, contact details and links,
+  Saved answers, and the cover letter style.
+- **Job preferences**: what decides which jobs show. Job titles, required and nice-to-have
+  skills, locations, companies to follow, jobs to hide, and Matching.
+- **Settings**: applying (JAP prepares, I send; or JAP applies for me, with a daily limit),
+  the daily search, Search history, AI usage and System status (backup and form check).
+
+Older names in this README map to the screen as follows: Not applied is **New**, Needs input
+is **Needs you**, Ready for review is **Ready to send**, Approve and submit is **Send
+application**, Applied is **Sent**, Skip is **Hide**, Retry is **Try again**, the answer bank
+is **Saved answers**, a run is a **search**, the spend cap is the **AI limit**, My profile is
+split into Profile and Job preferences, and the Runs and Status cards are in Settings.
 
 ## First run (macOS)
 
@@ -43,12 +65,12 @@ spend reaches `JAP_MONTHLY_COST_CAP_USD`.
 
 ## Fetching jobs
 
-Add companies in My profile by pasting their Greenhouse, Lever or Ashby board URL (or typing
-the name), then press **Run: find only** on the Dashboard. Each board is one `fetch-board` run
+Add companies under **Companies to follow** in Job preferences by pasting their Greenhouse,
+Lever or Ashby board URL (or typing the name), then press **Find new jobs** on Jobs. Each board is one `fetch-board` run
 in Inngest, throttled to one request a second per ATS. Job descriptions are read by the
 extract model once per description: a re-run with unchanged postings costs nothing. The
 first run on a big board (some list 700+ jobs) makes one model call per job, so start with a
-few companies and watch the AI spend in My profile.
+few companies and watch **AI usage** in Settings.
 
 ## One row per job
 
@@ -59,26 +81,31 @@ to one name) and titles are reduced to a canonical role (Sr becomes Senior, loca
 work-mode words are dropped). Seniority always stays in the role, so Senior and Junior are
 two rows. Postings join a listing when they share a requisition ID, have the same canonical
 role, or are a near match (titles 90% alike and descriptions 92% alike). Pairs just below
-that bar show under **Possible duplicates** on the Dashboard for you to Merge or Keep apart.
-Merge and Split in the job panel are remembered on later runs.
+that bar show as a line above the Jobs table for you to Merge or Keep both. Merge and **Not the same
+job** (split) in the job panel are remembered on later searches.
 
 ## Which jobs are listed
 
-The Dashboard lists only the jobs that match My profile. The match rule is one or more rows
+Jobs lists only the jobs that fit your Job preferences. The match rule is one or more rows
 of Role, Skills and Location: a job is listed when it meets every condition in at least one
-row (the default lists a job that meets any one). Role means the job's cleaned title contains
+row. Job preferences offers three choices under **Matching**: job title or location; job
+title and location (the default for a new profile); job title, location and required skills.
+A rule saved earlier that is none of these is kept and shown as Custom. Role means the job's cleaned title contains
 one of your target roles (engineer and developer count alike); Skills means every must-have
 skill is in the job; Location means a job location names one of yours, or the job is remote
-and allows one of your Remote regions, or it is Remote - Worldwide. On top of that, the work
-mode must be one you ticked (a job that doesn't say is listed and tagged Work mode unclear),
+and allows one of your Remote regions, or it is Remote - Worldwide, or you chose **All remote
+jobs** (`remote_any`). Under Locations, office cities come with On-site and Hybrid ticks, and
+remote jobs are one of three choices: none, only those open to your countries, or all. On top of that, the work
+mode must be one you ticked (a job that doesn't say is listed with Work mode "Not stated"),
 and excluded companies and title words are dropped.
 
 The filter is one SQL query over the stored listings (`backend/pipeline/matching.py`), so
-saving My profile updates the list in well under a second without fetching anything, and My
-profile shows how many listings your unsaved changes would match. Each row shows which
-conditions it matched. Totals and Jobs by role count each listing once (under the first
-target role it matches, or Other); the filter bar narrows the list by role, location, status
-and matched condition without changing your profile. Every run ends with the same filter.
+saving Job preferences updates the list in well under a second without fetching anything,
+and the save bar shows how many jobs your unsaved changes would fit. Each row's "Fits" line shows
+what it matched. The status strip counts each job once; the Job title filter counts each
+job under the first job title it matches, or Other. The toolbar searches title, company and
+location and filters by job title, location, work mode, posted date and what it fits on,
+without changing your preferences. Every column sorts, and the table pages 10, 25 or 50 rows. Every run ends with the same filter.
 
 `make demo` loads "JAP Demo Co" with six made-up postings on a Greenhouse and a Lever board,
 so you can see grouping, a possible duplicate, Merge and Split without waiting for real
@@ -92,23 +119,24 @@ Four things start a run, and only one run is active at a time. A trigger that fi
 run queues one run behind it; more triggers join that queued run instead of adding another
 (a role-scoped ask widens the queued run's scope).
 
-- **Run dialog** (Run… on the Dashboard): every job on the companies you watch, or only some
-  of your target roles (only those roles' jobs are stored, updated or closed), and Find only
-  or Find and apply (see Applying).
-- **Daily run**: the switch on the Runs card, at 06:00 in `JAP_TZ` unless you change the time
+- **Find new jobs** on Jobs: every company you follow. The arrow beside it searches for only
+  some job titles (only those jobs are stored, updated or closed) and can also apply to the
+  new jobs that fit (see Applying).
+- **Daily search**: the switch in Settings, at 06:00 in `JAP_TZ` unless you change the time
   next to it. An Inngest cron ticks every minute and fires once per day in the first five
   minutes after that time, so a run missed while the Mac sleeps is skipped, not caught up.
-- **Profile save**: the stored listings are re-filtered at once, then a fetch follows in the
-  background; new matching jobs appear on the Dashboard without a reload.
+- **Job preferences saved**: the stored listings are re-filtered at once, then a fetch follows
+  in the background; new matching jobs appear on Jobs without a reload. Saving only contact
+  details or the cover letter style on Profile starts no search.
 - **Resume update**: accepting the skills from a new resume re-filters and starts a run.
 
-The Runs card shows the last run line (when, what triggered it, and its counts), plus the run
-going now and the one queued behind it.
+The line under the Jobs title shows the last search (when, what started it, and its counts)
+or the one going now; **Search history** in Settings lists every search with its problems.
 
 ## Applying (Review mode)
 
-Open a job and press **Apply now**, or pick **Find and apply** in the Run dialog to prepare
-every Not applied job (up to your daily cap, 20 by default). JAP freezes the job description,
+Open a job and press **Apply** (or tick several rows and press Apply), or tick **Also apply to
+the new jobs that fit** under the arrow beside Find new jobs to prepare every New job (up to your daily cap, 20 by default). JAP freezes the job description,
 opens the posting's public form in a headless Chromium (Playwright), lists every field and
 whether it is required, and fills it:
 
@@ -248,6 +276,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.10.0 | 30 Oct 2026 | New design (PRD 1.5, mockup v0.5). Sidebar with Jobs, Profile, Job preferences and Settings in place of the Dashboard and My profile tabs; Jobs with a status strip, search first, Job title, Location, Work mode, Posted and Fits on filters, sortable columns, rows per page and page numbers, tick-to-Apply and Hide with Undo, a one-line duplicates bar and an AI limit banner; one job panel whose actions follow the status (Apply, Save and continue, Send application, Try again, Apply yourself, Undo hide) with Why it fits and Not the same job; Find new jobs with an arrow for some job titles and Also apply; Job preferences with office cities and On-site/Hybrid ticks, remote jobs as none, your countries or all (`profile.remote_any`, migration 0006), three Matching choices (a new profile starts with job title and location), and a save bar that counts the jobs that will fit; Settings with Applying, Daily search, Search history, AI usage and System status; contact-only saves start no search; `GET /api/listings` takes sort, dir, work_mode, posted_days and status=active, and search covers locations |
 | 0.9.2 | 30 Oct 2026 | Fix: Approve on Greenhouse job-boards pages left every field empty. Submit waits for the page to settle, reads every value back and fills again what the page cleared, and stops before Submit (nothing sent) when a field still won't keep its value; dropdowns built from a text input (comboboxes) are read as selects with their options and filled by picking the option; a form that refuses the submission is reported as not sent; Retry after a Submit whose outcome is unknown asks you to check the employer's site first |
 | 0.9.1 | 30 Oct 2026 | Fix: Apply now didn't draft free-text answers. The answer prompt (now `answer.v2`) asks for JSON like every other prompt, `llm.call()` accepts JSON in a code fence or a sentence and logs a reply that isn't JSON as an error, a draft the writer model can't make shows as "JAP couldn't draft an answer" with the reason on Needs input (with a text box to write your own) and as "answers not drafted" on the last run line |
 | 0.9.0 | 29 Oct 2026 | Phase 8: Automatic mode and hardening. Review/Automatic switch and Daily cap on the Runs card, jobs with an unclear work mode held at Ready for review with the reason (A3), Daily run finds and applies in Automatic mode, "daily cap reached" and "spend cap reached" on the last run line, spend cap set on My profile (AI spend card), screenshot kept when a form can't be read, alert emails for failed runs, boards, applications and form tests (notify-failure), daily pg_dump backup (daily-backup, 14 days kept), weekly live form test per ATS (form-check), Backups and form tests on the Status card, dedup QA set of 106 labelled pairs (`make qa`) and the bracket fix it led to, `make form-check`, `make help` fixed when `.env` exists |

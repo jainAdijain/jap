@@ -46,6 +46,7 @@ export type ProfileFields = {
   nice_to_have_skills: string[]
   locations: string[]
   remote_regions: string[]
+  remote_any: boolean
   match_rule: Condition[][]
   work_modes: WorkMode[]
   excluded_companies: string[]
@@ -197,6 +198,7 @@ export type ListingRow = {
   work_mode: string | null
   status: ListingStatus
   last_posted_at: string | null
+  found_at: string
   platforms: Ats[]
   postings: number
   role: string
@@ -204,16 +206,26 @@ export type ListingRow = {
   matched_role: string | null
   nice_skills: string[]
 }
+export type SortKey = 'title' | 'company' | 'location' | 'work_mode' | 'status' | 'posted'
 export type ListingFilters = {
   q?: string
-  status?: 'open' | 'all' | ListingStatus
+  status?: 'open' | 'active' | 'all' | ListingStatus
   role?: string
   location?: string
   matched?: Condition
+  work_mode?: WorkMode | 'unknown'
+  posted_days?: number
+  sort?: SortKey
+  dir?: 'asc' | 'desc'
   page?: number
+  page_size?: number
 }
 export type StatusCounts = { listings: number } & Record<Exclude<ListingStatus, 'closed'>, number>
-export type ListingSummary = { totals: StatusCounts; by_role: (StatusCounts & { role: string | null })[] }
+export type ListingSummary = {
+  totals: StatusCounts
+  by_role: (StatusCounts & { role: string | null })[]
+  locations: string[]
+}
 /** Role filter value for listings matched through Skills or Location only. */
 export const OTHER_ROLE = '__other'
 export type ListingPage = { total: number; page: number; page_size: number; rows: ListingRow[] }
@@ -340,6 +352,7 @@ export const api = {
   detectBoard: (text: string) => request<Detected>('/api/boards/detect', json('POST', { text })),
   startRun: (body: RunRequest = { mode: 'find_only' }) => request<Run>('/api/runs', json('POST', body)),
   latestRun: () => request<Run | null>('/api/runs/latest'),
+  runs: () => request<Run[]>('/api/runs'),
   runState: () => request<RunState>('/api/runs/state'),
   setSwitches: (s: Switches) => request<Profile>('/api/profile', json('PATCH', s)),
   postings: (params: { q?: string; state?: 'open' | 'closed' | 'all'; page?: number }) => {
