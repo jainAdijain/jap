@@ -85,7 +85,7 @@ function Companies() {
             {shown.map((b) => (
               <span key={b.id} data-ats={b.ats} className={b.last_ok === false ? 'tag warn' : 'tag'} title={b.last_ok === false ? `${atsLabel(b.ats)} board “${b.board_token}” could not be read at the last search` : `${atsLabel(b.ats)} · ${b.board_token}`}>
                 {b.display_name}
-                {boards.filter((o) => o.display_name === b.display_name).length > 1 && <span className="muted">&nbsp;· {atsLabel(b.ats)}</span>}
+                <span className="muted">&nbsp;· {atsLabel(b.ats)}</span>
                 <button type="button" aria-label={`Stop following ${b.display_name}`} onClick={() => void remove(b)}>
                   ×
                 </button>
