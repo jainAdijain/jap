@@ -114,54 +114,34 @@ function WhyItFits({ listing, profile }: { listing: ListingDetail; profile: Prof
   )
 }
 
+/** Other boards with this job. JAP joins and settles duplicates itself (PRD 1.7); Not the
+ * same job is only for the rare wrong join. */
 function AlsoOn({ listing, busy, act, onOpen }: { listing: ListingDetail; busy: boolean; act: (fn: () => Promise<unknown>) => void; onOpen: (id: string) => void }) {
-  const [mergeWith, setMergeWith] = useState('')
-  if (listing.also_on.length === 0 && listing.same_company.length === 0) return null
+  if (listing.also_on.length === 0) return null
   return (
     <Sec title="Also posted on">
-      {listing.also_on.length > 0 ? (
-        <div className="alsoon">
-          {listing.also_on.map((a) => (
-            <div key={a.posting_id}>
-              <span style={{ minWidth: 0 }}>
-                <a href={a.posting_url} target="_blank" rel="noreferrer">
-                  {atsLabel(a.source)}
-                </a>{' '}
-                · {a.title === listing.title ? 'same title' : a.title}, {a.locations.join(' · ') || 'no location given'}
-                {a.state === 'closed' && <span className="muted"> · closed</span>}
-              </span>
-              <button
-                type="button"
-                disabled={busy}
-                title="Make this posting a job of its own; remembered on later searches"
-                onClick={() => act(async () => onOpen((await api.split(a.posting_id)).listing_id))}
-              >
-                Not the same job
-              </button>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="help">Only on {listing.platforms.map(atsLabel).join(', ')}.</p>
-      )}
-      {listing.same_company.length > 0 && (
-        <div className="inline">
-          <label className="sr-only" htmlFor="merge-with">
-            Same job as another {listing.company} job
-          </label>
-          <select id="merge-with" style={{ flex: '1 1 220px', width: 'auto' }} value={mergeWith} onChange={(e) => setMergeWith(e.target.value)}>
-            <option value="">Same job as another {listing.company} job…</option>
-            {listing.same_company.map((o) => (
-              <option key={o.id} value={o.id}>
-                {o.title}
-              </option>
-            ))}
-          </select>
-          <button type="button" disabled={!mergeWith || busy} onClick={() => act(() => api.merge(listing.id, mergeWith).then(() => setMergeWith('')))}>
-            Merge
-          </button>
-        </div>
-      )}
+      <div className="alsoon">
+        {listing.also_on.map((a) => (
+          <div key={a.posting_id}>
+            <span style={{ minWidth: 0 }}>
+              <a href={a.posting_url} target="_blank" rel="noreferrer">
+                {atsLabel(a.source)}
+              </a>{' '}
+              · {a.title === listing.title ? 'same title' : a.title}, {a.locations.join(' · ') || 'no location given'}
+              {a.state === 'closed' && <span className="muted"> · closed</span>}
+            </span>
+            <button
+              type="button"
+              className="btn-link"
+              disabled={busy}
+              title="JAP joined these by mistake: make this posting a job of its own (remembered on later searches)"
+              onClick={() => act(async () => onOpen((await api.split(a.posting_id)).listing_id))}
+            >
+              Not the same job
+            </button>
+          </div>
+        ))}
+      </div>
     </Sec>
   )
 }

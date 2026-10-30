@@ -130,7 +130,6 @@ p { margin: 0; }
 .toolbar select { width: auto; flex: 0 1 auto; max-width: 200px; }
 .bulk { background: var(--accent-soft); }
 .bulk b { font-weight: 600; margin-right: 4px; }
-.dupes { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; padding: 8px 12px; border-bottom: 1px solid var(--line); font-size: 13px; background: var(--hover); }
 .hidden-head { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; background: var(--new-bg); }
 .table-scroll { overflow-x: auto; }
 table.jobs { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; min-width: 900px; }

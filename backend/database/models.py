@@ -164,7 +164,7 @@ class DedupOverride(Timestamps, Base):
 
 
 class PossibleDuplicate(Timestamps, Base):
-    """A borderline pair for me to merge or keep apart (Near match)."""
+    """A borderline pair (Near match) that the extract model merges or keeps apart."""
 
     __tablename__ = "possible_duplicate"
 

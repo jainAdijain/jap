@@ -1,15 +1,18 @@
+import json
 from typing import Any
 
 import httpx
 import psycopg
 import pytest
 
+import llm.client as client
 from database import demo
 from database.session import get_sessionmaker
 from functions.fetch_board import fetch_step
-from pipeline.dedup import dedup
+from pipeline.dedup import Settled, dedup, settle_duplicates
 from tests import boards as b
 from tests.test_ingest import _board
+from tests.test_llm_call import Stub
 
 GH = "https://boards-api.greenhouse.io/v1/boards"
 
@@ -174,3 +177,45 @@ async def test_requisition_id_keeps_seniority_apart(
         counts = await dedup(session)
     assert counts.how["requisition"] == 0
     assert sql.execute("SELECT count(*) FROM listing").fetchone() == (3,)
+
+
+async def _settle(stub: Stub, monkeypatch: pytest.MonkeyPatch) -> Settled:
+    monkeypatch.setattr(client, "chat", stub)
+    async with get_sessionmaker()() as session:
+        return await settle_duplicates(session)
+
+
+async def test_the_model_merges_a_possible_duplicate(
+    db: str, sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await demo.load()
+    stub = Stub([json.dumps({"same": True, "reason": "Same team and duties"})])
+    assert await _settle(stub, monkeypatch) == Settled(merged=1)
+    sent = stub.bodies[0]["messages"][1]["content"]
+    assert "Senior Data Platform Engineer" in sent and "Streaming" in sent
+    # The merged listing is gone with its pair; the merge is remembered per posting (D5).
+    merges = sql.execute("SELECT count(*) FROM dedup_override WHERE kind = 'merge'").fetchone()
+    assert merges == (1,)
+    assert len([t for t, _ in _listings(sql) if t.startswith("Senior Data Platform")]) == 1
+    assert await _settle(Stub([]), monkeypatch) == Settled()  # nothing left to ask
+
+
+async def test_the_model_keeps_two_jobs_apart(
+    db: str, sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await demo.load()
+    stub = Stub([json.dumps({"same": False, "reason": "Streaming is a different team"})])
+    assert await _settle(stub, monkeypatch) == Settled(kept_apart=1)
+    assert sql.execute("SELECT decision, scores->>'reason' FROM possible_duplicate").fetchone() == (
+        "kept_apart",
+        "Streaming is a different team",
+    )
+    assert len([t for t, _ in _listings(sql) if t.startswith("Senior Data Platform")]) == 2
+
+
+async def test_a_pair_the_model_cannot_answer_stays_open(
+    db: str, sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    await demo.load()
+    assert await _settle(Stub(["Not JSON.", "Still not."]), monkeypatch) == Settled(undecided=1)
+    assert sql.execute("SELECT decision FROM possible_duplicate").fetchone() == ("open",)

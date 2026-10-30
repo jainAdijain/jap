@@ -6,7 +6,6 @@ import {
   ApiError,
   OTHER_ROLE,
   type Condition,
-  type Duplicate,
   type ListingFilters,
   type ListingPage,
   type ListingRow,
@@ -273,46 +272,6 @@ function FindButton() {
   )
 }
 
-function DuplicatesLine({ pairs, onDecided }: { pairs: Duplicate[]; onDecided: () => void }) {
-  const { toast } = useApp()
-  const d = pairs[0]
-  if (!d) return null
-  const decide = async (decision: 'merged' | 'kept_apart') => {
-    try {
-      await api.decide(d.id, decision)
-      toast(decision === 'merged' ? 'Merged into one job.' : 'Kept as two jobs. JAP remembers this.')
-      onDecided()
-    } catch (err) {
-      toast({ text: errorText(err), bad: true })
-    }
-  }
-  const same = d.a.title === d.b.title
-  return (
-    <div className="dupes">
-      <span>
-        {pairs.length > 1 ? `${pairs.length} possible duplicates. First: ` : '1 possible duplicate: '}
-        {same ? (
-          <>
-            <b>{d.a.title}</b> at {d.company} is listed twice ({[...d.a.platforms, ...d.b.platforms].map(atsLabel).join(' and ')}).
-          </>
-        ) : (
-          <>
-            <b>{d.a.title}</b> and <b>{d.b.title}</b> at {d.company} look like the same job.
-          </>
-        )}
-      </span>
-      <span className="inline">
-        <button type="button" onClick={() => void decide('merged')}>
-          Merge
-        </button>
-        <button type="button" onClick={() => void decide('kept_apart')}>
-          Keep both
-        </button>
-      </span>
-    </div>
-  )
-}
-
 function ApplyModal({ rows, onCancel, onDone }: { rows: ListingRow[]; onCancel: () => void; onDone: () => void }) {
   const { profile, resume, refresh, toast } = useApp()
   const [busy, setBusy] = useState(false)
@@ -407,7 +366,6 @@ export default function JobsPage() {
     return PER_PAGE.includes(n) ? n : 25
   })
   const [page, setPage] = useState<ListingPage | null>(null)
-  const [pairs, setPairs] = useState<Duplicate[]>([])
   const [picked, setPicked] = useState<Map<string, ListingRow>>(new Map())
   const [applying, setApplying] = useState<ListingRow[] | null>(null)
   // ?listing=<id> opens that job (the confirmation and alert emails link here).
@@ -441,11 +399,10 @@ export default function JobsPage() {
   )
   useEffect(() => {
     let live = true
-    Promise.all([api.listings(query), api.duplicates()]).then(
-      ([p, d]) => {
+    api.listings(query).then(
+      (p) => {
         if (!live) return
         setPage(p)
-        setPairs(d)
         setError(null)
         const pages = Math.max(1, Math.ceil(p.total / p.page_size))
         if (pageNo > pages) setPageNo(pages)
@@ -667,7 +624,6 @@ export default function JobsPage() {
             </button>
           </div>
         )}
-        {!showHidden && <DuplicatesLine pairs={pairs} onDecided={() => void refresh()} />}
         {error && (
           <p className="note-box bad" style={{ margin: 12 }} role="alert">
             {error}
