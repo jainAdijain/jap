@@ -3,7 +3,8 @@
 The bank is searched by the normalised question: an exact match, else pg_trgm similarity
 of 0.8 or more. A required free-text question with no stored answer gets a draft tailored
 to the JD and role. A drafted answer is shown in Review mode and is saved to the bank only
-when I save it.
+when I save it. When the writer model can't draft one, the question goes to Needs input
+marked draft_failed, with the reason, and the run counts it.
 """
 
 import re
@@ -114,6 +115,7 @@ async def draft_answer(
         slot="write",
         temperature=0.3,
         generic_redact=frozenset({"resume_text", "frozen_jd_text"}),
+        version="v2",
     )
     out = result.output
     if out.needs_my_fact or not out.answer.strip():

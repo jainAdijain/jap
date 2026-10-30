@@ -69,6 +69,16 @@
       continue;
     }
     const label = ownLabel(el) || groupLabel(el, new Set()) || el.placeholder || el.name || '';
+    // A dropdown built from a text input (react-select on Greenhouse job-boards pages):
+    // a select whose options form.py lists by opening it.
+    if (tag === 'input' && el.getAttribute('role') === 'combobox') {
+      out.push({
+        key, type: 'select', widget: 'combobox', label,
+        required: el.required || el.getAttribute('aria-required') === 'true',
+        options: [], max_chars: null,
+      });
+      continue;
+    }
     out.push({
       key, type, label,
       required: el.required || el.getAttribute('aria-required') === 'true',

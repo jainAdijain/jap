@@ -20,10 +20,10 @@ from api.postings import detail
 from database.models import Application, Company, Listing, Posting, Profile, WatchedBoard
 from database.session import Session
 from functions.events import send
-from pipeline.apply.flow import ACTIVE, why_not
+from pipeline.apply.flow import ACTIVE, MAYBE_SENT, maybe_sent, why_not
 from pipeline.dedup import DedupConflict, merge_listings
 from pipeline.matching import refilter_from_profile
-from schemas.application import ApplyQueued
+from schemas.application import ApplyQueued, RetryIn
 from schemas.job import ATS
 from schemas.listing import (
     AlsoOn,
@@ -240,11 +240,15 @@ async def merge(listing_id: uuid.UUID, body: MergeIn, session: Session) -> Listi
 
 
 @router.post("/{listing_id}/apply", response_model=ApplyQueued, status_code=202)
-async def apply_now(listing_id: uuid.UUID, session: Session) -> ApplyQueued:
+async def apply_now(
+    listing_id: uuid.UUID, session: Session, body: RetryIn | None = None
+) -> ApplyQueued:
     """Apply now (one listing): prepares it; in Review mode it stops at Ready for review."""
     reason = await why_not(session, listing_id)
     if reason:
         raise ApiError(409, "conflict", reason)
+    if await maybe_sent(session, listing_id) and not (body and body.checked):
+        raise ApiError(409, "submit_maybe_sent", MAYBE_SENT)
     await send("listing/apply.requested", {"listing_id": str(listing_id), "run_id": None})
     return ApplyQueued(listing_id=listing_id, queued=True)
 

@@ -2,12 +2,15 @@
 
 Redact every input, guard the outgoing body, stop at the monthly spend cap, call
 OpenRouter, log the call (a hash of the input, never the text), validate the JSON
-against the output model (one retry), and return it. Restoring placeholders in the
-output is left to the caller, which knows which fields may carry them.
+against the output model (one retry), and return it. A reply that wraps the JSON in a
+code fence or a sentence is accepted: not every provider behind a model id honours
+response_format. Restoring placeholders in the output is left to the caller, which knows
+which fields may carry them.
 """
 
 import hashlib
 import json
+import re
 import time
 from dataclasses import dataclass
 from pathlib import Path
@@ -53,6 +56,16 @@ def _schema(model: type[BaseModel]) -> dict[str, Any]:
     return schema
 
 
+def _json_text(content: str) -> str:
+    """The JSON object in a reply, without a ```json fence or words around it."""
+    text = content.strip()
+    fenced = re.match(r"^```(?:json)?\s*(.*?)\s*```$", text, re.DOTALL | re.IGNORECASE)
+    if fenced:
+        text = fenced.group(1)
+    start, end = text.find("{"), text.rfind("}")
+    return text[start : end + 1] if 0 <= start < end else text
+
+
 @dataclass
 class CallResult(Generic[Out]):
     output: Out
@@ -70,10 +83,11 @@ async def call(
     slot: Slot = "extract",
     temperature: float = 0.0,
     generic_redact: frozenset[str] = frozenset(),
+    version: str = "v1",
 ) -> CallResult[Out]:
     settings = get_settings()
     model = settings.jap_model_extract if slot == "extract" else settings.jap_model_write
-    prompt = load_prompt(purpose)
+    prompt = load_prompt(purpose, version)
 
     links: dict[str, str] = {}
     redacted: dict[str, str] = {}
@@ -112,7 +126,7 @@ async def call(
             f"Spend cap reached: ${spend.month_usd:.2f} of ${spend.cap_usd:.2f} this month"
         )
 
-    last_error: Exception | None = None
+    last_error: ValidationError | None = None
     for _attempt in range(2):  # one retry on invalid output
         started = time.monotonic()
         try:
@@ -121,16 +135,23 @@ async def call(
             log(error=str(exc), latency_ms=int((time.monotonic() - started) * 1000))
             await session.commit()
             raise
-        log(
+        row = log(
             tokens_in=result.tokens_in,
             tokens_out=result.tokens_out,
             cost_usd=result.cost_usd,
             latency_ms=int((time.monotonic() - started) * 1000),
         )
-        await session.commit()
         try:
-            parsed = output.model_validate_json(result.content)
-            return CallResult(output=parsed, model_input=user, links=links)
+            parsed = output.model_validate_json(_json_text(result.content))
         except ValidationError as exc:
             last_error = exc
-    raise client.ModelCallError(f"Model output did not match the schema: {last_error}")
+            row.error = "Output did not match the schema"
+            await session.commit()
+            continue
+        await session.commit()
+        return CallResult(output=parsed, model_input=user, links=links)
+    assert last_error is not None
+    first = last_error.errors()[0]
+    raise client.ModelCallError(
+        f"{model} answered twice without the JSON asked for ({first['msg']})"
+    )

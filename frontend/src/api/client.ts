@@ -114,6 +114,7 @@ export type RunCounts = {
   applied?: number
   failed?: number
   needs_input?: number
+  draft_failed?: number
   spend_cap_reached?: boolean
   daily_cap_reached?: boolean
 }
@@ -236,7 +237,7 @@ export type FormField = {
   filled_from: string
   value: string
 }
-export type Pending = { key: string; label: string; reason: string; options: string[]; blocked: boolean }
+export type Pending = { key: string; label: string; reason: string; options: string[]; blocked: boolean; draft_failed: boolean }
 export type ApplicationStatus =
   | 'preparing'
   | 'ready_for_review'
@@ -273,6 +274,7 @@ export type Application = {
   email_sent_at: string | null
   has_screenshot: boolean
   has_trace: boolean
+  submit_pressed: boolean
 }
 export type ListingDetail = ListingRow & {
   skills: string[]
@@ -369,7 +371,8 @@ export const api = {
   approve: (appId: string) => request<Application>(`/api/applications/${appId}/approve`, json('POST', {})),
   answer: (appId: string, answers: Record<string, string>, saveToBank: boolean) =>
     request<Application>(`/api/applications/${appId}/answer`, json('POST', { answers, save_to_bank: saveToBank })),
-  retry: (appId: string) => request<{ listing_id: string; queued: boolean }>(`/api/applications/${appId}/retry`, json('POST', {})),
+  retry: (appId: string, checked = false) =>
+    request<{ listing_id: string; queued: boolean }>(`/api/applications/${appId}/retry`, json('POST', { checked })),
   fileUrl: (kind: 'screenshot' | 'trace' | 'cover_letter', appId: string) => `${API_URL}/api/files/${kind}/${appId}`,
   duplicates: () => request<Duplicate[]>('/api/duplicates'),
   decide: (id: string, decision: 'merged' | 'kept_apart') =>

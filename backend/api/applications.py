@@ -18,7 +18,7 @@ from database.models import Application, Listing, ResumeVersion
 from database.session import Session
 from functions.events import send
 from pipeline.apply.answers import save_to_bank
-from pipeline.apply.flow import letter_fields, set_letter
+from pipeline.apply.flow import MAYBE_SENT, letter_fields, set_letter
 from schemas.application import (
     AnswerQuestionsIn,
     AnswersIn,
@@ -30,6 +30,7 @@ from schemas.application import (
     FrozenJd,
     PendingOut,
     ResumeRef,
+    RetryIn,
 )
 
 router = APIRouter(tags=["applications"])
@@ -107,6 +108,7 @@ async def to_out(session: AsyncSession, app: Application) -> ApplicationOut:
         review_reason=app.review_reason,
         submitted_at=app.submitted_at,
         email_sent_at=app.email_sent_at,
+        submit_pressed=app.status == "failed" and app.submit_started_at is not None,
         has_screenshot=_exists(app.screenshot_path),
         has_trace=_exists(app.trace_path),
     )
@@ -214,10 +216,13 @@ async def answer(app_id: uuid.UUID, body: AnswerQuestionsIn, session: Session) -
 
 
 @router.post("/applications/{app_id}/retry", response_model=ApplyQueued, status_code=202)
-async def retry(app_id: uuid.UUID, session: Session) -> ApplyQueued:
-    """Retry a Failed attempt as a new attempt (U15)."""
+async def retry(app_id: uuid.UUID, session: Session, body: RetryIn | None = None) -> ApplyQueued:
+    """Retry a Failed attempt as a new attempt (U15). When its Submit may have gone
+    through, only after I say I checked."""
     app = await get_app(session, app_id)
     _require(app, "failed", "Retry works")
+    if app.submit_started_at is not None and not (body and body.checked):
+        raise ApiError(409, "submit_maybe_sent", MAYBE_SENT)
     newer = await session.scalar(
         select(Application.id).where(
             Application.listing_id == app.listing_id, Application.created_at > app.created_at

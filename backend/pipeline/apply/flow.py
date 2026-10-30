@@ -6,6 +6,7 @@ changes it (Approve, an answer, Skip) and then sends an event, and apply-listing
 row when it wakes, so a press that lands before the function starts waiting is not lost.
 """
 
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -40,6 +41,8 @@ from pipeline.runs import in_scope, role_matcher
 ACTIVE = ("preparing", "ready_for_review", "applying", "needs_input")
 CHOICE = ("select", "radio", "checkbox", "checkboxes")
 
+log = logging.getLogger(__name__)
+
 
 class Stop(Exception):
     """Nothing to do for this listing (already applied, skipped, closed or busy)."""
@@ -54,6 +57,24 @@ async def _app(session: AsyncSession, app_id: str, *, lock: bool = False) -> App
     if app is None:
         raise Stop(f"application {app_id} not found")
     return app
+
+
+MAYBE_SENT = (
+    "Submit was pressed on this job before and JAP couldn't tell whether it went through. "
+    "Check the employer's site or your email first, then confirm to try again"
+)
+
+
+async def maybe_sent(session: AsyncSession, listing_id: uuid.UUID) -> bool:
+    """The latest attempt failed after Submit was pressed, without knowing the outcome:
+    trying again could apply twice, so I confirm I checked first."""
+    last = await session.scalar(
+        select(Application)
+        .where(Application.listing_id == listing_id)
+        .order_by(Application.created_at.desc())
+        .limit(1)
+    )
+    return last is not None and last.status == "failed" and last.submit_started_at is not None
 
 
 async def why_not(session: AsyncSession, listing_id: uuid.UUID) -> str | None:
@@ -146,6 +167,7 @@ def form_of(app: Application) -> list[FormField]:
             required=bool(f["required"]),
             options=list(f.get("options") or []),
             max_chars=f.get("max_chars"),
+            widget=str(f.get("widget") or ""),
         )
         for f in app.form_fields or []
     ]
@@ -194,6 +216,7 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
     out: list[dict[str, Any]] = []
     pending: list[dict[str, Any]] = []
     drafted = 0
+    draft_failed = 0
     need_letter = False
     for f in form_of(app):
         prev = old.get(f.key, {})
@@ -250,8 +273,10 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
                     sensitive=sensitive,
                 )
             except (ModelCallError, SpendCapReached, PersonalDataBlocked) as exc:
-                pending.append({"key": f.key, "label": f.label,
-                                "reason": f"JAP could not draft this: {exc}"})  # fmt: skip
+                log.warning("draft failed for %s (%s): %s", app.id, f.label, exc)
+                pending.append({"key": f.key, "label": f.label, "draft_failed": True,
+                                "reason": f"JAP couldn't draft an answer: {exc}"})  # fmt: skip
+                draft_failed += 1
             else:
                 if draft.answer is None:
                     reason = f"Only you know this ({draft.missing_fact})"
@@ -267,6 +292,8 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
         out.append(entry)
 
     pending = captcha + pending
+    if draft_failed and app.run_id:
+        await bump(session, app.run_id, "draft_failed", draft_failed)
     app.form_fields = out
     app.answers = answers
     if need_letter:  # the cover-letter step writes it, then settles the status
@@ -418,12 +445,13 @@ async def status_of(session: AsyncSession, app_id: str) -> str:
     return (await _app(session, app_id)).status
 
 
-async def bump(session: AsyncSession, run_id: uuid.UUID, key: str) -> None:
-    """Add one to a run's count (applied, failed, needs input), as each attempt ends."""
+async def bump(session: AsyncSession, run_id: uuid.UUID, key: str, by: int = 1) -> None:
+    """Add to a run's count (applied, failed, needs input, answers not drafted), as each
+    attempt ends."""
     run = await session.get(Run, run_id, with_for_update=True)
     if run is not None:
         counts = dict(run.counts or {})
-        counts[key] = int(counts.get(key) or 0) + 1
+        counts[key] = int(counts.get(key) or 0) + by
         run.counts = counts
 
 
@@ -472,7 +500,8 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     """submit: {"wait_until": iso} when the cap or the gap says not yet, else
     {"status": "applied" | "failed"}. Submit is pressed at most once per attempt: a retry
     that finds submit_started_at set without a confirmation fails the attempt as "submit
-    outcome unknown", so I check by hand."""
+    outcome unknown", so I check by hand. submit_started_at stays set on a Failed attempt
+    whose Submit may have gone through, and Retry asks me to check first."""
     now = datetime.now(UTC)
     app = await _app(session, app_id, lock=True)
     if app.status != "applying":
@@ -508,6 +537,8 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     if not result.confirmed:
         app.screenshot_path = str(shot) if result.screenshot else None
         app.trace_path = str(trace) if trace.exists() else None
+        if result.rejected:  # the form kept its invalid fields: nothing was sent
+            app.submit_started_at = None
         await fail(session, app, result.error or "No confirmation after submit")
         return {"status": "failed"}
     submitted = datetime.now(UTC)
