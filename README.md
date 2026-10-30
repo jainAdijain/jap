@@ -33,7 +33,7 @@ The UI follows the [redesign mockup v0.5](https://claude.ai/artifact/5V2SRvBgWZu
 - **Jobs**: the last search line, **Find new jobs**, a status strip (All open, New, Needs you,
   Ready to send, Sent, Failed), a toolbar with search and filters, and the jobs table. Tick
   rows to **Apply** or **Hide** several at once; click a row to open the job panel, whose
-  actions and content follow the job's status. `/` jumps to the search box, and a `/` key in the box shows it.
+  actions and content follow the job's status. `/` jumps to the search box (its tooltip says so).
 - **Profile**: what is sent to employers. Resume and its versions, contact details and links,
   Saved answers, and the cover letter style.
 - **Job preferences**: what decides which jobs show. Job titles, required and nice-to-have
