@@ -3,17 +3,21 @@
 A posting with no listing yet is placed, in this order: my remembered merge or split
 (dedup_override), a shared requisition ID, an exact match on (canonical company, canonical
 role), a near match (title similarity 0.9 or more and description cosine 0.92 or more), or a
-new listing. A pair just below the near-match bar becomes a Possible duplicate for me to
-decide. Placed postings keep their listing on later runs, so merges and splits stay put and
-a repost of an old role joins its old listing (D4).
+new listing. A pair just below the near-match bar becomes a Possible duplicate, which
+settle_duplicates() hands to the extract model: it reads both descriptions once and JAP
+merges the pair or keeps it apart (PRD 1.7, Near match). I am never asked. Placed postings
+keep their listing on later runs, so merges and splits stay put and a repost of an old role
+joins its old listing (D4).
 """
 
+import logging
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any
 
+from pydantic import BaseModel
 from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,10 +31,15 @@ from database.models import (
     Posting,
     WatchedBoard,
 )
+from llm import PersonalDataBlocked, Sensitive, SpendCapReached, call
+from llm.client import ModelCallError
 from pipeline.canonical import canonical_role, clean_company, seniority_of
 
+log = logging.getLogger(__name__)
+
 NEAR_TITLE, NEAR_COSINE = 0.9, 0.92  # PRD Near match
-MAYBE_TITLE, MAYBE_COSINE = 0.75, 0.85  # just below: shown as Possible duplicate
+MAYBE_TITLE, MAYBE_COSINE = 0.75, 0.85  # just below: the model decides (settle_duplicates)
+MAX_JD_CHARS = 6_000  # per side; enough to tell two jobs apart, and it caps the cost
 WORK_MODES = {"remote", "hybrid", "onsite"}
 # D1: a supported ATS first (all three in v1), then careers pages, then anything else.
 SOURCE_PRIORITY = {"greenhouse": 0, "lever": 0, "ashby": 0}
@@ -368,3 +377,75 @@ async def decide_duplicate(session: AsyncSession, dup_id: uuid.UUID, decision: s
     else:
         dup.decision = "kept_apart"
         await session.commit()
+
+
+class SameJob(BaseModel):
+    same: bool
+    reason: str
+
+
+@dataclass
+class Settled:
+    merged: int = 0
+    kept_apart: int = 0
+    undecided: int = 0  # the model could not answer; tried again on the next run
+
+
+async def settle_duplicates(session: AsyncSession) -> Settled:
+    """Let the extract model decide every open Possible duplicate (PRD 1.7, Near match).
+
+    The pair's primary postings go to the model with their titles, locations and
+    descriptions; same merges into the older listing (remembered per posting), not same
+    keeps them apart with the model's reason in scores. A pair the model can't answer (down,
+    the AI limit, a broken reply) stays open and is two jobs until the next run tries again.
+    """
+    out = Settled()
+    pairs = list(
+        await session.scalars(
+            select(PossibleDuplicate).where(
+                PossibleDuplicate.decision == "open", PossibleDuplicate.kind == "listing"
+            )
+        )
+    )
+    for dup in pairs:
+        a, b = await session.get(Listing, dup.a_id), await session.get(Listing, dup.b_id)
+        pa = await session.get(Posting, a.primary_posting_id) if a else None
+        pb = await session.get(Posting, b.primary_posting_id) if b else None
+        if pa is None or pb is None:
+            continue
+        try:
+            result = await call(
+                session,
+                "same_job",
+                {
+                    "title_a": pa.title_raw,
+                    "locations_a": "; ".join(pa.locations) or "not stated",
+                    "description_a": pa.description_text[:MAX_JD_CHARS],
+                    "title_b": pb.title_raw,
+                    "locations_b": "; ".join(pb.locations) or "not stated",
+                    "description_b": pb.description_text[:MAX_JD_CHARS],
+                },
+                SameJob,
+                sensitive=Sensitive(),
+                generic_redact=frozenset({"description_a", "description_b"}),
+            )
+        except (ModelCallError, SpendCapReached, PersonalDataBlocked) as exc:
+            log.warning("possible duplicate %s left open: %s", dup.id, exc)
+            out.undecided += 1
+            continue
+        dup.scores = {**dup.scores, "same": result.output.same, "reason": result.output.reason}
+        await session.flush()
+        try:
+            decision = "merged" if result.output.same else "kept_apart"
+            await decide_duplicate(session, dup.id, decision)
+        except DedupConflict as exc:  # both have applications: never merged away
+            log.warning("possible duplicate %s kept apart: %s", dup.id, exc)
+            dup.decision = "kept_apart"
+            await session.commit()
+            out.kept_apart += 1
+            continue
+        if result.output.same:
+            out.merged += 1
+        else:
+            out.kept_apart += 1
+    return out

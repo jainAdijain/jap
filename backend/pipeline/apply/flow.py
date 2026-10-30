@@ -107,7 +107,7 @@ async def why_not(session: AsyncSession, listing_id: uuid.UUID) -> str | None:
         return "The posting is closed"
     resume = await session.scalar(select(ResumeVersion.id).where(ResumeVersion.is_active))
     if resume is None:
-        return "Upload a resume in My profile first"
+        return "Upload a resume in Profile first"
     return None
 
 
@@ -414,7 +414,7 @@ async def write_cover_letter(session: AsyncSession, app_id: str) -> dict[str, An
         if str(exc).startswith("Spend cap reached"):  # no model call was made (Phase 8)
             reason = (
                 f"{exc}, so JAP wrote no cover letter, and nothing is sent without one. "
-                "Paste your own letter here, raise the cap on My profile, or Skip."
+                "Paste your own letter here, raise the AI limit in Settings, or Skip."
             )
         else:
             reason = (

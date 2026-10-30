@@ -1,4 +1,5 @@
-"""run-pipeline (T4, T5, I7, D6, F1): one run. fetch, dedup, then filter (the match rule
+"""run-pipeline (T4, T5, I7, D6, F1): one run. fetch, dedup (the model settles borderline
+pairs), then filter (the match rule
 on every stored listing), and for Find and apply, pick: one listing/apply.requested per
 passing Not applied listing, within today's cap (sent, not invoked, so a listing waiting
 days for review never holds the run open). Runs are started by the Run dialog, the Daily
@@ -24,7 +25,7 @@ from functions.fetch_board import fetch_board
 from llm.ollama import ping_ollama
 from llm.spend import month_spend
 from pipeline.apply.flow import applied_today, pick
-from pipeline.dedup import dedup
+from pipeline.dedup import dedup, settle_duplicates
 from pipeline.matching import refilter_from_profile
 from pipeline.runs import embeddings_pending, finish_run, start_run
 from schemas.job import ATS
@@ -55,6 +56,14 @@ async def dedup_step(run_id: str) -> dict[str, Any]:
         since = run.started_at if run is not None else datetime.now(UTC)
         counts = await dedup(session, since)
     return counts.as_dict()
+
+
+async def settle_step() -> dict[str, int]:
+    """The model decides every borderline pair: merged, kept apart, or left for the next run."""
+    async with get_sessionmaker()() as session:
+        settled = await settle_duplicates(session)
+    return {"ai_merged": settled.merged, "ai_kept_apart": settled.kept_apart,
+            "ai_undecided": settled.undecided}  # fmt: skip
 
 
 async def filter_step() -> dict[str, int]:
@@ -157,6 +166,9 @@ async def run_pipeline(ctx: inngest.Context) -> dict[str, Any]:
             break
         await ctx.step.sleep(f"wait-embeddings-{i}", timedelta(seconds=WAIT_SECONDS))
     counts.update(await ctx.step.run("dedup", dedup_step, run_id))
+    settled = await ctx.step.run("settle-duplicates", settle_step)
+    counts["merged"] = int(counts.get("merged") or 0) + settled["ai_merged"]
+    counts.update(settled)
     counts.update(await ctx.step.run("filter", filter_step))
     picked = await ctx.step.run("pick", pick_step, run_id)
     if picked:

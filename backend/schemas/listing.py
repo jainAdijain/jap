@@ -17,6 +17,7 @@ class ListingRow(BaseModel):
     work_mode: str | None
     status: str
     last_posted_at: datetime | None
+    found_at: datetime  # when JAP first listed it; the UI marks newer ones not yet opened
     platforms: list[ATS]  # boards with an open posting of this listing (the badge)
     postings: int
     role: str  # canonical role
@@ -53,6 +54,7 @@ class ListingSummary(BaseModel):
 
     totals: StatusCounts
     by_role: list[RoleCounts]
+    locations: list[str] = []  # job locations in the list, most common first (Location filter)
 
 
 class AlsoOn(BaseModel):

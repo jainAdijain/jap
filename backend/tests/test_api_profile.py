@@ -8,7 +8,8 @@ async def test_empty_profile_on_first_read(api: httpx.AsyncClient) -> None:
     body = (await api.get("/api/profile")).json()
     assert body["full_name"] is None and body["target_roles"] == []
     assert body["work_modes"] == ["remote", "hybrid", "onsite"]
-    assert body["match_rule"] == [["role"], ["skills"], ["location"]]
+    assert body["match_rule"] == [["location", "role"]]  # Job title and location fit (U17)
+    assert body["remote_any"] is False
     assert body["apply_mode"] == "review"
     assert body["spend"] == {"month_usd": 0.0, "cap_usd": 2.0, "reached": False}
 
@@ -45,6 +46,9 @@ async def test_save_and_reload(
     assert body["match_rule"] == [["location", "role"], ["skills"]]
     assert body["links"] == [{"label": "GitHub", "url": "https://github.com/asharao"}]
     assert events == [("profile/saved", {})]
+    contact = await api.put("/api/profile", json={**PROFILE, "phone": "+91 99999 00000"})
+    assert contact.status_code == 200
+    assert events == [("profile/saved", {})]  # contact details alone start no search
 
 
 async def test_work_mode_is_required(api: httpx.AsyncClient) -> None:

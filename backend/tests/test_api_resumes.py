@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -7,6 +8,8 @@ import pytest
 
 import llm.client as client
 from functions.parse_resume import extract_step, parse_step
+from llm.redact import find_links
+from pipeline.resume import extract_text
 from tests.fixtures import RESUME, docx_bytes, pdf_bytes
 from tests.test_llm_call import Stub
 
@@ -92,3 +95,20 @@ async def test_parse_then_accept(
     [run] = sql.execute("SELECT id, trigger, status FROM run").fetchall()
     assert run[1:] == ("resume_updated", "queued")
     assert events[-1] == ("run/requested", {"run_id": str(run[0])})
+
+
+def test_links_hidden_behind_words_are_found(tmp_path: Path) -> None:
+    path = tmp_path / "r.pdf"
+    path.write_bytes(
+        pdf_bytes(
+            ["Asha Rao", "LinkedIn | GitHub | github.com/asharao"],
+            links=[
+                "https://www.linkedin.com/in/asharao/",
+                "https://github.com/asharao",
+                "mailto:asha@example.com",
+            ],  # fmt: skip
+        )
+    )
+    text = extract_text(path, PDF)
+    assert text.endswith("Links: https://www.linkedin.com/in/asharao/")  # GitHub is shown
+    assert find_links(text) == ["github.com/asharao", "https://www.linkedin.com/in/asharao/"]

@@ -60,8 +60,9 @@ class Profile(Timestamps, Base):
     nice_to_have_skills: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     locations: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
     remote_regions: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    remote_any: Mapped[bool] = mapped_column(Boolean, server_default="false")  # all remote jobs
     match_rule: Mapped[list[list[str]]] = mapped_column(
-        JSONB, server_default='[["role"], ["skills"], ["location"]]'
+        JSONB, server_default='[["location", "role"]]'
     )
     work_modes: Mapped[list[str]] = mapped_column(
         ARRAY(WORK_MODE), server_default="{remote,hybrid,onsite}"
@@ -163,7 +164,7 @@ class DedupOverride(Timestamps, Base):
 
 
 class PossibleDuplicate(Timestamps, Base):
-    """A borderline pair for me to merge or keep apart (Near match)."""
+    """A borderline pair (Near match) that the extract model merges or keeps apart."""
 
     __tablename__ = "possible_duplicate"
 

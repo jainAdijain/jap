@@ -13,7 +13,8 @@ Conditions:
 - Skills: every must-have skill is in the listing's skills. No must-have skills, or a job
   with no skills, fails.
 - Location: a job location names one of my locations, or the job is remote and allows one
-  of my Remote regions, or it is Remote - Worldwide (always counts).
+  of my Remote regions, or it is Remote - Worldwide (always counts), or I chose All remote
+  jobs (remote_any).
 """
 
 import re
@@ -48,6 +49,7 @@ class ProfileLike(Protocol):
     must_have_skills: list[str]
     locations: list[str]
     remote_regions: list[str]
+    remote_any: bool
     match_rule: Any
     work_modes: Any
     excluded_companies: list[str]
@@ -60,6 +62,7 @@ class Criteria:
     must_have_skills: tuple[str, ...] = ()
     locations: tuple[str, ...] = ()
     remote_regions: tuple[str, ...] = ()
+    remote_any: bool = False
     match_rule: tuple[tuple[str, ...], ...] = (("role",), ("skills",), ("location",))
     work_modes: tuple[str, ...] = ("remote", "hybrid", "onsite")
     excluded_companies: tuple[str, ...] = ()
@@ -75,6 +78,7 @@ class Criteria:
             must_have_skills=tuple(s.lower() for s in p.must_have_skills or ()),
             locations=tuple(p.locations or ()),
             remote_regions=tuple(p.remote_regions or ()),
+            remote_any=bool(p.remote_any),
             match_rule=tuple(c for c in rule if c) or (("role",), ("skills",), ("location",)),
             work_modes=tuple(str(m) for m in p.work_modes or ()),
             excluded_companies=tuple(p.excluded_companies or ()),
@@ -141,6 +145,7 @@ def matches_sql(c: Criteria) -> tuple[str, dict[str, Any]]:
         "loc_patterns": [p for loc in c.locations if (p := place_pattern(loc))],
         "region_patterns": [p for r in c.remote_regions if (p := place_pattern(r))],
         "worldwide": WORLDWIDE,
+        "remote_any": c.remote_any,
         "modes": list(c.work_modes),
         "ex_names": [n.lower().strip() for n in c.excluded_companies],
         "ex_canon": [clean_company(n) for n in c.excluded_companies],
@@ -163,7 +168,8 @@ def matches_sql(c: Criteria) -> tuple[str, dict[str, Any]]:
             (l.work_mode = 'remote'
              OR EXISTS (SELECT 1 FROM unnest(l.locations) loc WHERE lower(loc) ~ 'remote'))
             AND (
-              EXISTS (SELECT 1 FROM unnest(l.remote_regions) rr WHERE lower(rr) ~ :worldwide)
+              CAST(:remote_any AS boolean)
+              OR EXISTS (SELECT 1 FROM unnest(l.remote_regions) rr WHERE lower(rr) ~ :worldwide)
               OR EXISTS (SELECT 1 FROM unnest(l.locations) loc WHERE lower(loc) ~ :worldwide)
               OR EXISTS (SELECT 1 FROM unnest(l.remote_regions) rr
                          WHERE lower(rr) ~ ANY(CAST(:region_patterns AS text[])))

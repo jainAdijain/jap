@@ -38,6 +38,7 @@ class ProfileIn(BaseModel):
     nice_to_have_skills: list[str] = []
     locations: list[str] = []
     remote_regions: list[str] = []
+    remote_any: bool = False  # every remote job passes Location, whatever its regions
     match_rule: list[list[Condition]] = [["role"], ["skills"], ["location"]]
     work_modes: list[WorkMode] = ["remote", "hybrid", "onsite"]
     excluded_companies: list[str] = []

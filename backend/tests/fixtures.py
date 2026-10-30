@@ -5,8 +5,9 @@ import io
 from docx import Document
 
 
-def pdf_bytes(lines: list[str]) -> bytes:
-    """A one-page PDF with the given lines of text (Helvetica)."""
+def pdf_bytes(lines: list[str], links: list[str] | None = None) -> bytes:
+    """A one-page PDF with the given lines of text (Helvetica), and clickable areas that
+    hide the given URLs (as a resume's "LinkedIn" word does)."""
     text_ops = (
         "BT /F1 11 Tf 50 750 Td 14 TL "
         + " ".join(
@@ -15,11 +16,16 @@ def pdf_bytes(lines: list[str]) -> bytes:
         )
         + " ET"
     )
+    annots = " ".join(
+        f"<< /Type /Annot /Subtype /Link /Rect [50 {700 - 20 * i} 150 {715 - 20 * i}] "
+        f"/A << /S /URI /URI ({url}) >> >>"
+        for i, url in enumerate(links or [])
+    )
     objects = [
         "<< /Type /Catalog /Pages 2 0 R >>",
         "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
         "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] "
-        "/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R >>",
+        f"/Resources << /Font << /F1 5 0 R >> >> /Contents 4 0 R /Annots [{annots}] >>",
         f"<< /Length {len(text_ops)} >>\nstream\n{text_ops}\nendstream",
         "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
     ]
