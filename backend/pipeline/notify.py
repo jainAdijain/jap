@@ -1,11 +1,13 @@
 """The confirmation email (E1 to E3): "Applied: Role at Company" to the address on My profile,
-sent once per Applied application by notify-applied. Gmail SMTP with an app password.
+sent once per Applied application by notify-applied. EMAIL_PROVIDER picks the sender (E4):
+Gmail SMTP with an app password, or Microsoft 365 through Graph (pipeline/microsoft.py).
 pipeline/alerts.py sends the failure alerts through the same send().
 """
 
 import asyncio
 import smtplib
 import ssl
+import sys
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -113,6 +115,14 @@ def _send_sync(mail: Mail) -> None:
 
 
 async def send(mail: Mail) -> None:
+    provider = get_settings().email_provider
+    if provider == "microsoft":
+        from pipeline import microsoft
+
+        await microsoft.send(mail)
+        return
+    if provider != "gmail":
+        raise EmailNotSent(f"EMAIL_PROVIDER must be gmail or microsoft, not {provider!r}")
     try:
         await asyncio.to_thread(_send_sync, mail)
     except (OSError, smtplib.SMTPException) as exc:
@@ -124,3 +134,11 @@ async def mark_sent(session: AsyncSession, app_id: uuid.UUID) -> None:
     if app is not None and app.email_sent_at is None:
         app.email_sent_at = datetime.now(UTC)
         await session.commit()
+
+
+if __name__ == "__main__":
+    # `make email-test TO=<address>`: one short email through the configured sender.
+    if len(sys.argv) != 3 or sys.argv[1] != "test":
+        raise SystemExit("usage: python -m pipeline.notify test <address>")
+    asyncio.run(send(Mail(to=sys.argv[2], subject="JAP test email", body="JAP can send email.\n")))
+    print(f"Sent a test email to {sys.argv[2]} through {get_settings().email_provider}.")

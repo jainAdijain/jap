@@ -21,12 +21,20 @@ class Settings(BaseSettings):
 
     jap_monthly_cost_cap_usd: float = 2.0
 
+    # Who sends JAP's emails: "gmail" (SMTP below) or "microsoft" (Microsoft 365 via Graph).
+    email_provider: str = "gmail"
+
     gmail_address: str = ""
     gmail_app_password: str = ""
     # Gmail SMTP over SSL by default; a local test mailbox can take plain SMTP instead.
     smtp_host: str = "smtp.gmail.com"
     smtp_port: int = 465
     smtp_ssl: bool = True
+
+    # Microsoft 365 sender: the Entra app registration (public client, delegated Mail.Send).
+    # `make email-login` signs in once; the token is kept in data/ (pipeline/microsoft.py).
+    ms_client_id: str = ""
+    ms_tenant_id: str = "organizations"
 
     inngest_base_url: str = "http://inngest:8288"
 
