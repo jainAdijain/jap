@@ -132,6 +132,10 @@ run queues one run behind it; more triggers join that queued run instead of addi
 
 The line under the Jobs title shows the last search (when, what started it, and its counts)
 or the one going now; **Search history** in Settings lists every search with its problems.
+Its colour follows the search: teal with a pulsing dot while searching (at least 3 seconds;
+the page checks every 2 seconds), green with **Show new** after a search that found new jobs
+(until you next open Jobs), grey when nothing is new, orange when a company could not be read
+or the AI limit was reached, and red with **Try again** when the search failed.
 
 ## Applying (Review mode)
 

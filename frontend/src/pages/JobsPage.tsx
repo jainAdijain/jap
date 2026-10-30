@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 
 import { go } from '../nav'
 import {
@@ -86,49 +86,116 @@ function useSeen() {
   return { unseen, mark }
 }
 
-function runCounts(run: Run): string {
+function runCounts(run: Run, boldNew = false): ReactNode {
   const c = run.counts
-  const parts = [plural(c.boards ?? 0, 'company', 'companies'), `${plural(c.fetched ?? 0, 'job')} found`, `${c.new_listings ?? c.new ?? 0} new`]
-  if (c.merged) parts.push(`${c.merged} merged as ${c.merged === 1 ? 'a duplicate' : 'duplicates'}`)
-  if (run.mode === 'find_and_apply') parts.push(`${c.apply_queued ?? 0} to apply`)
-  return parts.join(', ')
+  const fresh = `${c.new_listings ?? c.new ?? 0} new`
+  const parts = [plural(c.boards ?? 0, 'company', 'companies'), `${plural(c.fetched ?? 0, 'job')} found`]
+  const after: string[] = []
+  if (c.merged) after.push(`${c.merged} merged as ${c.merged === 1 ? 'a duplicate' : 'duplicates'}`)
+  if (run.mode === 'find_and_apply') after.push(`${c.apply_queued ?? 0} to apply`)
+  return (
+    <>
+      {parts.join(', ')}, {boldNew ? <b>{fresh}</b> : fresh}
+      {after.map((a) => `, ${a}`).join('')}
+    </>
+  )
 }
 
-function LastSearch() {
-  const { runs } = useApp()
+/** When Jobs was last left: a search that ended after it stays green until Jobs is opened again. */
+function useLeftAt() {
+  const [leftAt] = useState(() => store.get('jap.jobsLeftAt') ?? '')
+  useEffect(() => {
+    const leave = () => store.set('jap.jobsLeftAt', new Date().toISOString())
+    window.addEventListener('pagehide', leave)
+    return () => {
+      window.removeEventListener('pagehide', leave)
+      leave()
+    }
+  }, [])
+  return leftAt
+}
+
+const MIN_SEARCHING_MS = 3000 // a quick search still shows as searching long enough to be seen
+
+/** The last search line: a pill coloured by the search's state (PRD 1.6, U2). */
+function LastSearch({ onShowNew }: { onShowNew: () => void }) {
+  const { runs, refresh, toast } = useApp()
+  const leftAt = useLeftAt()
   const last = runs?.last
   const going = runs?.active ?? runs?.queued
-  const reading = (going ?? last)?.extracting ?? 0
+  const [holdUntil, setHoldUntil] = useState(0)
+  const [, rerender] = useState(0)
+  useEffect(() => {
+    if (going) setHoldUntil((h) => (h > Date.now() ? h : Date.now() + MIN_SEARCHING_MS))
+  }, [going])
+  useEffect(() => {
+    const wait = holdUntil - Date.now()
+    if (going || wait <= 0) return
+    const t = window.setTimeout(() => rerender((n) => n + 1), wait)
+    return () => window.clearTimeout(t)
+  }, [going, holdUntil])
+  const shown = going ?? (holdUntil > Date.now() ? last : undefined)
+  const reading = (shown ?? last)?.extracting ?? 0
+  const fresh = (last?.counts.new_listings ?? last?.counts.new ?? 0) > 0
+  const tone = shown
+    ? 'busy'
+    : !last
+      ? 'idle'
+      : last.status === 'failed'
+        ? 'bad'
+        : last.counts.boards_failed || last.counts.spend_cap_reached
+          ? 'warn'
+          : fresh && (last.ended_at ?? last.created_at) > leftAt
+            ? 'new'
+            : 'idle'
+  const retry = async () => {
+    try {
+      await api.startRun({ mode: last?.mode ?? 'find_only', roles: last?.scope.roles?.length ? last.scope.roles : undefined })
+      await refresh()
+    } catch (err) {
+      toast({ text: errorText(err), bad: true })
+    }
+  }
   return (
     <div className="lastrun" role="status" data-testid="last-run">
-      {going ? (
-        <span>
-          {runs?.active ? 'Searching' : 'Waiting to search'} {going.scope.roles?.length ? `for ${going.scope.roles.join(', ')}` : 'every company you follow'}…
-        </span>
-      ) : last ? (
-        last.status === 'failed' ? (
-          <span className="bad">
-            Last search {ago(last.ended_at ?? last.created_at)} failed: {last.error ?? 'unknown error'}
-          </span>
-        ) : (
+      <span className={`runpill ${tone}`} data-tone={tone}>
+        {tone === 'busy' && <i className="dot" aria-hidden="true" />}
+        {shown ? (
           <span>
-            Last search {ago(last.ended_at ?? last.created_at)} ({STARTED_BY[last.trigger].toLowerCase() === 'you' ? 'by you' : STARTED_BY[last.trigger].toLowerCase()}
-            {last.scope.roles?.length ? `, ${last.scope.roles.join(', ')} only` : ''}): {runCounts(last)}
+            {runs?.queued && !runs.active ? 'Waiting to search' : 'Searching'} {shown.scope.roles?.length ? `for ${shown.scope.roles.join(', ')}` : 'every company you follow'}…
           </span>
-        )
-      ) : runs ? (
-        <span>No search yet. Press Find new jobs.</span>
-      ) : (
-        <span>Loading…</span>
-      )}
-      {reading > 0 && <span>· Reading {plural(reading, 'job description')}…</span>}
-      {!going && !!last?.counts.boards_failed && (
-        <span className="warn" title={last.counts.board_errors?.join('\n')}>
-          · {plural(last.counts.boards_failed, 'company', 'companies')} could not be read
-        </span>
-      )}
-      {!going && last?.counts.spend_cap_reached && <span className="warn">· AI limit reached</span>}
-      <span>·</span>
+        ) : last ? (
+          last.status === 'failed' ? (
+            <span>
+              Last search {ago(last.ended_at ?? last.created_at)} failed: {last.error ?? 'unknown error'}
+            </span>
+          ) : (
+            <span>
+              Last search {ago(last.ended_at ?? last.created_at)} ({STARTED_BY[last.trigger].toLowerCase() === 'you' ? 'by you' : STARTED_BY[last.trigger].toLowerCase()}
+              {last.scope.roles?.length ? `, ${last.scope.roles.join(', ')} only` : ''}): {runCounts(last, tone === 'new')}
+            </span>
+          )
+        ) : runs ? (
+          <span>No search yet. Press Find new jobs.</span>
+        ) : (
+          <span>Loading…</span>
+        )}
+        {reading > 0 && <span>· Reading {plural(reading, 'job description')}…</span>}
+        {!shown && !!last?.counts.boards_failed && (
+          <span title={last.counts.board_errors?.join('\n')}>· {plural(last.counts.boards_failed, 'company', 'companies')} could not be read</span>
+        )}
+        {!shown && last?.counts.spend_cap_reached && <span>· AI limit reached</span>}
+        {tone === 'new' && (
+          <button type="button" className="btn-link" onClick={onShowNew}>
+            Show new
+          </button>
+        )}
+        {tone === 'bad' && (
+          <button type="button" className="btn-link" onClick={() => void retry()}>
+            Try again
+          </button>
+        )}
+      </span>
       <button type="button" className="btn-link" onClick={() => go('settings')}>
         Search history
       </button>
@@ -477,7 +544,13 @@ export default function JobsPage() {
         <div>
           <h1>Jobs</h1>
           <p>Jobs from the companies you follow that fit your job preferences.</p>
-          <LastSearch />
+          <LastSearch
+            onShowNew={() => {
+              setStatus('not_applied')
+              setShowHidden(false)
+              setPageNo(1)
+            }}
+          />
         </div>
         <FindButton />
       </div>

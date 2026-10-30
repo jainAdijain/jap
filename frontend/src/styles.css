@@ -95,9 +95,15 @@ p { margin: 0; }
 .menu label { display: flex; gap: 8px; align-items: center; }
 .menu hr { border: none; border-top: 1px solid var(--line); margin: 2px 0; width: 100%; }
 .lastrun { font-size: 13px; color: var(--muted); margin-top: 6px; display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
-.lastrun .warn { color: var(--you-fg); }
-.lastrun .bad { color: var(--fail-fg); }
 .lastrun button { font-size: 13px; }
+.runpill { display: inline-flex; flex-wrap: wrap; align-items: center; gap: 6px; padding: 3px 10px; border-radius: 999px; background: var(--new-bg); color: var(--new-fg); }
+.runpill.busy { background: var(--accent-soft); color: var(--accent-strong); }
+.runpill.new { background: var(--sent-bg); color: var(--sent-fg); }
+.runpill.warn { background: var(--you-bg); color: var(--you-fg); }
+.runpill.bad { background: var(--fail-bg); color: var(--fail-fg); }
+.runpill .btn-link { color: inherit; text-decoration: underline; font-weight: 600; }
+.runpill .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+@media (prefers-reduced-motion: no-preference) { .runpill .dot { animation: pulse 1.2s ease-in-out infinite; } }
 .banner { display: flex; gap: 12px; align-items: center; justify-content: space-between; flex-wrap: wrap; border-radius: 8px; padding: 10px 14px; background: var(--you-bg); color: var(--you-fg); font-size: 13px; }
 .note-box { border-radius: 8px; padding: 10px 12px; font-size: 13px; background: var(--ready-bg); color: var(--ready-fg); }
 .note-box.bad { background: var(--fail-bg); color: var(--fail-fg); }

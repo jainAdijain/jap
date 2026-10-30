@@ -3,7 +3,8 @@ import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { api, type Health, type ListingSummary, type Ops, type Profile, type Resume, type RunState } from './api/client'
 import { Ctx, searching, type Store, type Toast } from './appContext'
 
-const POLL_MS = 5000 // while a search, its reading of descriptions, or an application is going
+const SEARCH_POLL_MS = 2000 // while a search is going, so its line changes as it happens
+const POLL_MS = 5000 // while descriptions are read or an application is going
 const IDLE_POLL_MS = 30000 // notices a daily search or a search started by a save
 
 export function AppProvider({ children }: { children: ReactNode }) {
@@ -46,10 +47,11 @@ export function AppProvider({ children }: { children: ReactNode }) {
 
   // New jobs appear without a reload: poll while a search is going, and now and then otherwise.
   const busy = searching(runs) || (summary?.totals.applying ?? 0) > 0
+  const fast = !!runs?.active || !!runs?.queued
   const lastId = runs?.last?.id
   useEffect(() => {
     if (busy) {
-      const t = setInterval(() => void refresh().catch(() => undefined), POLL_MS)
+      const t = setInterval(() => void refresh().catch(() => undefined), fast ? SEARCH_POLL_MS : POLL_MS)
       return () => clearInterval(t)
     }
     const t = setInterval(() => {
@@ -59,7 +61,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
         .catch(() => undefined)
     }, IDLE_POLL_MS)
     return () => clearInterval(t)
-  }, [busy, lastId, refresh])
+  }, [busy, fast, lastId, refresh])
 
   const toast = useCallback((t: Toast | string) => {
     setToast(typeof t === 'string' ? { text: t } : t)
