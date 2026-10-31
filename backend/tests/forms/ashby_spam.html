@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Product Engineer</title></head><body>
+<!-- Like an Ashby form whose spam check turns a headless browser away: Submit is pressed,
+     nothing is posted, and the page shows an error banner above the form. -->
+<div id="banner" role="alert" hidden></div>
+<form class="ashby-application-form" method="post" action="/submit" enctype="multipart/form-data">
+<div><label for="_systemfield_name">Name</label><input id="_systemfield_name" name="_systemfield_name" required></div>
+<div><label for="_systemfield_email">Email</label><input id="_systemfield_email" name="_systemfield_email" type="email" required></div>
+<button type="submit">Submit Application</button></form>
+<script>
+  document.querySelector('form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const b = document.getElementById('banner');
+    b.textContent = 'Your application submission was flagged as possible spam. Please try again.';
+    b.hidden = false;
+  });
+</script></body></html>

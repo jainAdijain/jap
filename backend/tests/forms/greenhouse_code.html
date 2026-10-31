@@ -1,0 +1,26 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Manager</title></head><body>
+<!-- Like Greenhouse when it suspects an automated browser: Submit shows boxes for a security
+     code it emailed, and nothing is posted until the code is typed in. -->
+<form id="application-form" method="post" action="/submit" enctype="multipart/form-data">
+  <label for="first_name">First Name<span>*</span></label>
+  <input type="text" id="first_name" name="first_name" aria-required="true">
+  <div id="code" hidden>
+    <p>A verification code was sent to your email. To submit your application, enter the 8-character code here.</p>
+    <label>Security code</label>
+    <span id="boxes"></span>
+  </div>
+  <button type="submit">Submit application</button>
+</form>
+<script>
+  document.querySelector('form').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const boxes = document.getElementById('boxes');
+    for (let i = 0; i < 8; i++) {
+      const b = document.createElement('input');
+      b.maxLength = 1;
+      boxes.appendChild(b);
+    }
+    document.getElementById('code').hidden = false;
+  });
+</script></body></html>

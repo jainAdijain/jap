@@ -86,6 +86,26 @@
       max_chars: el.maxLength > 0 ? el.maxLength : null,
     });
   }
+  // A choice made of buttons (Ashby's Yes/No questions): two or more short type="button"
+  // buttons side by side, under a question. It has no input of its own to name it, so its
+  // key is its question; form.py clicks the button whose text is the answer.
+  const groups = new Set();
+  for (const b of form.querySelectorAll('button[type="button"]')) {
+    const box = b.parentElement;
+    if (!box || groups.has(box) || !shown(b)) continue;
+    const buttons = [...box.children].filter((c) => c.tagName === 'BUTTON' && c.type === 'button');
+    if (buttons.length < 2 || buttons.length !== box.children.length) continue;
+    const options = buttons.map((x) => text(x));
+    if (options.some((o) => !o || o.length > 30)) continue;
+    groups.add(box);
+    const label = groupLabel(box, new Set());
+    if (!label || seen.has('buttons:' + label)) continue;
+    seen.add('buttons:' + label);
+    out.push({
+      key: 'buttons:' + label, type: 'radio', widget: 'buttons', label,
+      required: !!box.closest('[aria-required="true"]'), options, max_chars: null,
+    });
+  }
   const captcha = [...document.querySelectorAll(
     'iframe[src*="recaptcha"][src*="anchor"], iframe[src*="hcaptcha"], .h-captcha, .cf-turnstile, iframe[src*="turnstile"], [data-captcha]'
   )].some((n) => !(n.src || '').includes('size=invisible') && n.getAttribute('data-size') !== 'invisible');
