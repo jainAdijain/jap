@@ -23,7 +23,7 @@ from functions import ALL_FUNCTIONS, inngest_client
 
 settings = get_settings()
 
-app = FastAPI(title="JAP", version="0.11.1")
+app = FastAPI(title="JAP", version="0.11.2")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
