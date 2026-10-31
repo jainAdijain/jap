@@ -14,7 +14,15 @@ from typing import Any
 import pytest
 
 from pipeline.apply import fields as rules
-from pipeline.apply.form import FormError, FormField, Upload, read_form, submit_form, to_fields
+from pipeline.apply.form import (
+    CONFIRMATION,
+    FormError,
+    FormField,
+    Upload,
+    read_form,
+    submit_form,
+    to_fields,
+)
 
 FORMS = Path(__file__).parent / "forms"
 
@@ -202,6 +210,7 @@ GH_ANSWERS = {
     "first_name": "Asha",
     "email": "asha@example.com",
     "id:q_office": "Yes",
+    "id:country": "India",
     "why": "To make AI systems safer.",
 }
 
@@ -222,6 +231,7 @@ async def test_submit_waits_for_the_page_and_fills_again_what_it_cleared(
         "first_name": "Asha",
         "email": "asha@example.com",
         "q_office": "Yes",
+        "country": "IN",  # the picker shows "+91", not "India", once picked
         "why": "To make AI systems safer.",
     }
 
@@ -250,6 +260,59 @@ async def test_an_option_the_combobox_lacks_stops_before_submit(site: str, tmp_p
     )  # fmt: skip
     assert not result.clicked and not result.confirmed and _Handler.posts == []
     assert result.error is not None and 'No option "Maybe"' in result.error
+
+
+@needs_browser
+async def test_a_spam_check_error_is_reported_as_not_sent(site: str, tmp_path: Path) -> None:
+    """The Linear (Ashby) failure: no confirmation, and an error banner JAP didn't read."""
+    read = await read_form(f"{site}/ashby_spam.html")
+    _Handler.posts.clear()
+    result = await submit_form(
+        f"{site}/ashby_spam.html", read.fields,
+        {"_systemfield_name": "Asha Rao", "_systemfield_email": "asha@example.com"}, {},
+        tmp_path / "s.png", tmp_path / "t.zip",
+    )  # fmt: skip
+    assert result.clicked and result.rejected and not result.confirmed
+    assert result.error is not None and "flagged as possible spam" in result.error
+    assert _Handler.posts == []
+
+
+@needs_browser
+async def test_yes_no_buttons_are_a_question_and_get_clicked(site: str, tmp_path: Path) -> None:
+    """The Linear (Ashby) failure: a required Yes/No question JAP didn't see."""
+    read = await read_form(f"{site}/ashby_buttons.html")
+    tz = next(f for f in read.fields if f.widget == "buttons")
+    assert (tz.label, tz.type, tz.required, tz.options) == (
+        "Are you based in a US equivalent timezone?", "radio", True, ["Yes", "No"],
+    )  # fmt: skip
+    assert [f.label for f in read.fields] == ["Name", tz.label]  # not "Upload file"
+    _Handler.posts.clear()
+    result = await submit_form(
+        f"{site}/ashby_buttons.html", read.fields,
+        {"_systemfield_name": "Asha Rao", tz.key: "No"}, {},
+        tmp_path / "s.png", tmp_path / "t.zip",
+    )  # fmt: skip
+    assert result.confirmed, result.error
+    assert _Handler.posts[-1] == {"_systemfield_name": "Asha Rao", "q_tz": "No"}
+
+    _Handler.posts.clear()
+    result = await submit_form(
+        f"{site}/ashby_buttons.html", read.fields, {"_systemfield_name": "Asha Rao"}, {},
+        tmp_path / "s2.png", tmp_path / "t2.zip",
+    )  # fmt: skip
+    assert result.clicked and result.rejected and _Handler.posts == []
+    assert result.error is not None and "This field is required" in result.error
+
+
+def test_confirmation_wording() -> None:
+    for text in [
+        "Thank you for applying to Linear!",
+        "Your application was successfully submitted. We'll be in touch.",
+        "Application submitted",
+        "We've received your application",
+    ]:
+        assert CONFIRMATION.search(text), text
+    assert not CONFIRMATION.search("Submit application")
 
 
 def test_contact_rules() -> None:

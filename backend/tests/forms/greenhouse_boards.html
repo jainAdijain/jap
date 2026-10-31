@@ -18,6 +18,14 @@
     <input type="hidden" name="q_office" value="">
     <div class="menu" role="listbox" hidden></div>
   </div>
+  <div class="select phone-country">
+    <label for="country">Country<span>*</span></label>
+    <div class="control"><div class="shown"></div>
+      <input type="text" id="country" role="combobox" aria-required="true" aria-expanded="false" autocomplete="off">
+    </div>
+    <input type="hidden" name="country" value="">
+    <div class="menu" role="listbox" hidden></div>
+  </div>
   <label for="why">Why Anthropic?<span>*</span></label>
   <textarea id="why" name="why" aria-required="true"></textarea>
   <button type="submit">Submit application</button>
@@ -31,38 +39,48 @@
     first.addEventListener('input', () => setTimeout(() => { first.value = '' }, 300), { once: true });
     document.body.dataset.hydrated = '1';
   });
-  const box = document.getElementById('q_office');
-  const menu = document.querySelector('.menu');
-  const hidden = document.querySelector('input[type=hidden][name=q_office]');
-  const shown = document.querySelector('.shown');
-  const options = ['Yes', 'No'];
-  const render = () => {
-    const q = box.value.toLowerCase();
-    menu.innerHTML = '';
-    for (const o of options.filter((o) => o.toLowerCase().includes(q))) {
-      const d = document.createElement('div');
-      d.setAttribute('role', 'option');
-      d.textContent = o;
-      d.addEventListener('mousedown', (e) => {
-        e.preventDefault();
-        hidden.value = o; shown.textContent = o; box.value = ''; menu.hidden = true;
-        box.removeAttribute('aria-invalid');
-      });
-      menu.appendChild(d);
-    }
-    menu.hidden = false;
+  // react-select-like dropdowns. The phone country picker shows only the dialling code
+  // once a country is picked, not the country's name.
+  const combo = (wrap, options, shownOf, valueOf) => {
+    const box = wrap.querySelector('input[role=combobox]');
+    const menu = wrap.querySelector('.menu');
+    const hidden = wrap.querySelector('input[type=hidden]');
+    const shown = wrap.querySelector('.shown');
+    const render = () => {
+      const q = box.value.toLowerCase();
+      menu.innerHTML = '';
+      for (const o of options.filter((o) => o.toLowerCase().includes(q))) {
+        const d = document.createElement('div');
+        d.setAttribute('role', 'option');
+        d.textContent = o;
+        d.addEventListener('mousedown', (e) => {
+          e.preventDefault();
+          hidden.value = valueOf(o); shown.textContent = shownOf(o); box.value = ''; menu.hidden = true;
+          box.removeAttribute('aria-invalid');
+        });
+        menu.appendChild(d);
+      }
+      menu.hidden = false;
+    };
+    box.addEventListener('focus', render);
+    box.addEventListener('click', render);
+    box.addEventListener('input', render);
+    box.addEventListener('keydown', (e) => { if (e.key === 'Escape') menu.hidden = true; });
+    box.addEventListener('blur', () => { box.value = ''; menu.hidden = true; });
+    return { box, hidden };
   };
-  box.addEventListener('focus', render);
-  box.addEventListener('click', render);
-  box.addEventListener('input', render);
-  box.addEventListener('keydown', (e) => { if (e.key === 'Escape') menu.hidden = true; });
-  box.addEventListener('blur', () => { box.value = ''; menu.hidden = true; });
+  const office = combo(document.querySelector('.select:not(.phone-country)'), ['Yes', 'No'], (o) => o, (o) => o);
+  const codes = { India: ['+91', 'IN'], Indonesia: ['+62', 'ID'], 'United States': ['+1', 'US'] };
+  const country = combo(document.querySelector('.phone-country'), Object.keys(codes),
+    (o) => codes[o][0], (o) => codes[o][1]);
   document.getElementById('application-form').addEventListener('submit', (e) => {
     let bad = false;
     for (const el of document.querySelectorAll('#first_name, #email, #why')) {
       if (!el.value.trim()) { el.setAttribute('aria-invalid', 'true'); bad = true; }
     }
-    if (!hidden.value) { box.setAttribute('aria-invalid', 'true'); bad = true; }
+    for (const c of [office, country]) {
+      if (!c.hidden.value) { c.box.setAttribute('aria-invalid', 'true'); bad = true; }
+    }
     if (bad) e.preventDefault();
   });
 </script></body></html>
