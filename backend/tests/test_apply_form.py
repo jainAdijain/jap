@@ -5,6 +5,7 @@ forms, in a real headless Chromium. Skipped when Chromium is not installed (CI i
 import threading
 import time
 from collections.abc import Iterator
+from datetime import datetime
 from email.parser import BytesParser
 from email.policy import default
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -316,6 +317,44 @@ async def test_an_emailed_security_code_is_not_sent(site: str, tmp_path: Path) -
     assert result.clicked and result.rejected and result.needs_code and not result.confirmed
     assert result.error is not None and "security code" in result.error
     assert _Handler.posts == []
+
+
+@needs_browser
+async def test_an_emailed_security_code_is_typed_in_and_sent(site: str, tmp_path: Path) -> None:
+    """A5: the code read from JAP's mailbox goes into the boxes, then Submit once more."""
+    read = await read_form(f"{site}/greenhouse_code.html")
+    asked: list[tuple[datetime, int]] = []
+
+    async def get_code(since: datetime, length: int) -> str | None:
+        asked.append((since, length))
+        return "Ab3dE5fG"
+
+    _Handler.posts.clear()
+    result = await submit_form(
+        f"{site}/greenhouse_code.html", read.fields, {"first_name": "Asha"}, {},
+        tmp_path / "s.png", tmp_path / "t.zip", get_code,
+    )  # fmt: skip
+    assert result.confirmed, result.error
+    assert [p["security_code"] for p in _Handler.posts] == ["Ab3dE5fG"]
+    assert len(asked) == 1 and asked[0][1] == 8
+
+
+@needs_browser
+async def test_no_code_in_time_or_a_wrong_code_sends_nothing(site: str, tmp_path: Path) -> None:
+    read = await read_form(f"{site}/greenhouse_code.html")
+    for code, said in [(None, "No security code reached"), ("Zz9zZz9z", "did not take")]:
+
+        async def get_code(since: datetime, length: int, code: str | None = code) -> str | None:
+            return code
+
+        _Handler.posts.clear()
+        result = await submit_form(
+            f"{site}/greenhouse_code.html", read.fields, {"first_name": "Asha"}, {},
+            tmp_path / "s.png", tmp_path / "t.zip", get_code,
+        )  # fmt: skip
+        assert result.rejected and result.needs_code and not result.confirmed
+        assert result.error is not None and said in result.error
+        assert _Handler.posts == []
 
 
 def test_confirmation_wording() -> None:

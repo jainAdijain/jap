@@ -180,7 +180,7 @@ async def test_edited_letter_is_what_is_sent_and_attached(
 
     async def fake_submit(
         url: str, fields: list[FormField], answers: dict[str, str], files: dict[str, Any],
-        shot: Path, trace: Path,
+        shot: Path, trace: Path, get_code: Any = None,
     ) -> SubmitResult:  # fmt: skip
         up = files["cover_file"]
         sent.update(name=up.name, mime=up.mime, pdf=up.path.read_bytes())

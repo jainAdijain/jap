@@ -343,7 +343,7 @@ async def test_approve_submits_once_and_freezes(
 
     async def fake_submit(
         url: str, fields: list[FormField], answers: dict[str, str], files: dict[str, Any],
-        shot: Path, trace: Path,
+        shot: Path, trace: Path, get_code: Any = None,
     ) -> SubmitResult:  # fmt: skip
         calls.append({"url": url, "answers": answers, "files": sorted(files)})
         write_shot(shot)

@@ -263,6 +263,24 @@ https://myaccount.google.com/apppasswords (needs 2-Step Verification). An older 
 After changing `.env`, run `make restart`. A send that fails is retried, then logged; the job
 stays Applied and its panel says the confirmation email has not gone out.
 
+## Greenhouse security codes
+
+Greenhouse sometimes asks for an 8-character code it emails before it takes an application
+(PRD A5). JAP reads that code from its own mailbox (the one in `.env`) over IMAP, types it in
+and presses Submit once more. Set it up once:
+
+1. In Gmail, Settings, Forwarding and POP/IMAP, add your JAP mailbox as a forwarding address.
+   Gmail emails it a confirmation link: open that email in the JAP mailbox (GoDaddy webmail)
+   and click it.
+2. In Gmail, create a filter: From `greenhouse`, Has the words `security code`, then Forward it
+   to the JAP mailbox.
+3. `make code-mail-check` logs in over IMAP and counts the Greenhouse emails it can see.
+
+GoDaddy's IMAP server is the default (`IMAP_HOST=imap.secureserver.net`, 993, SSL); for Gmail
+use `IMAP_HOST=imap.gmail.com`. JAP uses only Greenhouse emails that arrive after its Submit,
+waits up to 3 minutes, and never stores the code or sends it to a model. No code in time: nothing
+was sent and the job becomes Apply yourself.
+
 ## Make targets
 
 | Target | Does |
@@ -276,6 +294,7 @@ stays Applied and its panel says the confirmation email has not gone out.
 | `make seed` | Load `seed/companies.yaml` and `seed/skills.yaml` |
 | `make test` | ruff, mypy, pytest for app; lint and build for ui |
 | `make backup` / `make restore FILE=...` | Dump to / restore from `data/backups/` (the app also makes one every day) |
+| `make code-mail-check` | Log in to the mailbox over IMAP and count the Greenhouse emails it holds (security codes, PRD A5) |
 | `make qa` | Dedup QA set: place the 106 labelled job pairs and print the accuracy |
 | `make form-check` | Read one live form per ATS now (the weekly form test); nothing is submitted |
 | `make email-test TO=...` | Send one test email from the mailbox in `.env` |
@@ -300,6 +319,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.12.0 | 31 Oct 2026 | Greenhouse emailed security code (PRD 1.11, A5): when the form asks for the code it emailed, JAP reads it from its own mailbox over IMAP (`IMAP_HOST`, `IMAP_PORT`, `IMAP_SSL`, same login as SMTP) after a Gmail filter forwards it there, using only Greenhouse emails that arrive after Submit and waiting up to 3 minutes; types it into the boxes and presses Submit once more; no code, nowhere to type it or a code the site refuses means nothing was sent and the job becomes Apply yourself; `make code-mail-check`; Greenhouse security codes section |
 | 0.11.2 | 31 Oct 2026 | Apply fixes from the first real Automatic runs. Greenhouse: a combobox counts as filled when it changed from the fresh page (the phone Country picker shows only "+91"), values are read back after a short settle, a phone the page reformats still matches, and a field that won't keep its value is named with what the page shows. Ashby: Yes/No questions made of buttons are read as a choice (answer bank or Needs input) and filled by clicking the button; the page's own error text after Submit is in the error, and a "required" or spam-check error counts as not sent. "Successfully submitted" wording is taken as a confirmation. Greenhouse's emailed security code step is recognised and reported as not sent, to apply yourself |
 | 0.11.1 | 31 Oct 2026 | Fix "OpenRouter 402" on drafted answers: every model call now sets `max_tokens` (about 3 characters a token plus room for the JSON for an answer, a fixed cap per purpose otherwise) instead of reserving the model's whole 64,000-token output against the credits; a 402 shows as "OpenRouter is out of credits" without the key link, stops further drafts on the same form, fails the cover letter without a retry and does not retry posting extraction or resume parsing; a reply cut off at the cap is reported as such |
 | 0.11.0 | 31 Oct 2026 | Email from any SMTP mailbox (PRD 1.10, E4): `SMTP_USERNAME` and `SMTP_PASSWORD` with GoDaddy Professional Email as the default server (`smtpout.secureserver.net`, 465, SSL), Gmail with an app password as the alternative, old `GMAIL_*` settings still read; `make email-test`; Sending email section |

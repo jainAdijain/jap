@@ -32,6 +32,7 @@ from database.models import (
 from llm import PersonalDataBlocked, SpendCapReached
 from llm.client import ModelCallError, OutOfCredits
 from pipeline.apply import fields as rules
+from pipeline.apply import security_code
 from pipeline.apply.answers import bank_answer, draft_answer, pick_option
 from pipeline.apply.form import FormError, FormField, FormRead, Upload, read_form, submit_form
 from pipeline.cover_letter import LetterFailed, generate, upload_name, write_pdf
@@ -536,7 +537,11 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
         files[key] = Upload(Path(app.cover_letter_path), name, "application/pdf")
     shot = data_path("screenshots", f"{app_id}.png")
     trace = data_path("traces", f"{app_id}.zip")
-    result = await submit_form(url, fields, answers, files, shot, trace)
+    site = security_code.site_of(url)
+    settings = get_settings()
+    reads_mail = site is not None and bool(settings.email_from and settings.email_password)
+    get_code = security_code.waiter(site) if reads_mail and site else None
+    result = await submit_form(url, fields, answers, files, shot, trace, get_code)
     app = await _app(session, app_id, lock=True)
     if not result.clicked:
         app.submit_started_at = None

@@ -12,7 +12,7 @@ OLLAMA_URL ?= http://127.0.0.1:11434
 EMBED_MODEL ?= nomic-embed-text
 
 .DEFAULT_GOAL := help
-.PHONY: help env start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore form-check email-test ollama-check llm-check demo demo-clear
+.PHONY: help env start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore form-check email-test code-mail-check ollama-check llm-check demo demo-clear
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
@@ -90,6 +90,9 @@ form-check: ## Read one live form per ATS now (the weekly form test; nothing is 
 email-test: ## Send one test email from the mailbox in .env: make email-test TO=<address>
 	@test -n "$(TO)" || { echo "Usage: make email-test TO=you@example.com"; exit 1; }
 	$(COMPOSE) exec app python -m pipeline.notify test "$(TO)"
+
+code-mail-check: ## Log in to the mailbox over IMAP and count Greenhouse emails (security codes)
+	$(COMPOSE) exec app python -m pipeline.apply.security_code
 
 llm-check: ## One test call to each OpenRouter model (needs OPENROUTER_API_KEY in .env)
 	$(COMPOSE) exec app python -m llm.check
