@@ -304,6 +304,20 @@ async def test_yes_no_buttons_are_a_question_and_get_clicked(site: str, tmp_path
     assert result.error is not None and "This field is required" in result.error
 
 
+@needs_browser
+async def test_an_emailed_security_code_is_not_sent(site: str, tmp_path: Path) -> None:
+    """The Anthropic retry: every field filled, then Greenhouse asked for an emailed code."""
+    read = await read_form(f"{site}/greenhouse_code.html")
+    _Handler.posts.clear()
+    result = await submit_form(
+        f"{site}/greenhouse_code.html", read.fields, {"first_name": "Asha"}, {},
+        tmp_path / "s.png", tmp_path / "t.zip",
+    )  # fmt: skip
+    assert result.clicked and result.rejected and result.needs_code and not result.confirmed
+    assert result.error is not None and "security code" in result.error
+    assert _Handler.posts == []
+
+
 def test_confirmation_wording() -> None:
     for text in [
         "Thank you for applying to Linear!",

@@ -81,6 +81,9 @@ BUTTONS_JS = """([question, answer]) => {
   }
   return false;
 }"""
+# Greenhouse's check for automated browsers: after Submit it emails a security code and
+# shows boxes for it. Nothing is sent until the code is typed in.
+SECURITY_CODE = re.compile(r"(security|verification) code|enter the \d+-character code", re.I)
 # Words in such text that mean the employer's site turned the submission away.
 NOT_SENT = re.compile(
     r"spam|captcha|robot|automated|try again|could not be submitted|failed|required|missing",
@@ -127,6 +130,8 @@ class SubmitResult:
     error: str | None = None
     # Pressed, but the form marked fields invalid and stayed: nothing was sent
     rejected: bool = False
+    # The site emailed a security code and waits for it: nothing was sent
+    needs_code: bool = False
 
 
 class FormError(Exception):
@@ -440,6 +445,16 @@ async def submit_form(
             shot = True
             if CONFIRMATION.search(body) or form_left:
                 return SubmitResult(confirmed=True, screenshot=True, clicked=True)
+            if SECURITY_CODE.search(body):
+                return SubmitResult(
+                    confirmed=False,
+                    screenshot=True,
+                    clicked=True,
+                    rejected=True,
+                    needs_code=True,
+                    error="The site emailed you a security code and wants it before it takes "
+                    "the application, so nothing was sent. Apply yourself from the posting",
+                )
             keys = {f.key.removeprefix("id:"): f.label for f in fields}
             invalid = [keys[k] for k in await page.evaluate(INVALID_JS) if k in keys]
             if invalid:
