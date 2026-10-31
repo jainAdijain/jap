@@ -1,0 +1,29 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>Product Engineer</title></head><body>
+<!-- Like Linear's Ashby form: a required Yes/No question made of two buttons and a hidden
+     value, a lone "Upload file" button that is not a question, and the page's own check
+     that shows "This field is required" and keeps the form when it is left unanswered. -->
+<form class="ashby-application-form" method="post" action="/submit" enctype="multipart/form-data" novalidate>
+<div><button type="button">Upload file</button></div>
+<div><label for="_systemfield_name">Name<span>*</span></label><input id="_systemfield_name" name="_systemfield_name" required></div>
+<div class="ashby-application-form-field-entry">
+  <label class="ashby-application-form-question-title">Are you based in a US equivalent timezone?<span>*</span></label>
+  <div class="yesno"><button type="button">Yes</button><button type="button">No</button></div>
+  <input type="hidden" name="q_tz" value="">
+  <p class="field-error" hidden></p>
+</div>
+<button type="submit">Submit Application</button></form>
+<script>
+  const hidden = document.querySelector('input[name=q_tz]');
+  for (const b of document.querySelectorAll('.yesno button')) {
+    b.addEventListener('click', () => { hidden.value = b.textContent; });
+  }
+  document.querySelector('form').addEventListener('submit', (e) => {
+    if (!hidden.value) {
+      e.preventDefault();
+      const err = document.querySelector('.field-error');
+      err.textContent = 'This field is required';
+      err.hidden = false;
+    }
+  });
+</script></body></html>

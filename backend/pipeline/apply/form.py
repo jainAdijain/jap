@@ -24,9 +24,11 @@ from playwright.async_api import Error, FilePayload, Page, async_playwright
 
 NAV_TIMEOUT_MS = 30_000
 SETTLE_TIMEOUT_MS = 15_000
+RECHECK_MS = 1_000
 CONFIRMATION = re.compile(
     r"thank(s| you)[^.]{0,40}(appl|interest|submitt)|application (has been |was )?"
-    r"(submitted|received|sent)|we(?:'ve| have) received your application",
+    r"(successfully )?(submitted|received|sent)|we(?:'ve| have) received your application"
+    r"|successfully (submitted|applied)",
     re.I,
 )
 
@@ -40,17 +42,53 @@ OPTION_LABEL_JS = """(o) => {
 }"""
 REQUIRED_MARK = re.compile(r"\s*([*✱★]|\(required\)|required)\s*$", re.I)
 
-# The text a combobox shows once an option is picked: the control around its input.
-COMBO_SHOWN_JS = """(el) => {
-  let p = el.parentElement;
+# What a combobox shows: the text of the control around its input, and any hidden input
+# near it that holds the picked value. A pick shows as a change from the fresh page.
+COMBO_STATE_JS = """(el) => {
+  let shown = '', p = el.parentElement, top = p;
   for (let i = 0; i < 4 && p; i++, p = p.parentElement) {
     const t = (p.innerText || '').replace(/\\s+/g, ' ').trim();
-    if (t) return t;
+    if (t && !shown) shown = t;
+    top = p;
   }
-  return el.value || '';
+  const hidden = [...(top ? top.querySelectorAll('input[type=hidden]') : [])]
+    .map((h) => h.value).filter(Boolean).join(',');
+  return [shown, hidden];
 }"""
 SELECTED_JS = "(el) => el.selectedIndex >= 0 ? [el.options[el.selectedIndex].text, el.value] : []"
 # Fields the page marks invalid after Submit: the form refused it, so nothing was sent.
+# Error text the page shows after Submit (a banner, an alert, a field message).
+ERRORS_JS = """() => [...document.querySelectorAll(
+    '[role="alert"], [aria-live="assertive"], [class*="error" i], [class*="invalid" i]')]
+  .filter((el) => el.offsetParent !== null && !el.querySelector('[role="alert"]'))
+  .map((el) => (el.innerText || '').replace(/\\s+/g, ' ').trim()).filter(Boolean)"""
+# Click the button whose text is the answer, in the button group under the question
+# (read_form.js keys such a field "buttons:<question>"). True when one was clicked.
+BUTTONS_JS = """([question, answer]) => {
+  const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
+  const strip = (s) => clean(s).replace(/\\s*[*✱★]\\s*$/, '');
+  for (const b of document.querySelectorAll('button[type="button"]')) {
+    if (clean(b.innerText) !== clean(answer)) continue;
+    let p = b.parentElement;
+    for (let i = 0; i < 6 && p; i++, p = p.parentElement) {
+      const titles = p.querySelectorAll('label, legend, [class*="title" i], [class*="label" i]');
+      const q = strip(question);
+      if ([...titles].some((l) => !l.contains(b) && strip(l.innerText) === q)) {
+        b.click();
+        return true;
+      }
+    }
+  }
+  return false;
+}"""
+# Greenhouse's check for automated browsers: after Submit it emails a security code and
+# shows boxes for it. Nothing is sent until the code is typed in.
+SECURITY_CODE = re.compile(r"(security|verification) code|enter the \d+-character code", re.I)
+# Words in such text that mean the employer's site turned the submission away.
+NOT_SENT = re.compile(
+    r"spam|captcha|robot|automated|try again|could not be submitted|failed|required|missing",
+    re.I,
+)
 INVALID_JS = """() => [...document.querySelectorAll('[aria-invalid="true"], :invalid')]
   .filter((el) => ['INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName))
   .map((el) => el.name || el.id).filter(Boolean)"""
@@ -92,6 +130,8 @@ class SubmitResult:
     error: str | None = None
     # Pressed, but the form marked fields invalid and stayed: nothing was sent
     rejected: bool = False
+    # The site emailed a security code and waits for it: nothing was sent
+    needs_code: bool = False
 
 
 class FormError(Exception):
@@ -246,7 +286,10 @@ async def _combo(page: Page, f: FormField, value: str) -> None:
 
 async def _fill(page: Page, f: FormField, value: str, files: dict[str, Upload]) -> None:
     loc = page.locator(selector(f.key)).first
-    if f.widget == "combobox":
+    if f.widget == "buttons":
+        if value and not await page.evaluate(BUTTONS_JS, [f.label, value]):
+            raise FormError(f'No button "{value}" for "{f.label}"')
+    elif f.widget == "combobox":
         await _combo(page, f, value)
     elif f.type == "file":
         if f.key in files:
@@ -267,31 +310,54 @@ async def _fill(page: Page, f: FormField, value: str, files: dict[str, Upload]) 
 
 def _same(shown: str, value: str) -> bool:
     a, b = " ".join(shown.split()).lower(), " ".join(value.split()).lower()
-    return bool(a) and (a == b or b.startswith(a) or b in a)  # maxlength may cut a long answer
+    if a and (a == b or b.startswith(a) or b in a):  # maxlength may cut a long answer
+        return True
+    da, db = re.sub(r"\D", "", a), re.sub(r"\D", "", b)  # a phone the page reformatted
+    return len(da) >= 7 and len(db) >= 7 and da[-10:] == db[-10:]
+
+
+def _anchor(fields: list[FormField]) -> FormField | None:
+    """A field with an element of its own, to tell whether the form is on the page."""
+    return next((f for f in fields if f.widget != "buttons"), None)
+
+
+async def _combo_state(page: Page, f: FormField) -> tuple[str, str]:
+    shown, hidden = await page.locator(selector(f.key)).first.evaluate(COMBO_STATE_JS)
+    return str(shown), str(hidden)
 
 
 async def _unfilled(
-    page: Page, fields: list[FormField], answers: dict[str, str]
-) -> list[FormField]:
-    """The fields whose value on the page is not the one JAP put there."""
-    out: list[FormField] = []
+    page: Page,
+    fields: list[FormField],
+    answers: dict[str, str],
+    fresh: dict[str, tuple[str, str]],
+) -> list[tuple[FormField, str]]:
+    """The fields whose value on the page is not the one JAP put there, with what the
+    page shows instead. A combobox counts as filled when it shows the answer, or when it
+    changed from how the fresh page showed it (a country picker may show only "+91")."""
+    out: list[tuple[FormField, str]] = []
     for f in fields:
         value = answers.get(f.key, "")
         if not value or f.type in ("file", "radio", "checkbox", "checkboxes"):
-            continue
+            continue  # a button group is radio too: clicking it is all JAP can check
         loc = page.locator(selector(f.key)).first
+        shown = ""
         try:
             if f.widget == "combobox":
-                ok = _same(str(await loc.evaluate(COMBO_SHOWN_JS)), value)
+                state = await _combo_state(page, f)
+                shown = state[0]
+                ok = _same(shown, value) or (any(state) and state != fresh.get(f.key))
             elif f.type == "select":
                 picked = [str(x) for x in await loc.evaluate(SELECTED_JS)]
+                shown = picked[0] if picked else ""
                 ok = any(_same(p, value) for p in picked)
             else:
-                ok = _same(await loc.input_value(), value)
+                shown = await loc.input_value()
+                ok = _same(shown, value)
         except Error:
             ok = False
         if not ok:
-            out.append(f)
+            out.append((f, shown))
     return out
 
 
@@ -300,22 +366,31 @@ async def _fill_all(
 ) -> None:
     """Fill every field, read the values back, fill again what didn't stick (a page that
     was still starting up clears it), and stop before Submit if anything is still empty."""
-    if fields:
-        await page.locator(selector(fields[0].key)).first.wait_for(state="attached")
+    if anchor := _anchor(fields):
+        await page.locator(selector(anchor.key)).first.wait_for(state="attached")
+    fresh = {
+        f.key: await _combo_state(page, f)
+        for f in fields
+        if f.widget == "combobox" and answers.get(f.key)
+    }
     for f in fields:
         value = answers.get(f.key, "")
         if value or f.type == "file":
             await _fill(page, f, value, files)
     for _ in range(2):
-        missing = await _unfilled(page, fields, answers)
+        await page.wait_for_timeout(RECHECK_MS)  # a re-render after typing clears fields
+        missing = await _unfilled(page, fields, answers, fresh)
         if not missing:
             return
-        await page.wait_for_timeout(1_000)
-        for f in missing:
+        for f, _shown in missing:
             await _fill(page, f, answers[f.key], files)
-    missing = await _unfilled(page, fields, answers)
+    await page.wait_for_timeout(RECHECK_MS)
+    missing = await _unfilled(page, fields, answers, fresh)
     if missing:
-        labels = "; ".join(f.label for f in missing)
+        labels = "; ".join(
+            f'{f.label} (wanted "{answers[f.key][:40]}", the page shows "{shown[:40]}")'
+            for f, shown in missing
+        )
         raise FormError(f"These fields would not keep their value, so nothing was sent: {labels}")
 
 
@@ -364,11 +439,22 @@ async def submit_form(
             except Error:
                 pass
             body = await page.inner_text("body")
-            form_left = bool(fields) and await page.locator(selector(fields[0].key)).count() == 0
+            anchor = _anchor(fields)
+            form_left = anchor is not None and await page.locator(selector(anchor.key)).count() == 0
             await page.screenshot(path=str(screenshot), full_page=True)
             shot = True
             if CONFIRMATION.search(body) or form_left:
                 return SubmitResult(confirmed=True, screenshot=True, clicked=True)
+            if SECURITY_CODE.search(body):
+                return SubmitResult(
+                    confirmed=False,
+                    screenshot=True,
+                    clicked=True,
+                    rejected=True,
+                    needs_code=True,
+                    error="The site emailed you a security code and wants it before it takes "
+                    "the application, so nothing was sent. Apply yourself from the posting",
+                )
             keys = {f.key.removeprefix("id:"): f.label for f in fields}
             invalid = [keys[k] for k in await page.evaluate(INVALID_JS) if k in keys]
             if invalid:
@@ -380,11 +466,21 @@ async def submit_form(
                     error="The form refused the submission, so nothing was sent. It marked: "
                     + "; ".join(dict.fromkeys(invalid)),
                 )
+            said = "; ".join(dict.fromkeys(await page.evaluate(ERRORS_JS)))[:300]
+            if said and NOT_SENT.search(said):
+                return SubmitResult(
+                    confirmed=False,
+                    screenshot=True,
+                    clicked=True,
+                    rejected=True,
+                    error=f'The employer\'s site turned the submission away: "{said}"',
+                )
             return SubmitResult(
                 confirmed=False,
                 screenshot=True,
                 clicked=True,
-                error="Submitted, but the page did not confirm the application",
+                error="Submitted, but the page did not confirm the application"
+                + (f'. It says: "{said}"' if said else ""),
             )
         except (Error, FormError) as exc:
             if not shot:
