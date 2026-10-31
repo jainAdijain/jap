@@ -29,6 +29,19 @@ PROMPTS = Path(__file__).parent / "prompts"
 Out = TypeVar("Out", bound=BaseModel)
 Slot = Literal["extract", "write"]
 
+# Output caps per purpose, in tokens: room for the JSON the purpose asks for and some
+# slack, never the model's whole output limit (llm/client.py build_body).
+MAX_TOKENS = {
+    "answer": 1_500,
+    "check": 200,
+    "claim_check": 2_000,
+    "cover_letter": 2_000,
+    "extract": 4_000,
+    "resume_parse": 6_000,
+    "same_job": 500,
+}
+DEFAULT_MAX_TOKENS = 4_000
+
 
 class SpendCapReached(Exception):
     """This month's model spend has reached JAP_MONTHLY_COST_CAP_USD."""
@@ -84,6 +97,7 @@ async def call(
     temperature: float = 0.0,
     generic_redact: frozenset[str] = frozenset(),
     version: str = "v1",
+    max_tokens: int | None = None,
 ) -> CallResult[Out]:
     settings = get_settings()
     model = settings.jap_model_extract if slot == "extract" else settings.jap_model_write
@@ -96,7 +110,8 @@ async def call(
         redacted[key] = r.text
         links.update(r.links)
     user = prompt.user.format(**redacted)
-    body = client.build_body(model, prompt.system, user, _schema(output), temperature)
+    cap = max_tokens or MAX_TOKENS.get(purpose, DEFAULT_MAX_TOKENS)
+    body = client.build_body(model, prompt.system, user, _schema(output), temperature, cap)
     body_text = json.dumps(body, ensure_ascii=False)
     input_sha = hashlib.sha256(body_text.encode()).hexdigest()
 

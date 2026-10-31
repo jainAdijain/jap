@@ -16,7 +16,9 @@ No model is involved here: which fields are required comes from the page itself.
 
 import asyncio
 import re
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -84,6 +86,10 @@ BUTTONS_JS = """([question, answer]) => {
 # Greenhouse's check for automated browsers: after Submit it emails a security code and
 # shows boxes for it. Nothing is sent until the code is typed in.
 SECURITY_CODE = re.compile(r"(security|verification) code|enter the \d+-character code", re.I)
+CODE_LENGTH = re.compile(r"(\d+)[- ]character code", re.I)
+# (when Submit was pressed, code length) -> the emailed code, or None (A5)
+GetCode = Callable[[datetime, int], Awaitable[str | None]]
+CODE_INPUT = re.compile(r"code|otp|verification|security", re.I)
 # Words in such text that mean the employer's site turned the submission away.
 NOT_SENT = re.compile(
     r"spam|captcha|robot|automated|try again|could not be submitted|failed|required|missing",
@@ -394,6 +400,41 @@ async def _fill_all(
         raise FormError(f"These fields would not keep their value, so nothing was sent: {labels}")
 
 
+async def _wait_for_answer(page: Page) -> None:
+    try:
+        await page.wait_for_load_state("networkidle", timeout=SETTLE_TIMEOUT_MS)
+    except Error:
+        pass
+    try:
+        await page.wait_for_function(
+            "(re) => new RegExp(re, 'i').test(document.body.innerText)",
+            arg=CONFIRMATION.pattern,
+            timeout=SETTLE_TIMEOUT_MS,
+        )
+    except Error:
+        pass
+
+
+async def _enter_code(page: Page, code: str) -> bool:
+    """Type the code into the boxes the site shows: one box per character, or one field
+    named for the code. False when there is nowhere to type it."""
+    boxes = page.locator('input[maxlength="1"]:visible')
+    if await boxes.count() >= len(code):
+        for i, ch in enumerate(code):
+            await boxes.nth(i).fill(ch)
+        return True
+    inputs = page.locator("input:visible")
+    for i in range(await inputs.count()):
+        box = inputs.nth(i)
+        names = " ".join(
+            [await box.get_attribute(a) or "" for a in ("name", "id", "aria-label", "autocomplete")]
+        )
+        if CODE_INPUT.search(names) and not await box.input_value():
+            await box.fill(code)
+            return True
+    return False
+
+
 async def submit_form(
     url: str,
     fields: list[FormField],
@@ -401,10 +442,12 @@ async def submit_form(
     files: dict[str, Upload],
     screenshot: Path,
     trace: Path,
+    get_code: GetCode | None = None,
 ) -> SubmitResult:
     """Open the form fresh, fill the stored answers, attach files, submit, and screenshot
     whatever page comes back. Confirmed only when the page says the application was
-    received (or the form is gone)."""
+    received (or the form is gone). When the site asks for a code it emailed and get_code
+    is given, the code is typed in and Submit pressed once more (A5)."""
     screenshot.parent.mkdir(parents=True, exist_ok=True)
     trace.parent.mkdir(parents=True, exist_ok=True)
     async with async_playwright() as pw:
@@ -425,20 +468,27 @@ async def submit_form(
             if await button.count() == 0:
                 raise FormError("No submit button on the form")
             clicked = True
+            pressed_at = datetime.now(UTC)
             await button.first.click()
-            try:
-                await page.wait_for_load_state("networkidle", timeout=SETTLE_TIMEOUT_MS)
-            except Error:
-                pass
-            try:
-                await page.wait_for_function(
-                    "(re) => new RegExp(re, 'i').test(document.body.innerText)",
-                    arg=CONFIRMATION.pattern,
-                    timeout=SETTLE_TIMEOUT_MS,
-                )
-            except Error:
-                pass
+            await _wait_for_answer(page)
             body = await page.inner_text("body")
+            code_error = None
+            if (
+                get_code is not None
+                and SECURITY_CODE.search(body)
+                and not CONFIRMATION.search(body)
+            ):
+                length = int(m.group(1)) if (m := CODE_LENGTH.search(body)) else 8
+                code = await get_code(pressed_at, length)
+                if code is None:
+                    code_error = "No security code reached JAP's mailbox in 3 minutes"
+                elif not await _enter_code(page, code):
+                    code_error = "JAP had the security code but found no boxes to type it in"
+                else:
+                    await button.first.click()  # the one second press, only after a code
+                    await _wait_for_answer(page)
+                    body = await page.inner_text("body")
+                    code_error = "The site did not take the security code"
             anchor = _anchor(fields)
             form_left = anchor is not None and await page.locator(selector(anchor.key)).count() == 0
             await page.screenshot(path=str(screenshot), full_page=True)
@@ -452,7 +502,9 @@ async def submit_form(
                     clicked=True,
                     rejected=True,
                     needs_code=True,
-                    error="The site emailed you a security code and wants it before it takes "
+                    error=(code_error + ", so nothing was sent. Apply yourself from the posting")
+                    if code_error
+                    else "The site emailed you a security code and wants it before it takes "
                     "the application, so nothing was sent. Apply yourself from the posting",
                 )
             keys = {f.key.removeprefix("id:"): f.label for f in fields}

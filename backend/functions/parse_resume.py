@@ -15,7 +15,7 @@ from database.models import Profile, ResumeVersion
 from database.session import get_sessionmaker
 from functions.client import inngest_client
 from llm import PersonalDataBlocked, SpendCapReached, call
-from llm.client import MissingApiKey
+from llm.client import MissingApiKey, OutOfCredits
 from llm.redact import find_links, from_resume_text
 from pipeline.resume import extract_text, normalize_skills, sensitive_from_profile, skill_aliases
 from schemas.resume import ParsedResume
@@ -73,7 +73,7 @@ async def parse_step(version_id: str) -> dict[str, Any]:
                 sensitive=sensitive,
                 generic_redact=frozenset({"resume_text"}),
             )
-        except (PersonalDataBlocked, SpendCapReached, MissingApiKey) as exc:
+        except (PersonalDataBlocked, SpendCapReached, MissingApiKey, OutOfCredits) as exc:
             await _set_error(version_id, str(exc))
             raise inngest.NonRetriableError(str(exc)) from exc
         parsed = result.output

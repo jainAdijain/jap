@@ -2,6 +2,7 @@ import json
 import sys
 from typing import Any
 
+import httpx
 import pytest
 from sqlalchemy import func, select
 
@@ -133,3 +134,51 @@ async def test_spend_cap_stops_calls(db: str, monkeypatch: pytest.MonkeyPatch) -
                 ParsedResume,
                 sensitive=Sensitive(),
             )
+
+
+async def test_every_call_caps_max_tokens(db: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Without a cap OpenRouter reserves the model's whole output (64,000 for Sonnet)
+    against the credits and answers 402 well before they run out."""
+    stub = Stub([GOOD, GOOD])
+    monkeypatch.setattr(client, "chat", stub)
+    async with get_sessionmaker()() as session:
+        await call(
+            session, "resume_parse", {"resume_text": "Python"}, ParsedResume, sensitive=Sensitive()
+        )
+        await call(
+            session, "resume_parse", {"resume_text": "Python"}, ParsedResume,
+            sensitive=Sensitive(), max_tokens=900,
+        )  # fmt: skip
+    assert [b["max_tokens"] for b in stub.bodies] == [6_000, 900]
+
+
+def _openrouter(monkeypatch: pytest.MonkeyPatch, status: int, payload: dict[str, Any]) -> None:
+    real = httpx.AsyncClient
+
+    def fake(**kw: Any) -> Any:
+        transport = httpx.MockTransport(lambda _req: httpx.Response(status, json=payload))
+        return real(transport=transport, **kw)
+
+    monkeypatch.setattr(httpx, "AsyncClient", fake)
+
+
+async def test_402_is_out_of_credits_without_the_key_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    _openrouter(monkeypatch, 402, {"error": {"message": (
+        "This request requires more credits, or fewer max_tokens. You requested up to 64000 "
+        "tokens, but can only afford 62635. To increase, visit "
+        "https://openrouter.ai/workspaces/default/keys/0123abcd and adjust the key's limit."
+    )}})  # fmt: skip
+    body = client.build_body("m", "s", "u", {}, 0.0, 100)
+    with pytest.raises(client.OutOfCredits) as exc:
+        await client.chat("key", body)
+    assert "out of credits" in str(exc.value) and "0123abcd" not in str(exc.value)
+
+
+async def test_a_reply_cut_off_at_max_tokens_is_an_error(monkeypatch: pytest.MonkeyPatch) -> None:
+    _openrouter(monkeypatch, 200, {"choices": [
+        {"message": {"content": '{"answer": "I'}, "finish_reason": "length"}
+    ]})  # fmt: skip
+    with pytest.raises(client.ModelCallError, match="100-token limit"):
+        await client.chat("key", client.build_body("m", "s", "u", {}, 0.0, 100))

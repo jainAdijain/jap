@@ -116,6 +116,8 @@ async def draft_answer(
         temperature=0.3,
         generic_redact=frozenset({"resume_text", "frozen_jd_text"}),
         version="v2",
+        # About 3 characters a token, plus room for the JSON around the answer.
+        max_tokens=min(4_000, limit // 3 + 500),
     )
     out = result.output
     if out.needs_my_fact or not out.answer.strip():

@@ -28,6 +28,10 @@ class Settings(BaseSettings):
     smtp_ssl: bool = True
     smtp_username: str = ""
     smtp_password: str = ""
+    # The same mailbox read over IMAP for a security code a job site emails (A5).
+    imap_host: str = "imap.secureserver.net"
+    imap_port: int = 993
+    imap_ssl: bool = True
     # Older .env files name the Gmail login these; used when SMTP_USERNAME is empty.
     gmail_address: str = ""
     gmail_app_password: str = ""
