@@ -585,3 +585,27 @@ async def test_confirmation_email_once(
     assert len(sent) == 1
     row = sql.execute("SELECT email_sent_at FROM application WHERE id = %s", (app_id,)).fetchone()
     assert row is not None and row[0] is not None  # E3, and allowed on a frozen row
+
+
+async def test_out_of_credits_asks_the_model_once_per_form(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A 402 won't clear by asking again for the next question on the same form."""
+    other = FormField("proud", "What are you most proud of?", "textarea", True, max_chars=600)
+    _fake_form(monkeypatch, [*FORM, WHY, other])
+    calls: list[dict[str, Any]] = []
+
+    async def broke(api_key: str, body: dict[str, Any], wait_s: float = 0) -> Any:
+        calls.append(body)
+        raise client.OutOfCredits(client.OUT_OF_CREDITS)
+
+    monkeypatch.setattr(client, "chat", broke)
+    app_id = await _prepare(setup["listing"])
+    assert _status(sql, app_id)[0] == "needs_input"
+    assert len(calls) == 1 and calls[0]["max_tokens"] == 700  # 600 chars // 3 + 500
+    row = sql.execute(
+        "SELECT pending_questions FROM application WHERE id = %s", (app_id,)
+    ).fetchone()
+    assert row is not None
+    assert [q["key"] for q in row[0]] == ["why", "proud"]
+    assert all("out of credits" in q["reason"] for q in row[0])

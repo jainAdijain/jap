@@ -22,6 +22,17 @@ class MissingApiKey(ModelCallError):
     """OPENROUTER_API_KEY is empty; retrying will not help."""
 
 
+class OutOfCredits(ModelCallError):
+    """OpenRouter answered 402: the account or the key's limit has too few credits left.
+    Retrying will not help until credits are added, so callers stop rather than retry."""
+
+
+OUT_OF_CREDITS = (
+    "OpenRouter is out of credits. Add credits, or raise this key's limit, at "
+    "openrouter.ai/settings/keys"
+)
+
+
 @dataclass
 class ChatResult:
     content: str
@@ -31,12 +42,20 @@ class ChatResult:
 
 
 def build_body(
-    model: str, system: str, user: str, schema: dict[str, Any], temperature: float
+    model: str,
+    system: str,
+    user: str,
+    schema: dict[str, Any],
+    temperature: float,
+    max_tokens: int,
 ) -> dict[str, Any]:
     return {
         "model": model,
         "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
         "temperature": temperature,
+        # Always capped: without it OpenRouter reserves the model's whole output limit
+        # (64,000 for Sonnet) against the credits and answers 402 when they fall short.
+        "max_tokens": max_tokens,
         "response_format": {
             "type": "json_schema",
             "json_schema": {"name": "output", "strict": True, "schema": schema},
@@ -65,12 +84,19 @@ async def chat(api_key: str, body: dict[str, Any], wait_s: float = 120.0) -> Cha
             message = resp.json().get("error", {}).get("message", resp.text)
         except ValueError:
             message = resp.text
+        if resp.status_code == 402:
+            raise OutOfCredits(OUT_OF_CREDITS)
         raise ModelCallError(f"OpenRouter {resp.status_code}: {str(message)[:300]}")
     data = resp.json()
     try:
-        content = data["choices"][0]["message"]["content"]
+        choice = data["choices"][0]
+        content = choice["message"]["content"]
     except (KeyError, IndexError, TypeError) as exc:
         raise ModelCallError("OpenRouter answered without a message") from exc
+    if choice.get("finish_reason") == "length":
+        raise ModelCallError(
+            f"{body.get('model')} stopped at the {body.get('max_tokens')}-token limit"
+        )
     usage = data.get("usage") or {}
     return ChatResult(
         content=content or "",

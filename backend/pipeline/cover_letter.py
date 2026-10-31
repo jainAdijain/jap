@@ -24,7 +24,7 @@ from pydantic import BaseModel, ConfigDict
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from llm import PersonalDataBlocked, SpendCapReached, call
-from llm.client import ModelCallError
+from llm.client import ModelCallError, OutOfCredits
 from llm.redact import PLACEHOLDER_RE, Sensitive, redact, restore
 
 MAX_WORDS = 250
@@ -146,7 +146,7 @@ async def generate(
                 sensitive=sensitive,
                 generic_redact=frozenset({"resume_text", "letter"}),
             )
-        except (SpendCapReached, PersonalDataBlocked) as exc:
+        except (SpendCapReached, PersonalDataBlocked, OutOfCredits) as exc:
             raise LetterFailed(str(exc)) from exc
         except ModelCallError as exc:
             issues = [f"the model failed: {exc}"]

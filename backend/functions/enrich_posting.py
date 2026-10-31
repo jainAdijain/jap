@@ -16,7 +16,7 @@ from database.models import Posting
 from database.session import get_sessionmaker
 from functions.client import inngest_client
 from llm import PersonalDataBlocked, SpendCapReached
-from llm.client import MissingApiKey
+from llm.client import MissingApiKey, OutOfCredits
 from pipeline.dedup import refresh_listings
 from pipeline.enrich import EmbedFailed, embed_posting, extract_posting
 from pipeline.matching import refilter_from_profile
@@ -26,7 +26,7 @@ async def extract_step(posting_id: str) -> dict[str, Any]:
     async with get_sessionmaker()() as session:
         try:
             result = await extract_posting(session, uuid.UUID(posting_id))
-        except (SpendCapReached, MissingApiKey, PersonalDataBlocked) as exc:
+        except (SpendCapReached, MissingApiKey, OutOfCredits, PersonalDataBlocked) as exc:
             raise inngest.NonRetriableError(str(exc)) from exc
         posting = await session.get(Posting, uuid.UUID(posting_id))
         if posting is not None and posting.listing_id is not None and not result.skipped:

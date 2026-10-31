@@ -67,7 +67,7 @@ function Shell() {
         <div className="logo">
           <span className="logo-mark">JAP</span>
           <span className="logo-name">
-            Job Application Pipeline<small>Version 0.11.0</small>
+            Job Application Pipeline<small>Version 0.11.1</small>
           </span>
         </div>
         <nav aria-label="Sections">
