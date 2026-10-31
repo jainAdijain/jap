@@ -12,13 +12,13 @@ OLLAMA_URL ?= http://127.0.0.1:11434
 EMBED_MODEL ?= nomic-embed-text
 
 .DEFAULT_GOAL := help
-.PHONY: help env start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore form-check ollama-check llm-check demo demo-clear
+.PHONY: help env start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore form-check email-test ollama-check llm-check demo demo-clear
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
 
 env: ## Create .env from .env.example if it is missing
-	@test -f .env || { cp .env.example .env; echo "Created .env from .env.example. Add your OpenRouter key and Gmail app password to it."; }
+	@test -f .env || { cp .env.example .env; echo "Created .env from .env.example. Add your OpenRouter key and email password to it."; }
 
 start: env ## Start the stack, wait for /api/health, apply migrations
 	$(COMPOSE) up -d --build
@@ -86,6 +86,10 @@ restore: ## Restore a backup: make restore FILE=data/backups/<file>.sql.gz
 form-check: ## Read one live form per ATS now (the weekly form test; nothing is submitted)
 	@curl -fsS -X POST http://127.0.0.1:$(JAP_API_PORT)/api/ops/form-check > /dev/null && \
 		echo "Form test started. Results: Status card on the Dashboard, or the form-check run in Inngest."
+
+email-test: ## Send one test email from the mailbox in .env: make email-test TO=<address>
+	@test -n "$(TO)" || { echo "Usage: make email-test TO=you@example.com"; exit 1; }
+	$(COMPOSE) exec app python -m pipeline.notify test "$(TO)"
 
 llm-check: ## One test call to each OpenRouter model (needs OPENROUTER_API_KEY in .env)
 	$(COMPOSE) exec app python -m llm.check

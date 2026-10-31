@@ -52,7 +52,7 @@ split into Profile and Job preferences, and the Runs and Status cards are in Set
 1. Install [Docker Desktop](https://www.docker.com/products/docker-desktop/) and [Ollama](https://ollama.com/download).
 2. Pull the embedder: `ollama pull nomic-embed-text`
 3. `make start` creates `.env` from `.env.example` the first time. Put your OpenRouter key and
-   Gmail app password in `.env` (it is gitignored; never commit it).
+   email sender in `.env` (it is gitignored; never commit it). See [Sending email](#sending-email).
 4. Open http://localhost:5173: API, Database, Inngest and Ollama should all show OK.
 
 ## Personal data and models
@@ -164,8 +164,8 @@ press **Approve and submit**. JAP then opens the form fresh, fills it, presses S
 and keeps a screenshot of the confirmation and a Playwright trace in `data/`. The job
 becomes **Applied**, and its panel shows what was sent: the date, the resume version, every
 answer, the screenshot and the frozen JD. One email, "Applied: Role at Company", goes to the
-address on My profile through Gmail SMTP (`GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD` in
-`.env`), with a link to the posting and to the job in JAP.
+address on My profile through the configured sender (see [Sending email](#sending-email)),
+with a link to the posting and to the job in JAP.
 
 Submissions are at least 30 seconds apart and stop at the daily cap until midnight in
 `JAP_TZ`. Submit is never pressed twice: if a retry finds it was pressed without a
@@ -246,6 +246,23 @@ In Ready for review the letter is editable, with a word count, the claim check a
 Your edited version is what is sent and what the confirmation email attaches; the Applied
 panel shows the letter and the PDF as sent.
 
+## Sending email
+
+Every JAP email (Applied, alerts, the form test) goes to the address on My profile, sent over
+SMTP from the mailbox set in `.env`. `make email-test TO=you@example.com` sends one test email.
+
+**GoDaddy Professional Email** (the default): `SMTP_HOST=smtpout.secureserver.net`,
+`SMTP_PORT=465`, `SMTP_SSL=true`, `SMTP_USERNAME` = the full address (you@yourdomain.com) and
+`SMTP_PASSWORD` = that mailbox's password. These are GoDaddy's
+[IMAP/SMTP settings](https://www.godaddy.com/help/use-imap-settings-to-add-my-professional-email-to-a-client-32204).
+
+**Gmail**: `SMTP_HOST=smtp.gmail.com`, port 465, your Gmail address, and an app password from
+https://myaccount.google.com/apppasswords (needs 2-Step Verification). An older `.env` with
+`GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD` still works when `SMTP_USERNAME` is empty.
+
+After changing `.env`, run `make restart`. A send that fails is retried, then logged; the job
+stays Applied and its panel says the confirmation email has not gone out.
+
 ## Make targets
 
 | Target | Does |
@@ -261,6 +278,7 @@ panel shows the letter and the PDF as sent.
 | `make backup` / `make restore FILE=...` | Dump to / restore from `data/backups/` (the app also makes one every day) |
 | `make qa` | Dedup QA set: place the 106 labelled job pairs and print the accuracy |
 | `make form-check` | Read one live form per ATS now (the weekly form test); nothing is submitted |
+| `make email-test TO=...` | Send one test email from the mailbox in `.env` |
 | `make llm-check` | One tiny test call to each OpenRouter model (no personal data) |
 | `make ollama-check` | Is Ollama answering with `nomic-embed-text` pulled |
 | `make demo` / `make demo-clear` | Load or remove the demo postings used to check dedup and the filters |
@@ -282,6 +300,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.11.0 | 31 Oct 2026 | Email from any SMTP mailbox (PRD 1.10, E4): `SMTP_USERNAME` and `SMTP_PASSWORD` with GoDaddy Professional Email as the default server (`smtpout.secureserver.net`, 465, SSL), Gmail with an app password as the alternative, old `GMAIL_*` settings still read; `make email-test`; Sending email section |
 | 0.10.0 | 30 Oct 2026 | New design (PRD 1.5, mockup v0.5). Sidebar with Jobs, Profile, Job preferences and Settings in place of the Dashboard and My profile tabs; Jobs with a status strip, search first, Job title, Location, Work mode, Posted and Fits on filters, sortable columns, rows per page and page numbers, tick-to-Apply and Hide with Undo, a one-line duplicates bar and an AI limit banner; one job panel whose actions follow the status (Apply, Save and continue, Send application, Try again, Apply yourself, Undo hide) with Why it fits and Not the same job; Find new jobs with an arrow for some job titles and Also apply; Job preferences with office cities and On-site/Hybrid ticks, remote jobs as none, your countries or all (`profile.remote_any`, migration 0006), three Matching choices (a new profile starts with job title and location), and a save bar that counts the jobs that will fit; Settings with Applying, Daily search, Search history, AI usage and System status; contact-only saves start no search; `GET /api/listings` takes sort, dir, work_mode, posted_days and status=active, and search covers locations; while testing: a / tooltip on the search box, the last search line coloured by state, and borderline duplicates settled by the AI instead of asking (no Merge list; Not the same job stays) |
 | 0.9.2 | 30 Oct 2026 | Fix: Approve on Greenhouse job-boards pages left every field empty. Submit waits for the page to settle, reads every value back and fills again what the page cleared, and stops before Submit (nothing sent) when a field still won't keep its value; dropdowns built from a text input (comboboxes) are read as selects with their options and filled by picking the option; a form that refuses the submission is reported as not sent; Retry after a Submit whose outcome is unknown asks you to check the employer's site first |
 | 0.9.1 | 30 Oct 2026 | Fix: Apply now didn't draft free-text answers. The answer prompt (now `answer.v2`) asks for JSON like every other prompt, `llm.call()` accepts JSON in a code fence or a sentence and logs a reply that isn't JSON as an error, a draft the writer model can't make shows as "JAP couldn't draft an answer" with the reason on Needs input (with a text box to write your own) and as "answers not drafted" on the last run line |

@@ -1,11 +1,13 @@
 """The confirmation email (E1 to E3): "Applied: Role at Company" to the address on My profile,
-sent once per Applied application by notify-applied. Gmail SMTP with an app password.
+sent once per Applied application by notify-applied. Sent over SMTP from the mailbox in .env
+(E4): GoDaddy Professional Email by default, or Gmail with an app password.
 pipeline/alerts.py sends the failure alerts through the same send().
 """
 
 import asyncio
 import smtplib
 import ssl
+import sys
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -84,10 +86,10 @@ async def build(session: AsyncSession, app_id: uuid.UUID) -> Mail | None:
 
 def _send_sync(mail: Mail) -> None:
     settings = get_settings()
-    if not settings.gmail_address:
-        raise EmailNotSent("GMAIL_ADDRESS is not set in .env")
+    if not settings.email_from:
+        raise EmailNotSent("SMTP_USERNAME is not set in .env")
     msg = EmailMessage()
-    msg["From"] = settings.gmail_address
+    msg["From"] = settings.email_from
     msg["To"] = mail.to
     msg["Subject"] = mail.subject
     msg.set_content(mail.body)
@@ -107,8 +109,8 @@ def _send_sync(mail: Mail) -> None:
     else:
         smtp = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30)
     with smtp:
-        if settings.gmail_app_password:
-            smtp.login(settings.gmail_address, settings.gmail_app_password)
+        if settings.email_password:
+            smtp.login(settings.email_from, settings.email_password)
         smtp.send_message(msg)
 
 
@@ -124,3 +126,12 @@ async def mark_sent(session: AsyncSession, app_id: uuid.UUID) -> None:
     if app is not None and app.email_sent_at is None:
         app.email_sent_at = datetime.now(UTC)
         await session.commit()
+
+
+if __name__ == "__main__":
+    # `make email-test TO=<address>`: one short email through the configured sender.
+    if len(sys.argv) != 3 or sys.argv[1] != "test":
+        raise SystemExit("usage: python -m pipeline.notify test <address>")
+    asyncio.run(send(Mail(to=sys.argv[2], subject="JAP test email", body="JAP can send email.\n")))
+    settings = get_settings()
+    print(f"Sent a test email to {sys.argv[2]} from {settings.email_from}.")
