@@ -248,32 +248,20 @@ panel shows the letter and the PDF as sent.
 
 ## Sending email
 
-Every JAP email (Applied, alerts, the form test) goes to the address on My profile, from the
-mailbox `EMAIL_PROVIDER` in `.env` names. `make email-test TO=you@example.com` sends one test
-email through it.
+Every JAP email (Applied, alerts, the form test) goes to the address on My profile, sent over
+SMTP from the mailbox set in `.env`. `make email-test TO=you@example.com` sends one test email.
 
-**Gmail** (`EMAIL_PROVIDER=gmail`, the default): turn on 2-Step Verification on the Google
-account, create an app password at https://myaccount.google.com/apppasswords, and set
-`GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD`.
+**GoDaddy Professional Email** (the default): `SMTP_HOST=smtpout.secureserver.net`,
+`SMTP_PORT=465`, `SMTP_SSL=true`, `SMTP_USERNAME` = the full address (you@yourdomain.com) and
+`SMTP_PASSWORD` = that mailbox's password. These are GoDaddy's
+[IMAP/SMTP settings](https://www.godaddy.com/help/use-imap-settings-to-add-my-professional-email-to-a-client-32204).
 
-**Microsoft 365** (`EMAIL_PROVIDER=microsoft`): Microsoft 365 no longer accepts SMTP
-passwords, so JAP sends through Microsoft Graph and signs in once with OAuth.
+**Gmail**: `SMTP_HOST=smtp.gmail.com`, port 465, your Gmail address, and an app password from
+https://myaccount.google.com/apppasswords (needs 2-Step Verification). An older `.env` with
+`GMAIL_ADDRESS` and `GMAIL_APP_PASSWORD` still works when `SMTP_USERNAME` is empty.
 
-1. In https://entra.microsoft.com go to App registrations, New registration. Name it JAP,
-   pick "Accounts in this organizational directory only", leave the redirect URI empty.
-2. Authentication: set "Allow public client flows" to Yes and save.
-3. API permissions: Add a permission, Microsoft Graph, Delegated, `Mail.Send` (and
-   `offline_access`). Grant admin consent if your tenant asks for it.
-4. Copy the Application (client) ID to `MS_CLIENT_ID` and the Directory (tenant) ID to
-   `MS_TENANT_ID`, set `EMAIL_PROVIDER=microsoft`, then `make restart`.
-5. `make email-login`, open the link it prints, enter the code and sign in with the mailbox
-   JAP should send from. Then `make email-test TO=you@example.com`.
-
-The token is kept in `data/microsoft-token.json` (gitignored, only readable by you). It is
-renewed only when an email is about to go out: the access token lasts about an hour, and the
-refresh token is replaced each time it is used. Run `make email-login` again only if JAP sends
-nothing for 90 days, you change your password, or you remove JAP in Entra; until then a send
-fails with "Run `make email-login` again" in the logs, and the job stays Applied.
+After changing `.env`, run `make restart`. A send that fails is retried, then logged; the job
+stays Applied and its panel says the confirmation email has not gone out.
 
 ## Make targets
 
@@ -290,8 +278,7 @@ fails with "Run `make email-login` again" in the logs, and the job stays Applied
 | `make backup` / `make restore FILE=...` | Dump to / restore from `data/backups/` (the app also makes one every day) |
 | `make qa` | Dedup QA set: place the 106 labelled job pairs and print the accuracy |
 | `make form-check` | Read one live form per ATS now (the weekly form test); nothing is submitted |
-| `make email-login` | Sign in once to the Microsoft 365 mailbox JAP sends from |
-| `make email-test TO=...` | Send one test email through the configured sender |
+| `make email-test TO=...` | Send one test email from the mailbox in `.env` |
 | `make llm-check` | One tiny test call to each OpenRouter model (no personal data) |
 | `make ollama-check` | Is Ollama answering with `nomic-embed-text` pulled |
 | `make demo` / `make demo-clear` | Load or remove the demo postings used to check dedup and the filters |
@@ -313,7 +300,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
-| 0.11.0 | 30 Oct 2026 | Microsoft 365 sender (PRD 1.9, E4): `EMAIL_PROVIDER` picks Gmail SMTP or a Microsoft 365 mailbox through Microsoft Graph `sendMail`; one-time device sign-in with `make email-login`, token in `data/microsoft-token.json` renewed on send; `make email-test`; Sending email section with the Entra and Gmail app password steps |
+| 0.11.0 | 31 Oct 2026 | Email from any SMTP mailbox (PRD 1.10, E4): `SMTP_USERNAME` and `SMTP_PASSWORD` with GoDaddy Professional Email as the default server (`smtpout.secureserver.net`, 465, SSL), Gmail with an app password as the alternative, old `GMAIL_*` settings still read; `make email-test`; Sending email section |
 | 0.10.0 | 30 Oct 2026 | New design (PRD 1.5, mockup v0.5). Sidebar with Jobs, Profile, Job preferences and Settings in place of the Dashboard and My profile tabs; Jobs with a status strip, search first, Job title, Location, Work mode, Posted and Fits on filters, sortable columns, rows per page and page numbers, tick-to-Apply and Hide with Undo, a one-line duplicates bar and an AI limit banner; one job panel whose actions follow the status (Apply, Save and continue, Send application, Try again, Apply yourself, Undo hide) with Why it fits and Not the same job; Find new jobs with an arrow for some job titles and Also apply; Job preferences with office cities and On-site/Hybrid ticks, remote jobs as none, your countries or all (`profile.remote_any`, migration 0006), three Matching choices (a new profile starts with job title and location), and a save bar that counts the jobs that will fit; Settings with Applying, Daily search, Search history, AI usage and System status; contact-only saves start no search; `GET /api/listings` takes sort, dir, work_mode, posted_days and status=active, and search covers locations; while testing: a / tooltip on the search box, the last search line coloured by state, and borderline duplicates settled by the AI instead of asking (no Merge list; Not the same job stays) |
 | 0.9.2 | 30 Oct 2026 | Fix: Approve on Greenhouse job-boards pages left every field empty. Submit waits for the page to settle, reads every value back and fills again what the page cleared, and stops before Submit (nothing sent) when a field still won't keep its value; dropdowns built from a text input (comboboxes) are read as selects with their options and filled by picking the option; a form that refuses the submission is reported as not sent; Retry after a Submit whose outcome is unknown asks you to check the employer's site first |
 | 0.9.1 | 30 Oct 2026 | Fix: Apply now didn't draft free-text answers. The answer prompt (now `answer.v2`) asks for JSON like every other prompt, `llm.call()` accepts JSON in a code fence or a sentence and logs a reply that isn't JSON as an error, a draft the writer model can't make shows as "JAP couldn't draft an answer" with the reason on Needs input (with a text box to write your own) and as "answers not drafted" on the last run line |

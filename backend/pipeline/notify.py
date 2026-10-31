@@ -1,6 +1,6 @@
 """The confirmation email (E1 to E3): "Applied: Role at Company" to the address on My profile,
-sent once per Applied application by notify-applied. EMAIL_PROVIDER picks the sender (E4):
-Gmail SMTP with an app password, or Microsoft 365 through Graph (pipeline/microsoft.py).
+sent once per Applied application by notify-applied. Sent over SMTP from the mailbox in .env
+(E4): GoDaddy Professional Email by default, or Gmail with an app password.
 pipeline/alerts.py sends the failure alerts through the same send().
 """
 
@@ -86,10 +86,10 @@ async def build(session: AsyncSession, app_id: uuid.UUID) -> Mail | None:
 
 def _send_sync(mail: Mail) -> None:
     settings = get_settings()
-    if not settings.gmail_address:
-        raise EmailNotSent("GMAIL_ADDRESS is not set in .env")
+    if not settings.email_from:
+        raise EmailNotSent("SMTP_USERNAME is not set in .env")
     msg = EmailMessage()
-    msg["From"] = settings.gmail_address
+    msg["From"] = settings.email_from
     msg["To"] = mail.to
     msg["Subject"] = mail.subject
     msg.set_content(mail.body)
@@ -109,20 +109,12 @@ def _send_sync(mail: Mail) -> None:
     else:
         smtp = smtplib.SMTP(settings.smtp_host, settings.smtp_port, timeout=30)
     with smtp:
-        if settings.gmail_app_password:
-            smtp.login(settings.gmail_address, settings.gmail_app_password)
+        if settings.email_password:
+            smtp.login(settings.email_from, settings.email_password)
         smtp.send_message(msg)
 
 
 async def send(mail: Mail) -> None:
-    provider = get_settings().email_provider
-    if provider == "microsoft":
-        from pipeline import microsoft
-
-        await microsoft.send(mail)
-        return
-    if provider != "gmail":
-        raise EmailNotSent(f"EMAIL_PROVIDER must be gmail or microsoft, not {provider!r}")
     try:
         await asyncio.to_thread(_send_sync, mail)
     except (OSError, smtplib.SMTPException) as exc:
@@ -141,4 +133,5 @@ if __name__ == "__main__":
     if len(sys.argv) != 3 or sys.argv[1] != "test":
         raise SystemExit("usage: python -m pipeline.notify test <address>")
     asyncio.run(send(Mail(to=sys.argv[2], subject="JAP test email", body="JAP can send email.\n")))
-    print(f"Sent a test email to {sys.argv[2]} through {get_settings().email_provider}.")
+    settings = get_settings()
+    print(f"Sent a test email to {sys.argv[2]} from {settings.email_from}.")
