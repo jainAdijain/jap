@@ -16,3 +16,14 @@ async def send(name: str, data: dict[str, Any] | None = None) -> None:
         await inngest_client.send(inngest.Event(name=name, data=data or {}))
     except Exception as exc:  # noqa: BLE001 - surface any failure the same way
         raise EventNotSent(f"Inngest did not take the {name} event: {exc}") from exc
+
+
+if __name__ == "__main__":
+    # `make form-check`: start a job from the machine, without going through the signed-in API.
+    import asyncio
+    import sys
+
+    if len(sys.argv) != 2:
+        raise SystemExit("usage: python -m functions.events <event name>")
+    asyncio.run(send(sys.argv[1]))
+    print(f"Sent {sys.argv[1]}.")

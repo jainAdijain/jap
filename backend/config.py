@@ -57,6 +57,13 @@ class Settings(BaseSettings):
     # Apply (A1): at least this many seconds between two submissions.
     jap_apply_gap_seconds: int = 30
 
+    # Sign-in (PRD S1 to S5). Secure cookies need HTTPS: true on dev, test and prod hosts.
+    jap_cookie_secure: bool = False
+    # When set, only this address can create the first (admin) account.
+    jap_admin_email: str = ""
+    jap_session_idle_days: int = 7
+    jap_session_max_days: int = 30
+
     # The UI dev server is the only allowed browser origin.
     cors_origins: list[str] = ["http://localhost:5173"]
 
