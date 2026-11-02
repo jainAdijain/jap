@@ -10,12 +10,17 @@ export class ApiError extends Error {
   }
 }
 
+/** Fired when the API says the session has ended (PRD S5), so the app shows sign-in again. */
+export const SIGNED_OUT_EVENT = 'jap:signed-out'
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(`${API_URL}${path}`, init)
+  // The session cookie rides along (PRD S5); it is HttpOnly, so scripts never see it.
+  const resp = await fetch(`${API_URL}${path}`, { credentials: 'include', ...init })
   if (resp.status === 204) return undefined as T
   const body = await resp.json().catch(() => null)
   if (!resp.ok) {
     const err = body?.error
+    if (resp.status === 401 && err?.code === 'signed_out') window.dispatchEvent(new Event(SIGNED_OUT_EVENT))
     throw new ApiError(resp.status, err?.code ?? 'error', err?.message ?? `API answered ${resp.status}`)
   }
   return body as T
@@ -325,6 +330,30 @@ export type Ops = {
   backups: number
   backup_today: boolean
   form_checks: FormCheck[]
+}
+
+export type User = { email: string; is_admin: boolean; two_step: boolean; recovery_codes_left: number }
+export type AuthState = { has_accounts: boolean; sign_up_open: boolean; user: User | null; two_step_pending: boolean }
+export type SignInResult = { signed_in: boolean; two_step: boolean; user: User | null }
+export type TwoStepSetup = { secret: string; uri: string; qr_svg: string }
+
+export const auth = {
+  state: () => request<AuthState>('/api/auth/state'),
+  signUp: (email: string, password: string) => request<SignInResult>('/api/auth/sign-up', json('POST', { email, password })),
+  signIn: (email: string, password: string) => request<SignInResult>('/api/auth/sign-in', json('POST', { email, password })),
+  code: (code: string) => request<SignInResult>('/api/auth/sign-in/code', json('POST', { code })),
+  signOut: () => request<void>('/api/auth/sign-out', json('POST', {})),
+  signOutEverywhere: () => request<void>('/api/auth/sign-out-everywhere', json('POST', {})),
+  me: () => request<User>('/api/auth/me'),
+  forgot: (email: string) => request<{ queued: boolean }>('/api/auth/forgot', json('POST', { email })),
+  reset: (token: string, password: string) => request<void>('/api/auth/reset', json('POST', { token, password })),
+  changePassword: (current: string, next: string) =>
+    request<void>('/api/auth/password', json('POST', { current_password: current, new_password: next })),
+  twoStepStart: () => request<TwoStepSetup>('/api/auth/two-step/start', json('POST', {})),
+  twoStepConfirm: (code: string) => request<{ recovery_codes: string[] }>('/api/auth/two-step/confirm', json('POST', { code })),
+  twoStepOff: (password: string) => request<void>('/api/auth/two-step/off', json('POST', { password })),
+  newRecoveryCodes: (password: string) =>
+    request<{ recovery_codes: string[] }>('/api/auth/two-step/recovery-codes', json('POST', { password })),
 }
 
 export const api = {

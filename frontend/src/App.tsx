@@ -1,10 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 
-import { ago, plural } from './format'
+import { auth, SIGNED_OUT_EVENT, type AuthState, type User } from './api/client'
+import { AuthCtx, useAuth } from './authContext'
+import { ago, errorText, plural } from './format'
 import JobsPage from './pages/JobsPage'
 import PreferencesPage from './pages/PreferencesPage'
 import ProfilePage from './pages/ProfilePage'
 import SettingsPage from './pages/SettingsPage'
+import SignInPage from './pages/SignInPage'
 import { needsAttention, searching, useApp } from './appContext'
 import { go, VIEWS, type View } from './nav'
 import { AppProvider } from './store'
@@ -35,6 +38,7 @@ function nextSearch(at: string): string {
 function Shell() {
   const [view, setView] = useState<View>(() => viewOf(window.location.hash))
   const { profile, summary, runs, health, healthError, ops } = useApp()
+  const { user, signOut } = useAuth()
   useEffect(() => {
     const onHash = () => {
       setView(viewOf(window.location.hash))
@@ -67,7 +71,7 @@ function Shell() {
         <div className="logo">
           <span className="logo-mark">JAP</span>
           <span className="logo-name">
-            Job Application Pipeline<small>Version 0.12.0</small>
+            Job Application Pipeline<small>Version 0.13.0</small>
           </span>
         </div>
         <nav aria-label="Sections">
@@ -93,6 +97,12 @@ function Shell() {
           </span>
           {profile && <span>{profile.daily_run ? `Next search ${nextSearch(profile.daily_run_at)}` : 'Daily search is off'}</span>}
           {profile && <span>Applying: {profile.apply_mode === 'automatic' ? 'JAP sends for you' : 'you send each one'}</span>}
+          <span className="side-user">
+            <span title={user.email}>{user.email}</span>
+            <button type="button" className="btn-link side-signout" onClick={() => void signOut()}>
+              Sign out
+            </button>
+          </span>
         </div>
       </aside>
       <div className="work">
@@ -105,10 +115,52 @@ function Shell() {
   )
 }
 
+/** Sign-in comes first (PRD S6): nothing else loads until there is a signed-in session. */
 export default function App() {
+  const [state, setState] = useState<AuthState | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+  const load = useCallback(() => {
+    auth.state().then(
+      (s) => {
+        setState(s)
+        setFailed(null)
+      },
+      (err) => setFailed(errorText(err)),
+    )
+  }, [])
+  useEffect(load, [load])
+  // Any API call that finds the session gone (expired, or signed out elsewhere) returns here.
+  useEffect(() => {
+    const onSignedOut = () => setState((s) => (s && s.user ? { ...s, user: null, two_step_pending: false } : s))
+    window.addEventListener(SIGNED_OUT_EVENT, onSignedOut)
+    return () => window.removeEventListener(SIGNED_OUT_EVENT, onSignedOut)
+  }, [])
+  const setUser = useCallback((user: User) => setState((s) => (s ? { ...s, user, has_accounts: true, sign_up_open: false } : s)), [])
+  const signOut = useCallback(async (everywhere = false) => {
+    await (everywhere ? auth.signOutEverywhere() : auth.signOut()).catch(() => undefined)
+    setState((s) => (s ? { ...s, user: null, two_step_pending: false } : s))
+  }, [])
+
+  if (failed) {
+    return (
+      <main className="auth">
+        <div className="auth-card">
+          <h1>JAP is not answering</h1>
+          <p className="muted">{failed}</p>
+          <button type="button" className="btn-primary auth-submit" onClick={load}>
+            Try again
+          </button>
+        </div>
+      </main>
+    )
+  }
+  if (!state) return null
+  if (!state.user) return <SignInPage state={state} onSignedIn={setUser} />
   return (
-    <AppProvider>
-      <Shell />
-    </AppProvider>
+    <AuthCtx.Provider value={{ user: state.user, setUser, signOut }}>
+      <AppProvider>
+        <Shell />
+      </AppProvider>
+    </AuthCtx.Provider>
   )
 }
