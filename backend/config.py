@@ -57,6 +57,22 @@ class Settings(BaseSettings):
     # Apply (A1): at least this many seconds between two submissions.
     jap_apply_gap_seconds: int = 30
 
+    # Which environment this is (dev, test or prod): on log lines and Sentry errors.
+    jap_env: str = "dev"
+
+    # Logging (PRD O1 to O4). LOG_JSON=false prints plain lines, easier to read by eye in dev.
+    log_level: str = "INFO"
+    log_json: bool = True
+    # Keep warnings, errors and timeline steps in the log_event table (O3, O8).
+    jap_log_db: bool = True
+
+    # Health alerts by email (O6). Off where nothing should be sent (dev and test).
+    jap_alerts_enabled: bool = True
+    jap_alert_errors_per_hour: int = 10
+
+    # Sentry's free plan (O15): empty means off. Only redacted errors are sent.
+    sentry_dsn: str = ""
+
     # The UI dev server is the only allowed browser origin.
     cors_origins: list[str] = ["http://localhost:5173"]
 

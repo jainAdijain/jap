@@ -9,7 +9,7 @@ from datetime import datetime, time
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, Integer, Numeric, Text, Time, func
+from sqlalchemy import BigInteger, Boolean, Integer, Numeric, Text, Time, func
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -292,6 +292,7 @@ class LlmCall(Timestamps, Base):
     latency_ms: Mapped[int | None]
     error: Mapped[str | None] = mapped_column(Text)
     run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    application_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
 
 class FormCheck(Timestamps, Base):
@@ -308,3 +309,47 @@ class FormCheck(Timestamps, Base):
     required: Mapped[int] = mapped_column(Integer, server_default="0")
     error: Mapped[str | None] = mapped_column(Text)
     screenshot_path: Mapped[str | None] = mapped_column(Text)
+
+
+class LogEvent(Base):
+    """A warning or error, or a step line kept for an application timeline (PRD O3, O8)."""
+
+    __tablename__ = "log_event"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    level: Mapped[str] = mapped_column(Text)
+    event: Mapped[str] = mapped_column(Text)
+    message: Mapped[str] = mapped_column(Text)
+    logger: Mapped[str] = mapped_column(Text)
+    request_id: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    application_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    posting_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    inngest_run_id: Mapped[str | None] = mapped_column(Text)
+    fields: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
+
+
+class RouteStat(Base):
+    """API requests per route per hour (PRD O4, O5)."""
+
+    __tablename__ = "route_stat"
+
+    hour: Mapped[datetime] = mapped_column(primary_key=True)
+    method: Mapped[str] = mapped_column(Text, primary_key=True)
+    route: Mapped[str] = mapped_column(Text, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, server_default="0")
+    errors: Mapped[int] = mapped_column(Integer, server_default="0")
+    total_ms: Mapped[int] = mapped_column(BigInteger, server_default="0")
+    max_ms: Mapped[int] = mapped_column(Integer, server_default="0")
+
+
+class AlertState(Base):
+    """When a health alert was last emailed (PRD O6): at most once a day per key."""
+
+    __tablename__ = "alert_state"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    last_sent_at: Mapped[datetime]
+    detail: Mapped[str | None] = mapped_column(Text)

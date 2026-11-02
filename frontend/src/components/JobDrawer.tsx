@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 
-import { api, type Application, type CoverLetter, type FormField, type ListingDetail, type Profile, type Salary } from '../api/client'
+import { api, type Application, type CoverLetter, type FormField, type ListingDetail, type Profile, type Salary, type Timeline as TimelineData } from '../api/client'
 import { atsLabel, errorText, plural, shortDate, STATUS, when, workModeLabel } from '../format'
 import { useApp } from '../appContext'
 
@@ -38,6 +38,40 @@ function salaryText(s: Salary | undefined): string | null {
   if (!s || (s.min == null && s.max == null)) return null
   const range = [s.min, s.max].filter((v): v is number => v != null).map((v) => money(v, s.currency)).join(' – ')
   return s.period ? `${range} a ${s.period}` : range
+}
+
+/** What JAP did for an application, step by step (PRD O8). Loaded when opened. */
+function Timeline({ appId }: { appId: string }) {
+  const [data, setData] = useState<TimelineData | null>(null)
+  const [error, setError] = useState<string | null>(null)
+  const load = () => {
+    if (data) return
+    api.timeline(appId).then(setData, (err) => setError(err instanceof Error ? err.message : String(err)))
+  }
+  return (
+    <details className="timeline" onToggle={(e) => (e.currentTarget.open ? load() : undefined)}>
+      <summary className="label-sm">What JAP did</summary>
+      {error && <p className="error-text">{error}</p>}
+      {!data && !error && <p className="muted small">Loading…</p>}
+      {data && (
+        <>
+          <ol>
+            {data.items.map((i, n) => (
+              <li key={n} className={i.level === 'warning' || i.level === 'error' ? 'bad' : i.kind}>
+                <span className="mono muted">{when(i.at)}</span>
+                <span>
+                  {i.text}
+                  {i.duration_ms !== null && i.duration_ms >= 1000 && <span className="muted"> · {(i.duration_ms / 1000).toFixed(1)} s</span>}
+                  {i.cost_usd !== null && i.cost_usd > 0 && <span className="muted"> · ${i.cost_usd.toFixed(4)}</span>}
+                </span>
+              </li>
+            ))}
+          </ol>
+          <p className="help">Steps are kept for {data.kept_days} days; AI uses are kept with the application.</p>
+        </>
+      )}
+    </details>
+  )
 }
 
 function Sec({ title, children }: { title: string; children: ReactNode }) {
@@ -560,6 +594,7 @@ export default function JobDrawer({ id, onClose, onOpen, onApply }: Props) {
               <Shot app={app} alt="The page the employer showed after the application was sent" />
             </Sec>
           )}
+          <Timeline appId={app.id} />
           <Details listing={listing} />
           <Description listing={listing} />
         </>
@@ -611,6 +646,7 @@ export default function JobDrawer({ id, onClose, onOpen, onApply }: Props) {
               and open it at trace.playwright.dev.
             </p>
           )}
+          <Timeline appId={app.id} />
           {common}
           <Description listing={listing} />
         </>

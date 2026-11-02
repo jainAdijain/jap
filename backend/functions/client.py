@@ -1,11 +1,20 @@
 """The one Inngest client. INNGEST_DEV and INNGEST_BASE_URL point it at the dev server."""
 
+import logging
+
 import httpx
 import inngest
 
+from observability.inngest_mw import LogMiddleware
 from schemas.health import Check
 
-inngest_client = inngest.Inngest(app_id="jap", is_production=False)
+# LogMiddleware: the run, application and Inngest ids on every log line, one line per step.
+inngest_client = inngest.Inngest(
+    app_id="jap",
+    is_production=False,
+    middleware=[LogMiddleware],
+    logger=logging.getLogger("inngest"),
+)
 
 
 async def ping_inngest(base_url: str) -> Check:

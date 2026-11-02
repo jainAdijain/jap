@@ -28,7 +28,7 @@ reaches it at `http://host.docker.internal:11434`.
 ## The screens
 
 The UI follows the [redesign mockup v0.5](https://claude.ai/artifact/5V2SRvBgWZu5stN5KY4H7L)
-(PRD 1.5, U1 to U20): a sidebar with four sections, which becomes a top bar on a phone.
+(PRD 1.5, U1 to U20): a sidebar with five sections, which becomes a top bar on a phone.
 
 - **Jobs**: the last search line, **Find new jobs**, a status strip (All open, New, Needs you,
   Ready to send, Sent, Failed), a toolbar with search and filters, and the jobs table. Tick
@@ -38,8 +38,10 @@ The UI follows the [redesign mockup v0.5](https://claude.ai/artifact/5V2SRvBgWZu
   Saved answers, and the cover letter style.
 - **Job preferences**: what decides which jobs show. Job titles, required and nice-to-have
   skills, locations, companies to follow, jobs to hide, and Matching.
+- **Insights**: jobs found and sent per week, results by job site, and AI spend (PRD 1.19).
 - **Settings**: applying (JAP prepares, I send; or JAP applies for me, with a daily limit),
-  the daily search, Search history, AI usage and System status (backup and form check).
+  the daily search, Search history, AI usage, System status (backup and form check) and
+  Health (Daily search, stuck searches, errors, slow pages, disk, alerts sent).
 
 Older names in this README map to the screen as follows: Not applied is **New**, Needs input
 is **Needs you**, Ready for review is **Ready to send**, Approve and submit is **Send
@@ -219,6 +221,49 @@ in Automatic mode. Switching back to Review makes the next run prepare without s
   "(Python)" vs "(Java)" was dropped from the role, so the two jobs merged. Brackets now drop
   only places, work modes, requisition numbers and words like "full-time".
 
+## Logs, Health and Insights
+
+PRD 1.19 (O1 to O15), Part A. Everything runs on the Mac with the rest of JAP and costs
+nothing; the only data that leaves is redacted errors sent to Sentry, and only when
+`SENTRY_DSN` is set.
+
+- **Logs**: the app and every Inngest function write one JSON line per event to stdout, with
+  the ids it belongs to: request, run, application, posting, listing, Inngest run and
+  function (`backend/observability/`). Every line is scrubbed first: email addresses, phone
+  numbers, keys and tokens, `password=...` and the like, and emailed security codes are
+  replaced, and fields such as answers, resume text and letters are never written.
+  `LOG_JSON=false` prints plain lines instead. Docker keeps each container's lines capped at
+  5 files of 50 MB (`make logs`). Every API response has an `X-Request-ID` header, so a
+  problem can be found by its request.
+- **Kept in Postgres**: warnings, errors and each apply step go to `log_event` for 30 days, and
+  each API route's count, errors and time taken go to `route_stat` per hour. `make errors`
+  shows the last 20 warnings and errors.
+- **Settings > Health**: whether today's Daily search ran, searches stuck for over 30
+  minutes, errors in the last 24 hours grouped by what failed, the slowest pages, disk use,
+  and the alerts emailed in the last 7 days.
+- **Health alerts**: `health-watch` runs every hour (at :40). It deletes log rows past 30 days
+  and emails the address on My profile when the Daily search didn't start, a search is stuck,
+  more than `JAP_ALERT_ERRORS_PER_HOUR` (10) errors happened in an hour, AI spend reached 80% or
+  100% of the limit, or the disk is over 85% full. Each problem is emailed at most once a day
+  (spend once a month). `JAP_ALERTS_ENABLED=false` turns them off; outside prod the subject
+  starts with the environment, for example `[DEV]`. **Check now** or `make health-check` runs
+  it at once. Failed searches, applications and form tests keep their own alerts.
+- **What JAP did**: a failed or sent job's panel has a timeline of its application: the form
+  read, fields mapped, each AI use with its time and cost, submit, and the confirmation email.
+- **Insights** (new page): jobs found, matching, started, sent and failed per week; results by
+  job site with the commonest failure reasons; AI spend this month by use and model, and the
+  last six months with the cost per sent application.
+- **Sentry** (optional, free Developer plan): create a project at sentry.io, put its DSN in
+  `SENTRY_DSN` and restart. Only errors are sent, with no request bodies, cookies, headers or
+  local variables, and every message scrubbed.
+- **Uptime from outside** (O7): once prod is public, add a free uptime check (a Cloudflare
+  health check, or a free monitor such as UptimeRobot) on `https://jap.tutorial.monster/api/health`
+  every 5 minutes, emailing you when it fails. It works even when the Mac is asleep.
+
+Part B comes after sign-in step 2: the user on every log line, Health for the admin only,
+first-party usage counts (`usage_event`), each user's own Insights, and per-user counts and
+spend for the admin.
+
 ## Cover letters
 
 JAP writes a cover letter only when the application form makes its cover letter field
@@ -297,6 +342,8 @@ was sent and the job becomes Apply yourself.
 | `make code-mail-check` | Log in to the mailbox over IMAP and count the Greenhouse emails it holds (security codes, PRD A5) |
 | `make qa` | Dedup QA set: place the 106 labelled job pairs and print the accuracy |
 | `make form-check` | Read one live form per ATS now (the weekly form test); nothing is submitted |
+| `make health-check` | Run the hourly health watch now: old log rows deleted, alerts that are due emailed |
+| `make errors` | The last 20 warnings and errors from `log_event` |
 | `make email-test TO=...` | Send one test email from the mailbox in `.env` |
 | `make llm-check` | One tiny test call to each OpenRouter model (no personal data) |
 | `make ollama-check` | Is Ollama answering with `nomic-embed-text` pulled |
@@ -319,6 +366,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.14.0 | 2 Nov 2026 | Logs, Health and Insights (PRD 1.19, Part A: O1 to O12, O15): JSON log lines with request, run, application and Inngest ids, scrubbed of personal data and secrets; warnings, errors and apply steps kept 30 days in `log_event`, API timings per route in `route_stat`; Docker log cap; `X-Request-ID`; Settings > Health; hourly `health-watch` with alert emails at most once a day; a timeline on each application; the Insights page; optional Sentry (`SENTRY_DSN`); `make health-check` and `make errors`; migration `0007_observability` |
 | 0.12.0 | 31 Oct 2026 | Greenhouse emailed security code (PRD 1.11, A5): when the form asks for the code it emailed, JAP reads it from its own mailbox over IMAP (`IMAP_HOST`, `IMAP_PORT`, `IMAP_SSL`, same login as SMTP) after a Gmail filter forwards it there, using only Greenhouse emails that arrive after Submit and waiting up to 3 minutes; types it into the boxes and presses Submit once more; no code, nowhere to type it or a code the site refuses means nothing was sent and the job becomes Apply yourself; `make code-mail-check`; Greenhouse security codes section |
 | 0.11.2 | 31 Oct 2026 | Apply fixes from the first real Automatic runs. Greenhouse: a combobox counts as filled when it changed from the fresh page (the phone Country picker shows only "+91"), values are read back after a short settle, a phone the page reformats still matches, and a field that won't keep its value is named with what the page shows. Ashby: Yes/No questions made of buttons are read as a choice (answer bank or Needs input) and filled by clicking the button; the page's own error text after Submit is in the error, and a "required" or spam-check error counts as not sent. "Successfully submitted" wording is taken as a confirmation. Greenhouse's emailed security code step is recognised and reported as not sent, to apply yourself |
 | 0.11.1 | 31 Oct 2026 | Fix "OpenRouter 402" on drafted answers: every model call now sets `max_tokens` (about 3 characters a token plus room for the JSON for an answer, a fixed cap per purpose otherwise) instead of reserving the model's whole 64,000-token output against the credits; a 402 shows as "OpenRouter is out of credits" without the key link, stops further drafts on the same form, fails the cover letter without a retry and does not retry posting extraction or resume parsing; a reply cut off at the cap is reported as such |

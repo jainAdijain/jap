@@ -17,6 +17,7 @@ from config import get_settings
 from database.models import Application, Listing, ResumeVersion
 from database.session import Session
 from functions.events import send
+from observability import timeline
 from pipeline.apply.answers import save_to_bank
 from pipeline.apply.flow import MAYBE_SENT, letter_fields, set_letter
 from schemas.application import (
@@ -32,6 +33,7 @@ from schemas.application import (
     ResumeRef,
     RetryIn,
 )
+from schemas.status import Timeline
 
 router = APIRouter(tags=["applications"])
 
@@ -148,6 +150,15 @@ def _set_answers(app: Application, given: dict[str, str], allowed: set[str]) -> 
 @router.get("/applications/{app_id}", response_model=ApplicationOut)
 async def one(app_id: uuid.UUID, session: Session) -> ApplicationOut:
     return await to_out(session, await get_app(session, app_id))
+
+
+@router.get("/applications/{app_id}/timeline", response_model=Timeline)
+async def application_timeline(app_id: uuid.UUID, session: Session) -> Timeline:
+    """What JAP did for this application, step by step (PRD O8)."""
+    found = await timeline.for_id(session, app_id)
+    if found is None:
+        raise ApiError(404, "not_found", "Application not found")
+    return found
 
 
 @router.put("/applications/{app_id}", response_model=ApplicationOut)
