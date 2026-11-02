@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.10.0 (new design), 30 Oct 2026.**
+**Version 0.13.0 (sign-in), 2 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -53,7 +53,30 @@ split into Profile and Job preferences, and the Runs and Status cards are in Set
 2. Pull the embedder: `ollama pull nomic-embed-text`
 3. `make start` creates `.env` from `.env.example` the first time. Put your OpenRouter key and
    email sender in `.env` (it is gitignored; never commit it). See [Sending email](#sending-email).
-4. Open http://localhost:5173: API, Database, Inngest and Ollama should all show OK.
+4. Open http://localhost:5173 and create your account. The first account is the admin
+   (see [Sign-in and accounts](#sign-in-and-accounts)). Settings > System status should show
+   API, Database, Inngest and Ollama as OK.
+
+## Sign-in and accounts
+
+Every page and every `/api` route is behind sign-in (PRD 1.18, S1 to S9); only `/api/health`
+and `/api/auth/*` answer without a session.
+
+- **First account.** On a fresh JAP the sign-in screen offers Create your JAP account. That
+  account is the admin, and sign-up then closes. Invites and other users come in step 2
+  (each user's own data). Set `JAP_ADMIN_EMAIL` in `.env` to allow only your address.
+- **Passwords** are at least 12 characters and stored as salted scrypt hashes. Five wrong
+  tries lock that account's sign-in for 15 minutes.
+- **Forgot password** emails a single-use link, good for 30 minutes, from the mailbox in
+  `.env` to the account's address. It links to `JAP_UI_URL`, so set that to the address
+  you open JAP at. Without a mailbox, use `make set-password EMAIL=...`.
+- **Two-step sign-in** (Settings > Account): scan the QR code with an authenticator app,
+  enter one code, and save the 8 recovery codes. Lost both? `make two-step-off EMAIL=...`.
+- **Sessions** live in an HttpOnly cookie tied to the hostname. They end after 7 days unused or
+  30 days after sign-in. Set `JAP_COOKIE_SECURE=true` wherever JAP is served over HTTPS.
+- **Internal endpoints.** `/api/inngest` answers only direct calls from inside Docker, never
+  a request carrying proxy headers (`X-Forwarded-For`, `Forwarded`, `Cf-Connecting-Ip`), and
+  a write that comes from another site's page is refused.
 
 ## Personal data and models
 
@@ -297,6 +320,9 @@ was sent and the job becomes Apply yourself.
 | `make code-mail-check` | Log in to the mailbox over IMAP and count the Greenhouse emails it holds (security codes, PRD A5) |
 | `make qa` | Dedup QA set: place the 106 labelled job pairs and print the accuracy |
 | `make form-check` | Read one live form per ATS now (the weekly form test); nothing is submitted |
+| `make set-password EMAIL=...` | Set a new password for an account from the machine (asks twice) |
+| `make two-step-off EMAIL=...` | Turn two-step sign-in off for an account (phone and recovery codes lost) |
+| `make sign-out-all EMAIL=...` | End every session of an account |
 | `make email-test TO=...` | Send one test email from the mailbox in `.env` |
 | `make llm-check` | One tiny test call to each OpenRouter model (no personal data) |
 | `make ollama-check` | Is Ollama answering with `nomic-embed-text` pulled |
@@ -319,6 +345,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.13.0 | 2 Nov 2026 | Sign-in and accounts, step 1 (PRD 1.18, S1 to S9, U21). Sign-in screen before anything loads: create the first account (the admin; sign-up then closes), sign in, Forgot password with an emailed single-use 30-minute link, and the two-step code. Settings > Account: Change password, Two-step sign-in with a QR code and 8 recovery codes, Sign out and Sign out everywhere; Sign out also at the foot of the sidebar. Backend: `app_user`, `auth_session` and `password_reset` (migration 0007), scrypt hashes, a 15-minute lock after 5 wrong tries, TOTP with replay protection, HttpOnly host-only session cookies (7 days idle, 30 days at most; `__Host-` and Secure with `JAP_COOKIE_SECURE`), every `/api` route but health and `/api/auth/*` behind a session, `/api/inngest` closed to proxied requests, writes from other origins refused. `make set-password`, `make two-step-off`, `make sign-out-all`; `make form-check` now runs inside the app container |
 | 0.12.0 | 31 Oct 2026 | Greenhouse emailed security code (PRD 1.11, A5): when the form asks for the code it emailed, JAP reads it from its own mailbox over IMAP (`IMAP_HOST`, `IMAP_PORT`, `IMAP_SSL`, same login as SMTP) after a Gmail filter forwards it there, using only Greenhouse emails that arrive after Submit and waiting up to 3 minutes; types it into the boxes and presses Submit once more; no code, nowhere to type it or a code the site refuses means nothing was sent and the job becomes Apply yourself; `make code-mail-check`; Greenhouse security codes section |
 | 0.11.2 | 31 Oct 2026 | Apply fixes from the first real Automatic runs. Greenhouse: a combobox counts as filled when it changed from the fresh page (the phone Country picker shows only "+91"), values are read back after a short settle, a phone the page reformats still matches, and a field that won't keep its value is named with what the page shows. Ashby: Yes/No questions made of buttons are read as a choice (answer bank or Needs input) and filled by clicking the button; the page's own error text after Submit is in the error, and a "required" or spam-check error counts as not sent. "Successfully submitted" wording is taken as a confirmation. Greenhouse's emailed security code step is recognised and reported as not sent, to apply yourself |
 | 0.11.1 | 31 Oct 2026 | Fix "OpenRouter 402" on drafted answers: every model call now sets `max_tokens` (about 3 characters a token plus room for the JSON for an answer, a fixed cap per purpose otherwise) instead of reserving the model's whole 64,000-token output against the credits; a 402 shows as "OpenRouter is out of credits" without the key link, stops further drafts on the same form, fails the cover letter without a retry and does not retry posting extraction or resume parsing; a reply cut off at the cap is reported as such |

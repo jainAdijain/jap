@@ -12,7 +12,7 @@ OLLAMA_URL ?= http://127.0.0.1:11434
 EMBED_MODEL ?= nomic-embed-text
 
 .DEFAULT_GOAL := help
-.PHONY: help env start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore form-check email-test code-mail-check ollama-check llm-check demo demo-clear
+.PHONY: help env start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore form-check two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check demo demo-clear
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
@@ -84,8 +84,20 @@ restore: ## Restore a backup: make restore FILE=data/backups/<file>.sql.gz
 	@COMPOSE="$(COMPOSE)" infra/scripts/restore.sh "$(FILE)"
 
 form-check: ## Read one live form per ATS now (the weekly form test; nothing is submitted)
-	@curl -fsS -X POST http://127.0.0.1:$(JAP_API_PORT)/api/ops/form-check > /dev/null && \
-		echo "Form test started. Results: Status card on the Dashboard, or the form-check run in Inngest."
+	@$(COMPOSE) exec -T app python -m functions.events form-check/requested > /dev/null && \
+		echo "Form test started. Results: System status on Settings, or the form-check run in Inngest."
+
+two-step-off: ## Turn two-step sign-in off for an account: make two-step-off EMAIL=<address>
+	@test -n "$(EMAIL)" || { echo "Usage: make two-step-off EMAIL=you@example.com"; exit 1; }
+	$(COMPOSE) exec app python -m auth.cli two-step-off "$(EMAIL)"
+
+sign-out-all: ## End every session of an account: make sign-out-all EMAIL=<address>
+	@test -n "$(EMAIL)" || { echo "Usage: make sign-out-all EMAIL=you@example.com"; exit 1; }
+	$(COMPOSE) exec app python -m auth.cli sign-out-all "$(EMAIL)"
+
+set-password: ## Set a new password without email: make set-password EMAIL=<address>
+	@test -n "$(EMAIL)" || { echo "Usage: make set-password EMAIL=you@example.com"; exit 1; }
+	$(COMPOSE) exec app python -m auth.cli set-password "$(EMAIL)"
 
 email-test: ## Send one test email from the mailbox in .env: make email-test TO=<address>
 	@test -n "$(TO)" || { echo "Usage: make email-test TO=you@example.com"; exit 1; }
