@@ -522,6 +522,10 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     if app.submit_started_at is not None:
         await fail(session, app, "Submit outcome unknown: check the employer's site by hand")
         return {"status": "failed"}
+    settings = get_settings()
+    if not settings.jap_submit_enabled:  # H4: only prod sends
+        await fail(session, app, f"Sending is off in {settings.jap_env}: nothing was sent")
+        return {"status": "failed"}
     app.submit_started_at = now
     fields = form_of(app)
     answers = {k: str(v) for k, v in (app.answers or {}).items()}

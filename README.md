@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.10.0 (new design), 30 Oct 2026.**
+**Version 0.13.0 (hosting: dev, test and prod), 2 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -281,6 +281,55 @@ use `IMAP_HOST=imap.gmail.com`. JAP uses only Greenhouse emails that arrive afte
 waits up to 3 minutes, and never stores the code or sends it to a model. No code in time: nothing
 was sent and the job becomes Apply yourself.
 
+## Hosting: dev, test and prod
+
+JAP runs for free on the Mac as three environments, published over HTTPS by JAP's own
+Cloudflare Tunnel ([PRD](https://claude.ai/artifact/WL9RYjsPDCTmknMLRqzKRj) H1 to H8,
+[hosting plan](https://claude.ai/artifact/R6yA1f9SrffxRQ968Dt2QB)). It is up while the Mac
+is on and awake.
+
+| | dev | test | prod |
+| --- | --- | --- | --- |
+| Address | dev.jap.tutorial.monster | test.jap.tutorial.monster | jap.tutorial.monster |
+| Code | this checkout, live reload | a tag, in `~/jap-envs/test` | a tag that passed test, in `~/jap-envs/prod` |
+| Entry port | 5173 (Vite) | 5273 (Caddy) | 5373 (Caddy) |
+| API / Inngest / DB ports | 8001 / 8290 / 5432 | 8101 / 8390 / 5433 | 8201 / 8490 / 5434 |
+| Sends applications and email | yes (your own setup) | never | yes |
+
+Every target takes `ENV=dev|test|prod`; without it you get dev, exactly as before
+(`make logs ENV=prod`, `make backup ENV=prod`). Test and prod use
+`infra/compose.release.yaml`: the built UI behind Caddy, which passes `/api` to the app (the
+browser only ever talks to one address), a self-hosted Inngest with its own keys, no source
+mounts, no Adminer, and every service restarts when Docker Desktop starts. Inngest's
+dashboard, Postgres, Adminer and Ollama are never published. Test has
+`JAP_SUBMIT_ENABLED=false` and no SMTP login, so an application prepared there is never
+sent, and the UI shows a TEST (or DEV) badge.
+
+**First time**
+
+1. Docker Desktop: Settings, General, turn on *Start Docker Desktop when you sign in*.
+2. `make mac-wake` so the Mac wakes at 05:55 for the 06:00 search.
+3. Tag a release on `main` (`git tag v0.13.0 && git push origin v0.13.0`), then
+   `make env-create ENV=test REF=v0.13.0` and `make env-create ENV=prod REF=v0.13.0`.
+   Each writes `~/jap-envs/<env>/.env` with its own ports, database password and Inngest keys.
+   Add the OpenRouter key to both, and the real mailbox password to prod only.
+4. Cloudflare dashboard, Zero Trust, Networks, Tunnels: create a tunnel named `jap`, and add
+   three public hostnames: `jap.tutorial.monster` to `http://host.docker.internal:5373`,
+   `test.jap.tutorial.monster` to `:5273` and `dev.jap.tutorial.monster` to `:5173`.
+   Copy `infra/tunnel/.env.tunnel.example` to `.env.tunnel` and paste the token.
+5. Only once sign-in is merged and running (PRD H6, S1 to S9): `make tunnel-start`.
+
+**Releasing**
+
+1. `make promote ENV=test REF=v0.14.0`: checks the tag out in the test worktree, builds,
+   migrates and waits for `/api/health`.
+2. Check it at test.jap.tutorial.monster (a search, one application prepared), then
+   `make mark-passed`.
+3. `make promote ENV=prod REF=v0.14.0`: refuses a tag that has not passed test, backs up
+   prod first, then the same steps.
+4. Something wrong: `make rollback ENV=prod` goes back to the previous tag. If the new tag
+   changed the database, restore the backup taken in step 3 (`make restore ENV=prod FILE=...`).
+
 ## Make targets
 
 | Target | Does |
@@ -301,12 +350,18 @@ was sent and the job becomes Apply yourself.
 | `make llm-check` | One tiny test call to each OpenRouter model (no personal data) |
 | `make ollama-check` | Is Ollama answering with `nomic-embed-text` pulled |
 | `make demo` / `make demo-clear` | Load or remove the demo postings used to check dedup and the filters |
+| `make env-create ENV=test REF=...` | Make the test or prod worktree in `~/jap-envs` and its `.env` |
+| `make promote ENV=... REF=...` / `make rollback ENV=...` | Move test or prod to a tag, or back to the one before |
+| `make mark-passed` | After checking test by hand, allow its tag into prod |
+| `make tunnel-start` / `tunnel-stop` / `tunnel-status` | JAP's Cloudflare Tunnel (`.env.tunnel`) |
+| `make mac-wake` | Wake the Mac at 05:55 every day for the 06:00 search |
 
 ## Layout
 
 ```
 Makefile            .env.example
-infra/              compose.yaml, docker/ (Dockerfiles), postgres/init.sql, scripts/
+infra/              compose.yaml, compose.release.yaml (test, prod), docker/ (Dockerfiles),
+                    caddy/, env/ (test, prod settings), tunnel/, postgres/init.sql, scripts/
 seed/               companies.yaml, skills.yaml
 backend/            main.py, config.py, schemas/, database/ (+ migrations/), api/,
                     sources/, pipeline/, llm/, functions/ (Inngest), tests/
@@ -319,6 +374,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.13.0 | 2 Nov 2026 | Hosting with dev, test and prod (PRD 1.17, H1 to H8): every make target takes `ENV=dev\|test\|prod`; test and prod run from git worktrees in `~/jap-envs` with `infra/compose.release.yaml` (built UI behind Caddy, self-hosted Inngest, no Adminer, restart on Docker start); `make env-create`, `promote`, `mark-passed`, `rollback`, `tunnel-start/stop/status`, `mac-wake`; the UI calls `/api` on its own address; `JAP_ENV` badge; `JAP_SUBMIT_ENABLED=false` in test never submits |
 | 0.12.0 | 31 Oct 2026 | Greenhouse emailed security code (PRD 1.11, A5): when the form asks for the code it emailed, JAP reads it from its own mailbox over IMAP (`IMAP_HOST`, `IMAP_PORT`, `IMAP_SSL`, same login as SMTP) after a Gmail filter forwards it there, using only Greenhouse emails that arrive after Submit and waiting up to 3 minutes; types it into the boxes and presses Submit once more; no code, nowhere to type it or a code the site refuses means nothing was sent and the job becomes Apply yourself; `make code-mail-check`; Greenhouse security codes section |
 | 0.11.2 | 31 Oct 2026 | Apply fixes from the first real Automatic runs. Greenhouse: a combobox counts as filled when it changed from the fresh page (the phone Country picker shows only "+91"), values are read back after a short settle, a phone the page reformats still matches, and a field that won't keep its value is named with what the page shows. Ashby: Yes/No questions made of buttons are read as a choice (answer bank or Needs input) and filled by clicking the button; the page's own error text after Submit is in the error, and a "required" or spam-check error counts as not sent. "Successfully submitted" wording is taken as a confirmation. Greenhouse's emailed security code step is recognised and reported as not sent, to apply yourself |
 | 0.11.1 | 31 Oct 2026 | Fix "OpenRouter 402" on drafted answers: every model call now sets `max_tokens` (about 3 characters a token plus room for the JSON for an answer, a fixed cap per purpose otherwise) instead of reserving the model's whole 64,000-token output against the credits; a 402 shows as "OpenRouter is out of credits" without the key link, stops further drafts on the same form, fails the cover letter without a retry and does not retry posting extraction or resume parsing; a reply cut off at the cap is reported as such |

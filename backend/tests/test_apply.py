@@ -15,6 +15,7 @@ import psycopg
 import pytest
 
 import llm.client as client
+from config import get_settings
 from database.session import get_sessionmaker
 from pipeline import notify
 from pipeline.apply import flow
@@ -427,6 +428,31 @@ async def test_submit_never_presses_twice(
     row = sql.execute("SELECT error FROM application WHERE id = %s", (app_id,)).fetchone()
     assert row is not None and str(row[0]).startswith("Submit outcome unknown")
     assert _status(sql, app_id) == ("failed", "failed")
+
+
+async def test_sending_off_never_opens_the_form(
+    setup: dict[str, Any],
+    sql: psycopg.Connection[Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """H4: test has JAP_SUBMIT_ENABLED=false, so nothing is ever sent from there."""
+    _fake_form(monkeypatch, FORM)
+    app_id = await _prepare(setup["listing"])
+    sql.execute("UPDATE application SET status = 'applying' WHERE id = %s", (app_id,))
+    settings = get_settings()
+    monkeypatch.setattr(settings, "jap_submit_enabled", False)
+    monkeypatch.setattr(settings, "jap_env", "test")
+
+    async def must_not_run(*args: Any) -> SubmitResult:
+        raise AssertionError("opened the form with sending off")
+
+    monkeypatch.setattr(flow, "submit_form", must_not_run)
+    async with get_sessionmaker()() as session:
+        assert await flow.submit(session, app_id) == {"status": "failed"}
+    row = sql.execute(
+        "SELECT error, submit_started_at FROM application WHERE id = %s", (app_id,)
+    ).fetchone()
+    assert row == ("Sending is off in test: nothing was sent", None)
 
 
 async def test_unconfirmed_submit_fails_and_unpressed_submit_retries(

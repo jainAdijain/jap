@@ -1,4 +1,5 @@
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8001'
+// Same origin by default (H2): Caddy in test and prod, Vite's proxy in dev, pass /api to the app.
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 export class ApiError extends Error {
   code: string
@@ -28,7 +29,7 @@ const json = (method: string, data: unknown): RequestInit => ({
 })
 
 export type Check = { ok: boolean; detail: string }
-export type Health = { ok: boolean; checks: Record<string, Check> }
+export type Health = { ok: boolean; env?: string; checks: Record<string, Check> }
 
 export type WorkMode = 'remote' | 'hybrid' | 'onsite'
 export type Condition = 'role' | 'skills' | 'location'

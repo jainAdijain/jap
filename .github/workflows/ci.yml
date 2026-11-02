@@ -66,3 +66,11 @@ jobs:
       - uses: actions/checkout@v4
       - run: cp .env.example .env
       - run: docker compose --env-file .env -f infra/compose.yaml config --quiet
+      - name: release overlay (test and prod) is valid
+        run: |
+          mkdir -p /tmp/envs/test && cp .env.example /tmp/envs/test/
+          infra/scripts/env-create.sh test /tmp/envs/test
+          docker compose --env-file /tmp/envs/test/.env -f infra/compose.yaml -f infra/compose.release.yaml config --quiet
+      - run: docker compose --env-file infra/tunnel/.env.tunnel.example -f infra/tunnel/compose.yaml config --quiet
+        env:
+          TUNNEL_TOKEN: placeholder
