@@ -33,6 +33,7 @@ def test_health_all_ok(client: TestClient) -> None:
     body = resp.json()
     assert body["ok"] is True
     assert set(body["checks"]) == {"api", "database", "inngest", "ollama"}
+    assert body["env"] == "dev"
 
 
 def test_health_reports_ollama_down(client: TestClient, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -1,0 +1,25 @@
+# The one entry port of a test or prod stack (PRD H2). The Cloudflare Tunnel points here.
+{
+	admin off
+	auto_https off
+}
+
+:8080 {
+	encode gzip
+
+	# Only the Inngest server inside Docker calls /api/inngest (PRD S8), never the tunnel.
+	# The longer path sorts first, so this wins over /api/* below.
+	handle /api/inngest* {
+		respond 404
+	}
+
+	handle /api/* {
+		reverse_proxy app:8000
+	}
+
+	handle {
+		root * /srv
+		try_files {path} /index.html
+		file_server
+	}
+}
