@@ -69,6 +69,7 @@ p { margin: 0; }
 .logo { display: flex; align-items: center; gap: 10px; padding: 0 8px; color: var(--side-strong); font-weight: 500; }
 .logo-mark { width: 30px; height: 30px; border-radius: 7px; background: var(--accent); color: var(--on-accent); display: grid; place-items: center; font-weight: 700; font-size: 13px; letter-spacing: 0.02em; flex: none; }
 .logo small { display: block; color: var(--side-text); font-size: 11px; font-weight: 400; }
+.env-badge { margin-left: auto; font-size: 10.5px; font-weight: 700; letter-spacing: 0.06em; padding: 2px 7px; border-radius: 999px; background: var(--you-bg); color: var(--you-fg); flex: none; }
 .side nav { display: grid; gap: 2px; }
 .side nav a { display: flex; align-items: center; gap: 10px; width: 100%; color: var(--side-text); padding: 8px 10px; border-radius: 6px; font-weight: 500; min-height: 36px; text-decoration: none; }
 .side nav a:hover { background: var(--side-hi); color: var(--side-strong); }

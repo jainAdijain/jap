@@ -27,4 +27,4 @@ async def health() -> Health:
         "inngest": inngest,
         "ollama": ollama,
     }
-    return Health(ok=all(c.ok for c in checks.values()), checks=checks)
+    return Health(ok=all(c.ok for c in checks.values()), env=settings.jap_env, checks=checks)

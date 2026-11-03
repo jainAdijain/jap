@@ -73,6 +73,11 @@ function Shell() {
           <span className="logo-name">
             Job Application Pipeline<small>Version 0.13.0</small>
           </span>
+          {health?.env && health.env !== 'prod' && (
+            <span className={`env-badge env-${health.env}`} title={`This is the ${health.env} copy of JAP, not prod`}>
+              {health.env.toUpperCase()}
+            </span>
+          )}
         </div>
         <nav aria-label="Sections">
           {VIEWS.map((v) => (

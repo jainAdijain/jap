@@ -10,6 +10,11 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://jap:jap@db:5432/jap"
 
+    # Which environment this stack is (H3): dev, test or prod. The UI shows a DEV or TEST badge.
+    jap_env: str = "dev"
+    # Off in test (H4): an application is never submitted to a real job site from there.
+    jap_submit_enabled: bool = True
+
     openrouter_api_key: str = ""
     # Empty means OpenRouter itself (llm/client.py); only a stand-in for testing sets it.
     openrouter_url: str = ""
