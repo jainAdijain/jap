@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react'
 import { api, type Run, type Switches } from '../api/client'
 import { atsLabel, errorText, money, STARTED_BY, when } from '../format'
 import { useApp } from '../appContext'
+import AccountSection from './AccountSection'
 
 const hhmm = (t: string) => t.slice(0, 5)
 const size = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`)
@@ -204,7 +205,7 @@ export default function SettingsPage() {
       <div className="page-head">
         <div>
           <h1>Settings</h1>
-          <p>How and when JAP works for you. Changes save straight away.</p>
+          <p>How and when JAP works for you, and how you sign in. Changes save straight away.</p>
         </div>
       </div>
 
@@ -324,6 +325,8 @@ export default function SettingsPage() {
           </span>
         </div>
       </div>
+
+      <AccountSection />
 
       <SystemStatus />
     </section>

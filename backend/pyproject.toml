@@ -18,6 +18,7 @@ dependencies = [
     "pypdf>=5.0",
     "python-docx>=1.1",
     "playwright==1.64.1",
+    "segno>=1.6",
 ]
 
 [project.optional-dependencies]
