@@ -31,6 +31,8 @@ from database.models import (
 )
 from llm import PersonalDataBlocked, SpendCapReached
 from llm.client import ModelCallError, OutOfCredits
+from observability import context
+from observability.logs import event
 from pipeline.apply import fields as rules
 from pipeline.apply import security_code
 from pipeline.apply.answers import bank_answer, draft_answer, pick_option
@@ -57,7 +59,18 @@ async def _app(session: AsyncSession, app_id: str, *, lock: bool = False) -> App
     app = await session.get(Application, uuid.UUID(app_id), with_for_update=lock)
     if app is None:
         raise Stop(f"application {app_id} not found")
+    _bind(app)
     return app
+
+
+def _bind(app: Application) -> None:
+    """Every log line and model call from here on names this application (O1, O8)."""
+    context.bind(
+        application_id=app.id,
+        posting_id=app.posting_id,
+        run_id=app.run_id,
+        listing_id=app.listing_id,
+    )
 
 
 MAYBE_SENT = (
@@ -137,6 +150,8 @@ async def create_attempt(session: AsyncSession, listing_id: str, run_id: str | N
     except IntegrityError as exc:  # one_active_attempt: another attempt got there first
         await session.rollback()
         raise Stop("This job is already being prepared") from exc
+    _bind(app)
+    event(log, "apply.created", f"Application started in {app.mode} mode", keep=True, mode=app.mode)
     return str(app.id)
 
 
@@ -301,6 +316,16 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
         out.append(entry)
 
     pending = captcha + pending
+    event(
+        log,
+        "apply.mapped",
+        f"Mapped {len(out)} fields: {drafted} drafted, {len(pending)} need input",
+        keep=True,
+        fields=len(out),
+        drafted=drafted,
+        pending=len(pending),
+        cover_letter=need_letter,
+    )
     if draft_failed and app.run_id:
         await bump(session, app.run_id, "draft_failed", draft_failed)
     app.form_fields = out
@@ -522,6 +547,10 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     if app.submit_started_at is not None:
         await fail(session, app, "Submit outcome unknown: check the employer's site by hand")
         return {"status": "failed"}
+    settings = get_settings()
+    if not settings.jap_submit_enabled:  # H4: only prod sends
+        await fail(session, app, f"Sending is off in {settings.jap_env}: nothing was sent")
+        return {"status": "failed"}
     app.submit_started_at = now
     fields = form_of(app)
     answers = {k: str(v) for k, v in (app.answers or {}).items()}
@@ -544,6 +573,8 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     result = await submit_form(url, fields, answers, files, shot, trace, get_code)
     app = await _app(session, app_id, lock=True)
     if not result.clicked:
+        event(log, "apply.submit_retry", f"Submit not pressed: {result.error}",
+              level=logging.WARNING, keep=True)  # fmt: skip
         app.submit_started_at = None
         await session.commit()
         raise SubmitRetry(result.error or "Could not fill the form")
@@ -569,12 +600,15 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     if app.run_id:
         await bump(session, app.run_id, "applied")
     await session.commit()
+    event(log, "apply.submitted", "Submitted and confirmed", keep=True)
     return {"status": "applied"}
 
 
 async def fail(session: AsyncSession, app: Application, error: str) -> None:
     if app.status in ("applied", "cancelled", "failed"):
         return
+    _bind(app)
+    event(log, "apply.failed", f"Application failed: {error}", level=logging.WARNING, keep=True)
     app.status = "failed"
     app.error = error[:1000]
     await _listing_status(session, app.listing_id, "failed")
@@ -607,6 +641,8 @@ async def read_and_save(session: AsyncSession, app_id: str, url: str) -> int:
             await session.commit()
         raise
     await save_form(session, app_id, read)
+    event(log, "apply.form_read", f"Read the form: {len(read.fields)} fields", keep=True,
+          fields=len(read.fields))  # fmt: skip
     return len(read.fields)
 
 

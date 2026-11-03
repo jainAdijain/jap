@@ -22,6 +22,8 @@ from database import session as db_session
 
 BACKEND = Path(__file__).resolve().parent.parent
 TABLES = (
+    "auth_session, password_reset, app_user, "
+    "log_event, route_stat, alert_state, "
     "form_check, llm_call, possible_duplicate, dedup_override, skill_alias, company_alias, "
     "answer_bank, "
     "application, run, posting, listing, watched_board, company, resume_version, profile"
@@ -67,6 +69,9 @@ def database_url() -> Iterator[str]:
 @pytest.fixture
 def db(database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     """A clean database and data/ folder for one test."""
+    from observability import writer
+
+    writer.flush()  # rows a previous test queued land before the truncate
     with psycopg.connect(_libpq(database_url), autocommit=True) as conn:
         conn.execute(f"TRUNCATE {TABLES} CASCADE")
     monkeypatch.setenv("JAP_DATA_DIR", str(tmp_path))
@@ -108,8 +113,21 @@ def events(monkeypatch: pytest.MonkeyPatch) -> list[tuple[str, dict[str, Any]]]:
     return sent
 
 
+OWNER_EMAIL = "owner@example.com"
+OWNER_PASSWORD = "correct horse battery"
+
+
+@pytest.fixture(autouse=True)
+def fast_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A cheap scrypt cost in tests; the real cost is checked in test_auth.py."""
+    import auth.passwords
+
+    monkeypatch.setattr(auth.passwords, "N", 2**10)
+
+
 @pytest.fixture
-async def api(db: str, events: list[Any]) -> AsyncIterator[httpx.AsyncClient]:
+async def anon(db: str, events: list[Any]) -> AsyncIterator[httpx.AsyncClient]:
+    """A browser with no session."""
     from main import app
 
     async with httpx.AsyncClient(
@@ -117,3 +135,13 @@ async def api(db: str, events: list[Any]) -> AsyncIterator[httpx.AsyncClient]:
     ) as client:
         yield client
     await db_session.get_engine().dispose()
+
+
+@pytest.fixture
+async def api(anon: httpx.AsyncClient) -> httpx.AsyncClient:
+    """A browser signed in as the owner (PRD S1): every /api route but health needs one."""
+    resp = await anon.post(
+        "/api/auth/sign-up", json={"email": OWNER_EMAIL, "password": OWNER_PASSWORD}
+    )
+    assert resp.status_code == 201, resp.text
+    return anon

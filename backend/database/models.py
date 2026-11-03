@@ -9,7 +9,7 @@ from datetime import datetime, time
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import Boolean, Integer, Numeric, Text, Time, func
+from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, Text, Time, func
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -292,6 +292,7 @@ class LlmCall(Timestamps, Base):
     latency_ms: Mapped[int | None]
     error: Mapped[str | None] = mapped_column(Text)
     run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    application_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
 
 
 class FormCheck(Timestamps, Base):
@@ -308,3 +309,98 @@ class FormCheck(Timestamps, Base):
     required: Mapped[int] = mapped_column(Integer, server_default="0")
     error: Mapped[str | None] = mapped_column(Text)
     screenshot_path: Mapped[str | None] = mapped_column(Text)
+
+
+class AppUser(Timestamps, Base):
+    """An account (PRD S1). The first one is the admin."""
+
+    __tablename__ = "app_user"
+
+    id: Mapped[uuid.UUID] = _id()
+    email: Mapped[str] = mapped_column(Text)
+    password_hash: Mapped[str] = mapped_column(Text)
+    is_admin: Mapped[bool] = mapped_column(Boolean, server_default="false")
+    email_verified_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    failed_sign_ins: Mapped[int] = mapped_column(Integer, server_default="0")
+    locked_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    totp_secret: Mapped[str | None] = mapped_column(Text)
+    totp_pending_secret: Mapped[str | None] = mapped_column(Text)
+    totp_last_step: Mapped[int | None] = mapped_column(BigInteger)
+    recovery_codes: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    password_changed_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+
+
+class AuthSession(Timestamps, Base):
+    """A signed-in browser (stage signed_in) or a sign-in waiting for its code (two_step)."""
+
+    __tablename__ = "auth_session"
+
+    id: Mapped[uuid.UUID] = _id()
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("app_user.id"))
+    token_hash: Mapped[str] = mapped_column(Text)
+    stage: Mapped[str] = mapped_column(Text)
+    code_tries: Mapped[int] = mapped_column(Integer, server_default="0")
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_seen_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    user_agent: Mapped[str | None] = mapped_column(Text)
+
+
+class PasswordReset(Timestamps, Base):
+    """An emailed reset link (PRD S4): single use, 30 minutes."""
+
+    __tablename__ = "password_reset"
+
+    id: Mapped[uuid.UUID] = _id()
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("app_user.id"))
+    token_hash: Mapped[str] = mapped_column(Text)
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class LogEvent(Base):
+    """A warning or error, or a step line kept for an application timeline (PRD O3, O8)."""
+
+    __tablename__ = "log_event"
+
+    id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    created_at: Mapped[datetime] = mapped_column(server_default=func.now())
+    level: Mapped[str] = mapped_column(Text)
+    event: Mapped[str] = mapped_column(Text)
+    message: Mapped[str] = mapped_column(Text)
+    logger: Mapped[str] = mapped_column(Text)
+    request_id: Mapped[str | None] = mapped_column(Text)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    application_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    posting_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    inngest_run_id: Mapped[str | None] = mapped_column(Text)
+    fields: Mapped[dict[str, Any]] = mapped_column(JSONB, server_default="{}")
+
+
+class RouteStat(Base):
+    """API requests per route per hour (PRD O4, O5)."""
+
+    __tablename__ = "route_stat"
+
+    hour: Mapped[datetime] = mapped_column(primary_key=True)
+    method: Mapped[str] = mapped_column(Text, primary_key=True)
+    route: Mapped[str] = mapped_column(Text, primary_key=True)
+    count: Mapped[int] = mapped_column(Integer, server_default="0")
+    errors: Mapped[int] = mapped_column(Integer, server_default="0")
+    total_ms: Mapped[int] = mapped_column(BigInteger, server_default="0")
+    max_ms: Mapped[int] = mapped_column(Integer, server_default="0")
+
+
+class AlertState(Base):
+    """When a health alert was last emailed (PRD O6): at most once a day per key."""
+
+    __tablename__ = "alert_state"
+
+    key: Mapped[str] = mapped_column(Text, primary_key=True)
+    last_sent_at: Mapped[datetime]
+    detail: Mapped[str | None] = mapped_column(Text)

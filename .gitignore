@@ -2,6 +2,7 @@
 .env
 .env.*
 !.env.example
+!.env.tunnel.example
 
 # Runtime data (resumes, screenshots, cover letters, backups)
 data/*

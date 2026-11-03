@@ -1,11 +1,24 @@
-"""The one Inngest client. INNGEST_DEV and INNGEST_BASE_URL point it at the dev server."""
+"""The one Inngest client. INNGEST_DEV=1 (dev) points it at the Inngest dev server; test and
+prod run a self-hosted `inngest start` with INNGEST_DEV=0, INNGEST_BASE_URL and their own
+INNGEST_SIGNING_KEY and INNGEST_EVENT_KEY (H3). The SDK reads all of these from the environment."""
+
+import logging
+import os
 
 import httpx
 import inngest
 
+from observability.inngest_mw import LogMiddleware
 from schemas.health import Check
 
-inngest_client = inngest.Inngest(app_id="jap", is_production=False)
+# Unset INNGEST_DEV keeps dev mode, as before; only an explicit 0 or false is production.
+# LogMiddleware: the run, application and Inngest ids on every log line, one line per step.
+inngest_client = inngest.Inngest(
+    app_id="jap",
+    is_production=os.getenv("INNGEST_DEV", "1").lower() in ("0", "false"),
+    middleware=[LogMiddleware],
+    logger=logging.getLogger("inngest"),
+)
 
 
 async def ping_inngest(base_url: str) -> Check:
@@ -15,5 +28,5 @@ async def ping_inngest(base_url: str) -> Check:
     except httpx.HTTPError as exc:
         return Check(ok=False, detail=f"Not reachable: {type(exc).__name__}")
     if resp.status_code >= 500:
-        return Check(ok=False, detail=f"Dev server answered {resp.status_code}")
-    return Check(ok=True, detail="Dev server reachable")
+        return Check(ok=False, detail=f"Inngest answered {resp.status_code}")
+    return Check(ok=True, detail="Reachable")

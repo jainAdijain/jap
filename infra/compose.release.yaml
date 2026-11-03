@@ -1,0 +1,44 @@
+# Release overlay for test and prod (PRD H2 to H5). The Makefile adds it when JAP_RELEASE=1:
+#   docker compose -f infra/compose.yaml -f infra/compose.release.yaml
+# Built UI behind Caddy (one entry port), no source bind mounts, self-hosted Inngest with
+# its own keys, no Adminer, and every service restarts when Docker Desktop starts (H8).
+services:
+  ui:
+    build:
+      target: release
+    ports: !override
+      - "127.0.0.1:${JAP_UI_PORT:?set JAP_UI_PORT}:8080"
+    volumes: !reset []
+    environment: !reset {}
+    restart: unless-stopped
+
+  app:
+    command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+    volumes: !override
+      - ../seed:/seed:ro
+      - ../data:/data
+    environment:
+      INNGEST_DEV: "0"
+      INNGEST_BASE_URL: http://inngest:8288
+      INNGEST_API_BASE_URL: http://inngest:8288
+      INNGEST_EVENT_API_BASE_URL: http://inngest:8288
+      CORS_ORIGINS: '["${JAP_UI_URL:?set JAP_UI_URL}"]'
+    restart: unless-stopped
+
+  inngest:
+    command: inngest start -u http://app:8000/api/inngest --sqlite-dir /var/lib/inngest
+    environment:
+      INNGEST_EVENT_KEY: ${INNGEST_EVENT_KEY:?set INNGEST_EVENT_KEY (make env-create makes one)}
+      INNGEST_SIGNING_KEY: ${INNGEST_SIGNING_KEY:?set INNGEST_SIGNING_KEY (make env-create makes one)}
+    volumes:
+      - inngest_data:/var/lib/inngest
+    restart: unless-stopped
+
+  db:
+    restart: unless-stopped
+
+  adminer:
+    profiles: ["adminer"]
+
+volumes:
+  inngest_data:

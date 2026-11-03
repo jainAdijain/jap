@@ -10,6 +10,11 @@ class Settings(BaseSettings):
 
     database_url: str = "postgresql+psycopg://jap:jap@db:5432/jap"
 
+    # Which environment this stack is (H3): dev, test or prod. The UI shows a DEV or TEST badge.
+    jap_env: str = "dev"
+    # Off in test (H4): an application is never submitted to a real job site from there.
+    jap_submit_enabled: bool = True
+
     openrouter_api_key: str = ""
     # Empty means OpenRouter itself (llm/client.py); only a stand-in for testing sets it.
     openrouter_url: str = ""
@@ -56,6 +61,26 @@ class Settings(BaseSettings):
 
     # Apply (A1): at least this many seconds between two submissions.
     jap_apply_gap_seconds: int = 30
+
+    # Sign-in (PRD S1 to S5). Secure cookies need HTTPS: true on dev, test and prod hosts.
+    jap_cookie_secure: bool = False
+    # When set, only this address can create the first (admin) account.
+    jap_admin_email: str = ""
+    jap_session_idle_days: int = 7
+    jap_session_max_days: int = 30
+
+    # Logging (PRD O1 to O4). LOG_JSON=false prints plain lines, easier to read by eye in dev.
+    log_level: str = "INFO"
+    log_json: bool = True
+    # Keep warnings, errors and timeline steps in the log_event table (O3, O8).
+    jap_log_db: bool = True
+
+    # Health alerts by email (O6). Off where nothing should be sent (dev and test).
+    jap_alerts_enabled: bool = True
+    jap_alert_errors_per_hour: int = 10
+
+    # Sentry's free plan (O15): empty means off. Only redacted errors are sent.
+    sentry_dsn: str = ""
 
     # The UI dev server is the only allowed browser origin.
     cors_origins: list[str] = ["http://localhost:5173"]

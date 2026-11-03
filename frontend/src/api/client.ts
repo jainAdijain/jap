@@ -1,4 +1,5 @@
-const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8001'
+// Same origin by default (H2): Caddy in test and prod, Vite's proxy in dev, pass /api to the app.
+const API_URL = import.meta.env.VITE_API_URL ?? ''
 
 export class ApiError extends Error {
   code: string
@@ -10,12 +11,17 @@ export class ApiError extends Error {
   }
 }
 
+/** Fired when the API says the session has ended (PRD S5), so the app shows sign-in again. */
+export const SIGNED_OUT_EVENT = 'jap:signed-out'
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
-  const resp = await fetch(`${API_URL}${path}`, init)
+  // The session cookie rides along (PRD S5); it is HttpOnly, so scripts never see it.
+  const resp = await fetch(`${API_URL}${path}`, { credentials: 'include', ...init })
   if (resp.status === 204) return undefined as T
   const body = await resp.json().catch(() => null)
   if (!resp.ok) {
     const err = body?.error
+    if (resp.status === 401 && err?.code === 'signed_out') window.dispatchEvent(new Event(SIGNED_OUT_EVENT))
     throw new ApiError(resp.status, err?.code ?? 'error', err?.message ?? `API answered ${resp.status}`)
   }
   return body as T
@@ -28,7 +34,7 @@ const json = (method: string, data: unknown): RequestInit => ({
 })
 
 export type Check = { ok: boolean; detail: string }
-export type Health = { ok: boolean; checks: Record<string, Check> }
+export type Health = { ok: boolean; env?: string; checks: Record<string, Check> }
 
 export type WorkMode = 'remote' | 'hybrid' | 'onsite'
 export type Condition = 'role' | 'skills' | 'location'
@@ -327,6 +333,67 @@ export type Ops = {
   form_checks: FormCheck[]
 }
 
+export type User = { email: string; is_admin: boolean; two_step: boolean; recovery_codes_left: number }
+export type AuthState = { has_accounts: boolean; sign_up_open: boolean; user: User | null; two_step_pending: boolean }
+export type SignInResult = { signed_in: boolean; two_step: boolean; user: User | null }
+export type TwoStepSetup = { secret: string; uri: string; qr_svg: string }
+
+export const auth = {
+  state: () => request<AuthState>('/api/auth/state'),
+  signUp: (email: string, password: string) => request<SignInResult>('/api/auth/sign-up', json('POST', { email, password })),
+  signIn: (email: string, password: string) => request<SignInResult>('/api/auth/sign-in', json('POST', { email, password })),
+  code: (code: string) => request<SignInResult>('/api/auth/sign-in/code', json('POST', { code })),
+  signOut: () => request<void>('/api/auth/sign-out', json('POST', {})),
+  signOutEverywhere: () => request<void>('/api/auth/sign-out-everywhere', json('POST', {})),
+  me: () => request<User>('/api/auth/me'),
+  forgot: (email: string) => request<{ queued: boolean }>('/api/auth/forgot', json('POST', { email })),
+  reset: (token: string, password: string) => request<void>('/api/auth/reset', json('POST', { token, password })),
+  changePassword: (current: string, next: string) =>
+    request<void>('/api/auth/password', json('POST', { current_password: current, new_password: next })),
+  twoStepStart: () => request<TwoStepSetup>('/api/auth/two-step/start', json('POST', {})),
+  twoStepConfirm: (code: string) => request<{ recovery_codes: string[] }>('/api/auth/two-step/confirm', json('POST', { code })),
+  twoStepOff: (password: string) => request<void>('/api/auth/two-step/off', json('POST', { password })),
+  newRecoveryCodes: (password: string) =>
+    request<{ recovery_codes: string[] }>('/api/auth/two-step/recovery-codes', json('POST', { password })),
+}
+
+export type RunBrief = { id: string; trigger: string; status: string; started_at: string; ended_at: string | null; error: string | null }
+export type ErrorGroup = { event: string; count: number; last_at: string; last_message: string; application_id: string | null; request_id: string | null }
+export type RouteStat = { method: string; route: string; count: number; errors: number; avg_ms: number; max_ms: number }
+export type Status = {
+  checked_at: string
+  env: string
+  daily: { on: boolean; at: string | null; last: RunBrief | null; missed: boolean }
+  stuck_runs: RunBrief[]
+  errors_24h: number
+  error_groups: ErrorGroup[]
+  slow_routes: RouteStat[]
+  disk: { data_bytes: number; backups_bytes: number; free_bytes: number; total_bytes: number; used_pct: number }
+  spend: Spend
+  alerts: { key: string; sent_at: string; detail: string | null }[]
+}
+
+export type FunnelWeek = { week: string; found: number; matched: number; prepared: number; applied: number; failed: number }
+export type Insights = {
+  weeks: number
+  funnel: FunnelWeek[]
+  totals: FunnelWeek
+  sources: { source: string; postings: number; matched: number; applied: number; failed: number; success_rate: number | null; top_failures: string[] }[]
+  spend_this_month: { purpose: string; model: string; calls: number; cost_usd: number }[]
+  months: { month: string; cost_usd: number; applied: number; per_application_usd: number | null }[]
+}
+
+export type TimelineItem = {
+  at: string
+  kind: 'step' | 'model' | 'status'
+  event: string
+  text: string
+  level: string
+  duration_ms: number | null
+  cost_usd: number | null
+}
+export type Timeline = { application_id: string; status: string; items: TimelineItem[]; kept_days: number }
+
 export const api = {
   health: (signal?: AbortSignal) => request<Health>('/api/health', { signal }),
   profile: () => request<Profile>('/api/profile'),
@@ -400,6 +467,10 @@ export const api = {
   backupNow: () => request<{ queued: boolean }>('/api/ops/backup', json('POST', {})),
   formCheckNow: () => request<{ queued: boolean }>('/api/ops/form-check', json('POST', {})),
   formCheckShotUrl: (id: string) => `${API_URL}/api/ops/form-check/${id}/screenshot`,
+  status: (signal?: AbortSignal) => request<Status>('/api/ops/status', { signal }),
+  healthCheckNow: () => request<{ queued: boolean }>('/api/ops/health-check', json('POST', {})),
+  insights: (weeks = 8) => request<Insights>(`/api/insights?weeks=${weeks}`),
+  timeline: (appId: string) => request<Timeline>(`/api/applications/${appId}/timeline`),
 }
 
 export const getHealth = api.health

@@ -1,18 +1,31 @@
 # JAP stack: ui, app, inngest, db, adminer. Every port binds to 127.0.0.1 only.
+# This file is dev; test and prod add infra/compose.release.yaml on top (PRD H2 to H5).
 # Host ports come from JAP_*_PORT in .env (defaults below); inside Docker the ports never change.
 # Ollama is not here: it runs natively on the Mac so it can use the GPU.
-# Run through the Makefile (make start), which uses: docker compose -f infra/compose.yaml
+# Run through the Makefile (make start ENV=dev|test|prod), which picks the project name
+# (JAP_PROJECT: jap, jap-test, jap-prod) so each environment keeps its own volumes.
 name: jap
+
+# Docker keeps each container's stdout (JAP's JSON log lines, PRD O3), capped at 5 files of
+# 50 MB. `make logs` follows them; warnings and errors are also kept in log_event for 30 days.
+x-logging: &logging
+  driver: local
+  options:
+    max-size: 50m
+    max-file: "5"
 
 services:
   ui:
+    logging: *logging
     build:
       context: ..
       dockerfile: infra/docker/ui.Dockerfile
+      target: dev
     ports:
       - "127.0.0.1:${JAP_UI_PORT:-5173}:5173"
     environment:
-      VITE_API_URL: http://localhost:${JAP_API_PORT:-8001}
+      # The UI calls /api on its own address; Vite passes it to the app (PRD H2).
+      VITE_API_PROXY: http://app:8000
     volumes:
       - ../frontend:/ui
       - ui_node_modules:/ui/node_modules
@@ -20,6 +33,7 @@ services:
       - app
 
   app:
+    logging: *logging
     build:
       context: ..
       dockerfile: infra/docker/app.Dockerfile
@@ -46,6 +60,7 @@ services:
         condition: service_healthy
 
   inngest:
+    logging: *logging
     image: inngest/inngest:v1.49.0
     command: inngest dev -u http://app:8000/api/inngest --no-discovery
     ports:
@@ -54,6 +69,7 @@ services:
       - app
 
   db:
+    logging: *logging
     image: pgvector/pgvector:pg16
     ports:
       - "127.0.0.1:${JAP_DB_PORT:-5432}:5432"
@@ -71,6 +87,7 @@ services:
       retries: 30
 
   adminer:
+    logging: *logging
     image: adminer:5
     # Listen on IPv4; the image default ([::]) fails where Docker has IPv6 turned off.
     command: ["php", "-S", "0.0.0.0:8080", "-t", "/var/www/html"]

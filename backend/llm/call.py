@@ -2,10 +2,11 @@
 
 Redact every input, guard the outgoing body, stop at the monthly spend cap, call
 OpenRouter, log the call (a hash of the input, never the text), validate the JSON
-against the output model (one retry), and return it. A reply that wraps the JSON in a
-code fence or a sentence is accepted: not every provider behind a model id honours
-response_format. Restoring placeholders in the output is left to the caller, which knows
-which fields may carry them.
+against the output model (one retry), and return it. The run and application in the log
+context (observability/context.py) are written on the llm_call row for the timeline (O8).
+A reply that wraps the JSON in a code fence or a sentence is accepted: not every provider
+behind a model id honours response_format. Restoring placeholders in the output is left
+to the caller, which knows which fields may carry them.
 """
 
 import hashlib
@@ -24,6 +25,7 @@ from database.models import LlmCall
 from llm import client
 from llm.redact import PersonalDataBlocked, Sensitive, guard, redact
 from llm.spend import month_spend
+from observability import context
 
 PROMPTS = Path(__file__).parent / "prompts"
 Out = TypeVar("Out", bound=BaseModel)
@@ -121,6 +123,8 @@ async def call(
             model=model,
             prompt_version=prompt.version,
             input_sha256=input_sha,
+            run_id=context.uuid_of("run_id"),
+            application_id=context.uuid_of("application_id"),
             **fields,
         )
         session.add(row)

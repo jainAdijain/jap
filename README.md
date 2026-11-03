@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.10.0 (new design), 30 Oct 2026.**
+**Version 0.15.0 (logs, health and insights), 2 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -28,7 +28,7 @@ reaches it at `http://host.docker.internal:11434`.
 ## The screens
 
 The UI follows the [redesign mockup v0.5](https://claude.ai/artifact/5V2SRvBgWZu5stN5KY4H7L)
-(PRD 1.5, U1 to U20): a sidebar with four sections, which becomes a top bar on a phone.
+(PRD 1.5, U1 to U20): a sidebar with five sections, which becomes a top bar on a phone.
 
 - **Jobs**: the last search line, **Find new jobs**, a status strip (All open, New, Needs you,
   Ready to send, Sent, Failed), a toolbar with search and filters, and the jobs table. Tick
@@ -38,8 +38,10 @@ The UI follows the [redesign mockup v0.5](https://claude.ai/artifact/5V2SRvBgWZu
   Saved answers, and the cover letter style.
 - **Job preferences**: what decides which jobs show. Job titles, required and nice-to-have
   skills, locations, companies to follow, jobs to hide, and Matching.
+- **Insights**: jobs found and sent per week, results by job site, and AI spend (PRD 1.19).
 - **Settings**: applying (JAP prepares, I send; or JAP applies for me, with a daily limit),
-  the daily search, Search history, AI usage and System status (backup and form check).
+  the daily search, Search history, AI usage, System status (backup and form check) and
+  Health (Daily search, stuck searches, errors, slow pages, disk, alerts sent).
 
 Older names in this README map to the screen as follows: Not applied is **New**, Needs input
 is **Needs you**, Ready for review is **Ready to send**, Approve and submit is **Send
@@ -53,7 +55,30 @@ split into Profile and Job preferences, and the Runs and Status cards are in Set
 2. Pull the embedder: `ollama pull nomic-embed-text`
 3. `make start` creates `.env` from `.env.example` the first time. Put your OpenRouter key and
    email sender in `.env` (it is gitignored; never commit it). See [Sending email](#sending-email).
-4. Open http://localhost:5173: API, Database, Inngest and Ollama should all show OK.
+4. Open http://localhost:5173 and create your account. The first account is the admin
+   (see [Sign-in and accounts](#sign-in-and-accounts)). Settings > System status should show
+   API, Database, Inngest and Ollama as OK.
+
+## Sign-in and accounts
+
+Every page and every `/api` route is behind sign-in (PRD 1.18, S1 to S9); only `/api/health`
+and `/api/auth/*` answer without a session.
+
+- **First account.** On a fresh JAP the sign-in screen offers Create your JAP account. That
+  account is the admin, and sign-up then closes. Invites and other users come in step 2
+  (each user's own data). Set `JAP_ADMIN_EMAIL` in `.env` to allow only your address.
+- **Passwords** are at least 12 characters and stored as salted scrypt hashes. Five wrong
+  tries lock that account's sign-in for 15 minutes.
+- **Forgot password** emails a single-use link, good for 30 minutes, from the mailbox in
+  `.env` to the account's address. It links to `JAP_UI_URL`, so set that to the address
+  you open JAP at. Without a mailbox, use `make set-password EMAIL=...`.
+- **Two-step sign-in** (Settings > Account): scan the QR code with an authenticator app,
+  enter one code, and save the 8 recovery codes. Lost both? `make two-step-off EMAIL=...`.
+- **Sessions** live in an HttpOnly cookie tied to the hostname. They end after 7 days unused or
+  30 days after sign-in. Set `JAP_COOKIE_SECURE=true` wherever JAP is served over HTTPS.
+- **Internal endpoints.** `/api/inngest` answers only direct calls from inside Docker, never
+  a request carrying proxy headers (`X-Forwarded-For`, `Forwarded`, `Cf-Connecting-Ip`), and
+  a write that comes from another site's page is refused.
 
 ## Personal data and models
 
@@ -219,6 +244,49 @@ in Automatic mode. Switching back to Review makes the next run prepare without s
   "(Python)" vs "(Java)" was dropped from the role, so the two jobs merged. Brackets now drop
   only places, work modes, requisition numbers and words like "full-time".
 
+## Logs, Health and Insights
+
+PRD 1.19 (O1 to O15), Part A. Everything runs on the Mac with the rest of JAP and costs
+nothing; the only data that leaves is redacted errors sent to Sentry, and only when
+`SENTRY_DSN` is set.
+
+- **Logs**: the app and every Inngest function write one JSON line per event to stdout, with
+  the ids it belongs to: request, run, application, posting, listing, Inngest run and
+  function (`backend/observability/`). Every line is scrubbed first: email addresses, phone
+  numbers, keys and tokens, `password=...` and the like, and emailed security codes are
+  replaced, and fields such as answers, resume text and letters are never written.
+  `LOG_JSON=false` prints plain lines instead. Docker keeps each container's lines capped at
+  5 files of 50 MB (`make logs`). Every API response has an `X-Request-ID` header, so a
+  problem can be found by its request.
+- **Kept in Postgres**: warnings, errors and each apply step go to `log_event` for 30 days, and
+  each API route's count, errors and time taken go to `route_stat` per hour. `make errors`
+  shows the last 20 warnings and errors.
+- **Settings > Health**: whether today's Daily search ran, searches stuck for over 30
+  minutes, errors in the last 24 hours grouped by what failed, the slowest pages, disk use,
+  and the alerts emailed in the last 7 days.
+- **Health alerts**: `health-watch` runs every hour (at :40). It deletes log rows past 30 days
+  and emails the address on My profile when the Daily search didn't start, a search is stuck,
+  more than `JAP_ALERT_ERRORS_PER_HOUR` (10) errors happened in an hour, AI spend reached 80% or
+  100% of the limit, or the disk is over 85% full. Each problem is emailed at most once a day
+  (spend once a month). `JAP_ALERTS_ENABLED=false` turns them off; outside prod the subject
+  starts with the environment, for example `[DEV]`. **Check now** or `make health-check` runs
+  it at once. Failed searches, applications and form tests keep their own alerts.
+- **What JAP did**: a failed or sent job's panel has a timeline of its application: the form
+  read, fields mapped, each AI use with its time and cost, submit, and the confirmation email.
+- **Insights** (new page): jobs found, matching, started, sent and failed per week; results by
+  job site with the commonest failure reasons; AI spend this month by use and model, and the
+  last six months with the cost per sent application.
+- **Sentry** (optional, free Developer plan): create a project at sentry.io, put its DSN in
+  `SENTRY_DSN` and restart. Only errors are sent, with no request bodies, cookies, headers or
+  local variables, and every message scrubbed.
+- **Uptime from outside** (O7): once prod is public, add a free uptime check (a Cloudflare
+  health check, or a free monitor such as UptimeRobot) on `https://jap.tutorial.monster/api/health`
+  every 5 minutes, emailing you when it fails. It works even when the Mac is asleep.
+
+Part B comes after sign-in step 2: the user on every log line, Health for the admin only,
+first-party usage counts (`usage_event`), each user's own Insights, and per-user counts and
+spend for the admin.
+
 ## Cover letters
 
 JAP writes a cover letter only when the application form makes its cover letter field
@@ -281,6 +349,55 @@ use `IMAP_HOST=imap.gmail.com`. JAP uses only Greenhouse emails that arrive afte
 waits up to 3 minutes, and never stores the code or sends it to a model. No code in time: nothing
 was sent and the job becomes Apply yourself.
 
+## Hosting: dev, test and prod
+
+JAP runs for free on the Mac as three environments, published over HTTPS by JAP's own
+Cloudflare Tunnel ([PRD](https://claude.ai/artifact/WL9RYjsPDCTmknMLRqzKRj) H1 to H8,
+[hosting plan](https://claude.ai/artifact/R6yA1f9SrffxRQ968Dt2QB)). It is up while the Mac
+is on and awake.
+
+| | dev | test | prod |
+| --- | --- | --- | --- |
+| Address | dev.jap.tutorial.monster | test.jap.tutorial.monster | jap.tutorial.monster |
+| Code | this checkout, live reload | a tag, in `~/jap-envs/test` | a tag that passed test, in `~/jap-envs/prod` |
+| Entry port | 5173 (Vite) | 5273 (Caddy) | 5373 (Caddy) |
+| API / Inngest / DB ports | 8001 / 8290 / 5432 | 8101 / 8390 / 5433 | 8201 / 8490 / 5434 |
+| Sends applications and email | yes (your own setup) | never | yes |
+
+Every target takes `ENV=dev|test|prod`; without it you get dev, exactly as before
+(`make logs ENV=prod`, `make backup ENV=prod`). Test and prod use
+`infra/compose.release.yaml`: the built UI behind Caddy, which passes `/api` to the app (the
+browser only ever talks to one address), a self-hosted Inngest with its own keys, no source
+mounts, no Adminer, and every service restarts when Docker Desktop starts. Inngest's
+dashboard, Postgres, Adminer and Ollama are never published. Test has
+`JAP_SUBMIT_ENABLED=false` and no SMTP login, so an application prepared there is never
+sent, and the UI shows a TEST (or DEV) badge.
+
+**First time**
+
+1. Docker Desktop: Settings, General, turn on *Start Docker Desktop when you sign in*.
+2. `make mac-wake` so the Mac wakes at 05:55 for the 06:00 search.
+3. Tag a release on `main` (`git tag v0.13.0 && git push origin v0.13.0`), then
+   `make env-create ENV=test REF=v0.13.0` and `make env-create ENV=prod REF=v0.13.0`.
+   Each writes `~/jap-envs/<env>/.env` with its own ports, database password and Inngest keys.
+   Add the OpenRouter key to both, and the real mailbox password to prod only.
+4. Cloudflare dashboard, Zero Trust, Networks, Tunnels: create a tunnel named `jap`, and add
+   three public hostnames: `jap.tutorial.monster` to `http://host.docker.internal:5373`,
+   `test.jap.tutorial.monster` to `:5273` and `dev.jap.tutorial.monster` to `:5173`.
+   Copy `infra/tunnel/.env.tunnel.example` to `.env.tunnel` and paste the token.
+5. Only once sign-in is merged and running (PRD H6, S1 to S9): `make tunnel-start`.
+
+**Releasing**
+
+1. `make promote ENV=test REF=v0.14.0`: checks the tag out in the test worktree, builds,
+   migrates and waits for `/api/health`.
+2. Check it at test.jap.tutorial.monster (a search, one application prepared), then
+   `make mark-passed`.
+3. `make promote ENV=prod REF=v0.14.0`: refuses a tag that has not passed test, backs up
+   prod first, then the same steps.
+4. Something wrong: `make rollback ENV=prod` goes back to the previous tag. If the new tag
+   changed the database, restore the backup taken in step 3 (`make restore ENV=prod FILE=...`).
+
 ## Make targets
 
 | Target | Does |
@@ -297,16 +414,27 @@ was sent and the job becomes Apply yourself.
 | `make code-mail-check` | Log in to the mailbox over IMAP and count the Greenhouse emails it holds (security codes, PRD A5) |
 | `make qa` | Dedup QA set: place the 106 labelled job pairs and print the accuracy |
 | `make form-check` | Read one live form per ATS now (the weekly form test); nothing is submitted |
+| `make set-password EMAIL=...` | Set a new password for an account from the machine (asks twice) |
+| `make two-step-off EMAIL=...` | Turn two-step sign-in off for an account (phone and recovery codes lost) |
+| `make sign-out-all EMAIL=...` | End every session of an account |
+| `make health-check` | Run the hourly health watch now: old log rows deleted, alerts that are due emailed |
+| `make errors` | The last 20 warnings and errors from `log_event` |
 | `make email-test TO=...` | Send one test email from the mailbox in `.env` |
 | `make llm-check` | One tiny test call to each OpenRouter model (no personal data) |
 | `make ollama-check` | Is Ollama answering with `nomic-embed-text` pulled |
 | `make demo` / `make demo-clear` | Load or remove the demo postings used to check dedup and the filters |
+| `make env-create ENV=test REF=...` | Make the test or prod worktree in `~/jap-envs` and its `.env` |
+| `make promote ENV=... REF=...` / `make rollback ENV=...` | Move test or prod to a tag, or back to the one before |
+| `make mark-passed` | After checking test by hand, allow its tag into prod |
+| `make tunnel-start` / `tunnel-stop` / `tunnel-status` | JAP's Cloudflare Tunnel (`.env.tunnel`) |
+| `make mac-wake` | Wake the Mac at 05:55 every day for the 06:00 search |
 
 ## Layout
 
 ```
 Makefile            .env.example
-infra/              compose.yaml, docker/ (Dockerfiles), postgres/init.sql, scripts/
+infra/              compose.yaml, compose.release.yaml (test, prod), docker/ (Dockerfiles),
+                    caddy/, env/ (test, prod settings), tunnel/, postgres/init.sql, scripts/
 seed/               companies.yaml, skills.yaml
 backend/            main.py, config.py, schemas/, database/ (+ migrations/), api/,
                     sources/, pipeline/, llm/, functions/ (Inngest), tests/
@@ -319,6 +447,9 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.15.0 | 2 Nov 2026 | Logs, Health and Insights (PRD 1.19, Part A: O1 to O12, O15): JSON log lines with request, run, application and Inngest ids, scrubbed of personal data and secrets; warnings, errors and apply steps kept 30 days in `log_event`, API timings per route in `route_stat`; Docker log cap; `X-Request-ID`; Settings > Health; hourly `health-watch` with alert emails at most once a day; a timeline on each application; the Insights page; optional Sentry (`SENTRY_DSN`); `make health-check` and `make errors`; migration `0008_observability` |
+| 0.14.0 | 2 Nov 2026 | Hosting with dev, test and prod (PRD 1.17, H1 to H8): every make target takes `ENV=dev\|test\|prod`; test and prod run from git worktrees in `~/jap-envs` with `infra/compose.release.yaml` (built UI behind Caddy, self-hosted Inngest, no Adminer, restart on Docker start); `make env-create`, `promote`, `mark-passed`, `rollback`, `tunnel-start/stop/status`, `mac-wake`; the UI calls `/api` on its own address; `JAP_ENV` badge; `JAP_SUBMIT_ENABLED=false` in test never submits |
+| 0.13.0 | 2 Nov 2026 | Sign-in and accounts, step 1 (PRD 1.18, S1 to S9, U21). Sign-in screen before anything loads: create the first account (the admin; sign-up then closes), sign in, Forgot password with an emailed single-use 30-minute link, and the two-step code. Settings > Account: Change password, Two-step sign-in with a QR code and 8 recovery codes, Sign out and Sign out everywhere; Sign out also at the foot of the sidebar. Backend: `app_user`, `auth_session` and `password_reset` (migration 0007), scrypt hashes, a 15-minute lock after 5 wrong tries, TOTP with replay protection, HttpOnly host-only session cookies (7 days idle, 30 days at most; `__Host-` and Secure with `JAP_COOKIE_SECURE`), every `/api` route but health and `/api/auth/*` behind a session, `/api/inngest` closed to proxied requests, writes from other origins refused. `make set-password`, `make two-step-off`, `make sign-out-all`; `make form-check` now runs inside the app container |
 | 0.12.0 | 31 Oct 2026 | Greenhouse emailed security code (PRD 1.11, A5): when the form asks for the code it emailed, JAP reads it from its own mailbox over IMAP (`IMAP_HOST`, `IMAP_PORT`, `IMAP_SSL`, same login as SMTP) after a Gmail filter forwards it there, using only Greenhouse emails that arrive after Submit and waiting up to 3 minutes; types it into the boxes and presses Submit once more; no code, nowhere to type it or a code the site refuses means nothing was sent and the job becomes Apply yourself; `make code-mail-check`; Greenhouse security codes section |
 | 0.11.2 | 31 Oct 2026 | Apply fixes from the first real Automatic runs. Greenhouse: a combobox counts as filled when it changed from the fresh page (the phone Country picker shows only "+91"), values are read back after a short settle, a phone the page reformats still matches, and a field that won't keep its value is named with what the page shows. Ashby: Yes/No questions made of buttons are read as a choice (answer bank or Needs input) and filled by clicking the button; the page's own error text after Submit is in the error, and a "required" or spam-check error counts as not sent. "Successfully submitted" wording is taken as a confirmation. Greenhouse's emailed security code step is recognised and reported as not sent, to apply yourself |
 | 0.11.1 | 31 Oct 2026 | Fix "OpenRouter 402" on drafted answers: every model call now sets `max_tokens` (about 3 characters a token plus room for the JSON for an answer, a fixed cap per purpose otherwise) instead of reserving the model's whole 64,000-token output against the credits; a 402 shows as "OpenRouter is out of credits" without the key link, stops further drafts on the same form, fails the cover letter without a retry and does not retry posting extraction or resume parsing; a reply cut off at the cap is reported as such |
