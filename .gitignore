@@ -24,6 +24,7 @@ __pycache__/
 # Node
 node_modules/
 frontend/dist/
+frontend/.vite/
 *.tsbuildinfo
 
 # OS / editors
