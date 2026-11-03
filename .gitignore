@@ -8,6 +8,10 @@
 data/*
 !data/.gitkeep
 
+# Product artifacts (PRD, build plan, engineering design doc). This repo is public and they
+# carry personal data, so they stay on the Mac. AGENTS.md tells agents to read them if present.
+docs/
+
 # Python
 __pycache__/
 *.py[cod]
