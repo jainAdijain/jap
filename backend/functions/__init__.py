@@ -13,6 +13,7 @@ from functions.client import inngest_client
 from functions.enrich_posting import enrich_posting
 from functions.fetch_board import fetch_board
 from functions.form_check import form_check_fn
+from functions.health_watch import health_watch
 from functions.notify_applied import notify_applied
 from functions.notify_failure import notify_failure
 from functions.parse_resume import parse_resume
@@ -33,6 +34,7 @@ ALL_FUNCTIONS: list[inngest.Function[Any]] = [
     notify_failure,
     daily_backup,
     form_check_fn,
+    health_watch,
 ]
 
 __all__ = ["ALL_FUNCTIONS", "inngest_client"]

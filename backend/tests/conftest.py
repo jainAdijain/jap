@@ -23,6 +23,7 @@ from database import session as db_session
 BACKEND = Path(__file__).resolve().parent.parent
 TABLES = (
     "auth_session, password_reset, app_user, "
+    "log_event, route_stat, alert_state, "
     "form_check, llm_call, possible_duplicate, dedup_override, skill_alias, company_alias, "
     "answer_bank, "
     "application, run, posting, listing, watched_board, company, resume_version, profile"
@@ -68,6 +69,9 @@ def database_url() -> Iterator[str]:
 @pytest.fixture
 def db(database_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[str]:
     """A clean database and data/ folder for one test."""
+    from observability import writer
+
+    writer.flush()  # rows a previous test queued land before the truncate
     with psycopg.connect(_libpq(database_url), autocommit=True) as conn:
         conn.execute(f"TRUNCATE {TABLES} CASCADE")
     monkeypatch.setenv("JAP_DATA_DIR", str(tmp_path))

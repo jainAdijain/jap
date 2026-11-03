@@ -357,6 +357,43 @@ export const auth = {
     request<{ recovery_codes: string[] }>('/api/auth/two-step/recovery-codes', json('POST', { password })),
 }
 
+export type RunBrief = { id: string; trigger: string; status: string; started_at: string; ended_at: string | null; error: string | null }
+export type ErrorGroup = { event: string; count: number; last_at: string; last_message: string; application_id: string | null; request_id: string | null }
+export type RouteStat = { method: string; route: string; count: number; errors: number; avg_ms: number; max_ms: number }
+export type Status = {
+  checked_at: string
+  env: string
+  daily: { on: boolean; at: string | null; last: RunBrief | null; missed: boolean }
+  stuck_runs: RunBrief[]
+  errors_24h: number
+  error_groups: ErrorGroup[]
+  slow_routes: RouteStat[]
+  disk: { data_bytes: number; backups_bytes: number; free_bytes: number; total_bytes: number; used_pct: number }
+  spend: Spend
+  alerts: { key: string; sent_at: string; detail: string | null }[]
+}
+
+export type FunnelWeek = { week: string; found: number; matched: number; prepared: number; applied: number; failed: number }
+export type Insights = {
+  weeks: number
+  funnel: FunnelWeek[]
+  totals: FunnelWeek
+  sources: { source: string; postings: number; matched: number; applied: number; failed: number; success_rate: number | null; top_failures: string[] }[]
+  spend_this_month: { purpose: string; model: string; calls: number; cost_usd: number }[]
+  months: { month: string; cost_usd: number; applied: number; per_application_usd: number | null }[]
+}
+
+export type TimelineItem = {
+  at: string
+  kind: 'step' | 'model' | 'status'
+  event: string
+  text: string
+  level: string
+  duration_ms: number | null
+  cost_usd: number | null
+}
+export type Timeline = { application_id: string; status: string; items: TimelineItem[]; kept_days: number }
+
 export const api = {
   health: (signal?: AbortSignal) => request<Health>('/api/health', { signal }),
   profile: () => request<Profile>('/api/profile'),
@@ -430,6 +467,10 @@ export const api = {
   backupNow: () => request<{ queued: boolean }>('/api/ops/backup', json('POST', {})),
   formCheckNow: () => request<{ queued: boolean }>('/api/ops/form-check', json('POST', {})),
   formCheckShotUrl: (id: string) => `${API_URL}/api/ops/form-check/${id}/screenshot`,
+  status: (signal?: AbortSignal) => request<Status>('/api/ops/status', { signal }),
+  healthCheckNow: () => request<{ queued: boolean }>('/api/ops/health-check', json('POST', {})),
+  insights: (weeks = 8) => request<Insights>(`/api/insights?weeks=${weeks}`),
+  timeline: (appId: string) => request<Timeline>(`/api/applications/${appId}/timeline`),
 }
 
 export const getHealth = api.health

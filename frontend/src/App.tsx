@@ -3,6 +3,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { auth, SIGNED_OUT_EVENT, type AuthState, type User } from './api/client'
 import { AuthCtx, useAuth } from './authContext'
 import { ago, errorText, plural } from './format'
+import InsightsPage from './pages/InsightsPage'
 import JobsPage from './pages/JobsPage'
 import PreferencesPage from './pages/PreferencesPage'
 import ProfilePage from './pages/ProfilePage'
@@ -22,9 +23,10 @@ const ICONS: Record<View, string> = {
   jobs: 'M3 9a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2zM9 7V5a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2',
   profile: 'M12 4a4 4 0 1 1 0 8 4 4 0 0 1 0-8zM4 21c1-4 4-6 8-6s7 2 8 6',
   prefs: 'M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M14 6a2 2 0 1 0 4 0 2 2 0 1 0-4 0M8 12a2 2 0 1 0 4 0 2 2 0 1 0-4 0M16 18a2 2 0 1 0 4 0 2 2 0 1 0-4 0',
+  insights: 'M4 20V10M10 20V4M16 20v-7M22 20H2',
   settings: 'M12 9a3 3 0 1 1 0 6 3 3 0 0 1 0-6zM12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1',
 }
-const LABELS: Record<View, string> = { jobs: 'Jobs', profile: 'Profile', prefs: 'Job preferences', settings: 'Settings' }
+const LABELS: Record<View, string> = { jobs: 'Jobs', profile: 'Profile', prefs: 'Job preferences', insights: 'Insights', settings: 'Settings' }
 
 function nextSearch(at: string): string {
   const [h, m] = at.split(':').map(Number)
@@ -71,7 +73,7 @@ function Shell() {
         <div className="logo">
           <span className="logo-mark">JAP</span>
           <span className="logo-name">
-            Job Application Pipeline<small>Version 0.13.0</small>
+            Job Application Pipeline<small>Version 0.15.0</small>
           </span>
           {health?.env && health.env !== 'prod' && (
             <span className={`env-badge env-${health.env}`} title={`This is the ${health.env} copy of JAP, not prod`}>
@@ -114,6 +116,7 @@ function Shell() {
         {view === 'jobs' && <JobsPage />}
         {view === 'profile' && <ProfilePage />}
         {view === 'prefs' && <PreferencesPage />}
+        {view === 'insights' && <InsightsPage />}
         {view === 'settings' && <SettingsPage />}
       </div>
     </div>

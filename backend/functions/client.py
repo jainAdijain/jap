@@ -4,14 +4,21 @@ INNGEST_SIGNING_KEY and INNGEST_EVENT_KEY (H3). The SDK reads all of these from 
 
 import os
 
+import logging
+
 import httpx
 import inngest
 
+from observability.inngest_mw import LogMiddleware
 from schemas.health import Check
 
 # Unset INNGEST_DEV keeps dev mode, as before; only an explicit 0 or false is production.
+# LogMiddleware: the run, application and Inngest ids on every log line, one line per step.
 inngest_client = inngest.Inngest(
-    app_id="jap", is_production=os.getenv("INNGEST_DEV", "1").lower() in ("0", "false")
+    app_id="jap",
+    is_production=os.getenv("INNGEST_DEV", "1").lower() in ("0", "false"),
+    middleware=[LogMiddleware],
+    logger=logging.getLogger("inngest"),
 )
 
 

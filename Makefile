@@ -30,7 +30,7 @@ COMPOSE := docker compose -p $(JAP_PROJECT) --env-file $(ROOT)/.env $(COMPOSE_FI
 TUNNEL := docker compose --env-file .env.tunnel -f infra/tunnel/compose.yaml
 
 .DEFAULT_GOAL := help
-.PHONY: help env env-create promote mark-passed rollback tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore form-check two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check demo demo-clear
+.PHONY: help env env-create promote mark-passed rollback tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check demo demo-clear
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
@@ -104,6 +104,14 @@ backup: ## Dump the database to data/backups/
 
 restore: ## Restore a backup: make restore FILE=data/backups/<file>.sql.gz
 	@JAP_ROOT="$(ROOT)" COMPOSE="$(COMPOSE)" infra/scripts/restore.sh "$(FILE)"
+
+health-check: ## Run the hourly health watch now: delete old log rows, email alerts that are due
+	@curl -fsS -X POST http://127.0.0.1:$(JAP_API_PORT)/api/ops/health-check > /dev/null && \
+		echo "Health check started. Results: Settings > Status, or the health-watch run in Inngest."
+
+errors: ## The last 20 warnings and errors JAP logged (log_event, kept 30 days)
+	@$(COMPOSE) exec -T db psql -U $(or $(POSTGRES_USER),jap) -d $(or $(POSTGRES_DB),jap) -c \
+		"SELECT to_char(created_at, 'MM-DD HH24:MI') AS at, level, event, left(message, 90) AS message FROM log_event WHERE level IN ('warning', 'error', 'critical') ORDER BY created_at DESC LIMIT 20"
 
 form-check: ## Read one live form per ATS now (the weekly form test; nothing is submitted)
 	@$(COMPOSE) exec -T app python -m functions.events form-check/requested > /dev/null && \

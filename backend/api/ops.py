@@ -1,7 +1,8 @@
 """Hardening on the Status card (Phase 8): the daily backup and the weekly form test.
 
 GET /api/ops shows the last backup and each ATS's last form test; the two POSTs start a
-backup or a form test now (the same Inngest functions the schedules run).
+backup or a form test now (the same Inngest functions the schedules run). GET /api/ops/status
+is the health part of Status (PRD 1.19, O5).
 """
 
 import uuid
@@ -15,8 +16,10 @@ from config import get_settings
 from database.models import FormCheck
 from database.session import Session
 from functions.events import send
+from observability import status as health
 from pipeline import backup, form_check
 from schemas.ops import BackupOut, FormCheckOut, Ops
+from schemas.status import Status
 
 router = APIRouter(prefix="/ops", tags=["ops"])
 
@@ -45,6 +48,20 @@ async def ops(session: Session) -> Ops:
         backup_today=backup.has_today(),
         form_checks=[_check_out(r) for r in await form_check.latest(session)],
     )
+
+
+@router.get("/status", response_model=Status)
+async def status(session: Session) -> Status:
+    """Settings > Status (PRD O5): daily search, stuck searches, errors, slow routes, disk,
+    spend and recent health alerts."""
+    return await health.status(session)
+
+
+@router.post("/health-check", status_code=202)
+async def health_check_now() -> dict[str, bool]:
+    """Run health-watch now: old log rows deleted, alerts that are due emailed."""
+    await send("health/check-requested")
+    return {"queued": True}
 
 
 @router.post("/backup", status_code=202)

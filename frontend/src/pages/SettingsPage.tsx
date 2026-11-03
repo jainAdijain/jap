@@ -1,12 +1,13 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
 
-import { api, type Run, type Switches } from '../api/client'
+import { api, type Run, type Status, type Switches } from '../api/client'
 import { atsLabel, errorText, money, STARTED_BY, when } from '../format'
 import { useApp } from '../appContext'
 import AccountSection from './AccountSection'
 
 const hhmm = (t: string) => t.slice(0, 5)
-const size = (bytes: number) => (bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : `${(bytes / 1024 / 1024).toFixed(1)} MB`)
+const size = (bytes: number) =>
+  bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : bytes < 1024 ** 3 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${(bytes / 1024 ** 3).toFixed(1)} GB`
 
 function problems(run: Run): [string, string] {
   if (run.status === 'failed') return [run.error ?? 'The search failed', 'error-text']
@@ -175,6 +176,155 @@ function SystemStatus() {
   )
 }
 
+const ALERT_NAMES: Record<string, string> = {
+  'daily-missed': 'Daily search did not start',
+  'stuck-run': 'A search was stuck',
+  errors: 'Many errors in an hour',
+  'spend-80': '80% of the AI limit used',
+  'spend-100': 'AI limit reached',
+  disk: 'Disk nearly full',
+}
+
+/** Health (PRD O5): the Daily search, stuck searches, errors, slow pages, disk and alerts. */
+function Health() {
+  const { tick, toast } = useApp()
+  const [status, setStatus] = useState<Status | null>(null)
+  const [failed, setFailed] = useState<string | null>(null)
+  const [open, setOpen] = useState(false)
+  useEffect(() => {
+    const load = () =>
+      api.status().then(
+        (s) => {
+          setStatus(s)
+          setFailed(null)
+        },
+        (err) => setFailed(errorText(err)),
+      )
+    load()
+    const t = window.setInterval(load, 60000)
+    return () => window.clearInterval(t)
+  }, [tick])
+  const checkNow = async () => {
+    try {
+      await api.healthCheckNow()
+      toast('Checking now. Any alert that is due is emailed to you.')
+    } catch (err) {
+      toast({ text: errorText(err), bad: true })
+    }
+  }
+  const row = (ok: boolean | null, name: string, detail: string, extra?: ReactNode) => (
+    <div className="hrow">
+      <i className={ok === null ? '' : ok ? 'ok' : 'bad'} />
+      <b>{name}</b>
+      <span className="hd muted">{detail}</span>
+      {extra ?? <span />}
+    </div>
+  )
+  if (!status) {
+    return (
+      <div className="sec">
+        <div className="sec-l">
+          <h2>Health</h2>
+        </div>
+        <div className="sec-r">
+          <p className={failed ? 'error-text' : 'muted'}>{failed ?? 'Checking…'}</p>
+        </div>
+      </div>
+    )
+  }
+  const d = status.daily
+  const last = d.last
+  const daily = !d.on
+    ? 'Off'
+    : d.missed
+      ? `Today's ${d.at} search has not started.`
+      : last
+        ? `Last ${when(last.started_at)}: ${last.status === 'failed' ? `failed (${last.error ?? 'no reason'})` : last.status}`
+        : `Set for ${d.at}. Not run yet.`
+  const disk = status.disk
+  return (
+    <div className="sec">
+      <div className="sec-l">
+        <h2>Health</h2>
+        <p>Problems from the last 24 hours. JAP checks every hour and emails you once a day about anything below that needs you.</p>
+      </div>
+      <div className="sec-r">
+        <div className="health">
+          {row(!d.on ? null : !d.missed && last?.status !== 'failed', 'Daily search', daily)}
+          {row(
+            status.stuck_runs.length === 0,
+            'Stuck searches',
+            status.stuck_runs.length === 0
+              ? 'None'
+              : status.stuck_runs.map((r) => `${STARTED_BY[r.trigger as Run['trigger']] ?? r.trigger}, started ${when(r.started_at)}, still ${r.status}`).join('; '),
+          )}
+          {row(
+            status.errors_24h === 0,
+            'Errors',
+            status.errors_24h === 0 ? 'None in the last 24 hours' : `${status.errors_24h} in the last 24 hours`,
+            status.error_groups.length > 0 ? (
+              <button type="button" className="btn-link" onClick={() => setOpen(!open)}>
+                {open ? 'Hide' : 'Show'}
+              </button>
+            ) : undefined,
+          )}
+          {open && status.error_groups.length > 0 && (
+            <div className="table-scroll">
+              <table className="hist">
+                <thead>
+                  <tr>
+                    <th>What</th>
+                    <th>Times</th>
+                    <th>Last</th>
+                    <th>Latest message</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {status.error_groups.map((g) => (
+                    <tr key={g.event}>
+                      <td className="mono">{g.event}</td>
+                      <td className="mono">{g.count}</td>
+                      <td className="mono">{when(g.last_at)}</td>
+                      <td title={g.request_id ? `Request ${g.request_id}` : undefined}>{g.last_message}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+          {row(
+            status.slow_routes.every((r) => r.avg_ms < 2000),
+            'Slowest pages',
+            status.slow_routes.length === 0
+              ? 'No requests yet'
+              : status.slow_routes
+                  .slice(0, 3)
+                  .map((r) => `${r.method} ${r.route.replace(/^\/api/, '')} ${r.avg_ms} ms on average (${r.count})`)
+                  .join(' · '),
+          )}
+          {row(
+            disk.used_pct <= 85,
+            'Disk',
+            disk.total_bytes
+              ? `${disk.used_pct}% used, ${size(disk.free_bytes)} free. JAP's files: ${size(disk.data_bytes)}, of which backups ${size(disk.backups_bytes)}.`
+              : 'Data folder not found',
+          )}
+          {row(
+            status.alerts.length === 0,
+            'Alerts sent',
+            status.alerts.length === 0
+              ? 'None in the last 7 days'
+              : status.alerts.map((a) => `${ALERT_NAMES[a.key.split(':')[0]] ?? a.detail ?? a.key} (${when(a.sent_at)})`).join('; '),
+            <button type="button" onClick={() => void checkNow()}>
+              Check now
+            </button>,
+          )}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 export default function SettingsPage() {
   const { profile, setProfile, toast } = useApp()
   const [time, setTime] = useState<string | null>(null)
@@ -329,6 +479,7 @@ export default function SettingsPage() {
       <AccountSection />
 
       <SystemStatus />
+      <Health />
     </section>
   )
 }

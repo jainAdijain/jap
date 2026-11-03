@@ -19,6 +19,7 @@ dependencies = [
     "python-docx>=1.1",
     "playwright==1.64.1",
     "segno>=1.6",
+    "sentry-sdk>=2.18,<3",
 ]
 
 [project.optional-dependencies]
