@@ -2,9 +2,8 @@
 prod run a self-hosted `inngest start` with INNGEST_DEV=0, INNGEST_BASE_URL and their own
 INNGEST_SIGNING_KEY and INNGEST_EVENT_KEY (H3). The SDK reads all of these from the environment."""
 
-import os
-
 import logging
+import os
 
 import httpx
 import inngest
