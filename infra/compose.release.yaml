@@ -16,7 +16,7 @@ services:
     command: ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
     volumes: !override
       - ../seed:/seed:ro
-      - ../data:/data
+      - ../${JAP_DATA_HOST_DIR:-data}:/data
     environment:
       INNGEST_DEV: "0"
       INNGEST_BASE_URL: http://inngest:8288

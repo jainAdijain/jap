@@ -1,9 +1,9 @@
 # JAP stack: ui, app, inngest, db, adminer. Every port binds to 127.0.0.1 only.
-# This file is dev; test and prod add infra/compose.release.yaml on top (PRD H2 to H5).
+# This file is the local stack; live adds infra/compose.release.yaml on top (PRD H2 to H5).
 # Host ports come from JAP_*_PORT in .env (defaults below); inside Docker the ports never change.
 # Ollama is not here: it runs natively on the Mac so it can use the GPU.
-# Run through the Makefile (make start ENV=dev|test|prod), which picks the project name
-# (JAP_PROJECT: jap, jap-test, jap-prod) so each environment keeps its own volumes.
+# Run through the Makefile (make start ENV=local|live), which picks the project name
+# (JAP_PROJECT: jap, jap-live) so each environment keeps its own volumes.
 name: jap
 
 # Docker keeps each container's stdout (JAP's JSON log lines, PRD O3), capped at 5 files of
@@ -39,7 +39,10 @@ services:
       dockerfile: infra/docker/app.Dockerfile
     ports:
       - "127.0.0.1:${JAP_API_PORT:-8001}:8000"
-    env_file: ../.env
+    # Which env file is injected into the container: local reads .env, live reads .env.live.
+    # The Makefile's --env-file only substitutes variables in this file, so it must be named
+    # here too, or live would run on local's settings (JAP_ENV_FILE, set in infra/env/live.env).
+    env_file: ../${JAP_ENV_FILE:-.env}
     environment:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-jap}:${POSTGRES_PASSWORD:-jap}@db:5432/${POSTGRES_DB:-jap}
       INNGEST_DEV: "1"
@@ -51,7 +54,8 @@ services:
     volumes:
       - ../backend:/app
       - ../seed:/seed:ro
-      - ../data:/data
+      # Each environment keeps its own data folder (local: data, live: data-live).
+      - ../${JAP_DATA_HOST_DIR:-data}:/data
     extra_hosts:
       # Reach Ollama on the Mac. Docker Desktop provides this name; the line keeps Linux working too.
       - "host.docker.internal:host-gateway"

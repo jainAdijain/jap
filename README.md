@@ -1,9 +1,11 @@
 # JAP: Job Application Pipeline
 
-**Version 0.15.0 (logs, health and insights), 2 Nov 2026.**
+**Version 0.16.0 (local and live), 4 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
+It is a personal, single-user tool today: one account, one profile, one resume (see
+[Sign-in and accounts](#sign-in-and-accounts)).
 The [JAP PRD](https://claude.ai/artifact/WL9RYjsPDCTmknMLRqzKRj) is the single source of truth;
 the [build plan](https://claude.ai/artifact/1TrqC2jt8SuPVbULa8i6eU) and the
 [engineering design doc](https://claude.ai/artifact/XsWXaEvBdEsFf97GguqtAy) follow it.
@@ -64,9 +66,16 @@ split into Profile and Job preferences, and the Runs and Status cards are in Set
 Every page and every `/api` route is behind sign-in (PRD 1.18, S1 to S9); only `/api/health`
 and `/api/auth/*` answer without a session.
 
+**One account, one person.** JAP today holds a single person's data: one profile, one active
+resume, one answer bank, one set of jobs. No table outside `app_user`, `auth_session` and
+`password_reset` carries a user id, so a second account would read and change all of it, and
+would apply to jobs under your name and with your resume. Sign-up is therefore closed after
+the first account and there are no invites. Several people each with their own data is PRD
+1.18 step 2 (S7 in full, then S10 to S13), and it needs a user id on every table first.
+
 - **First account.** On a fresh JAP the sign-in screen offers Create your JAP account. That
-  account is the admin, and sign-up then closes. Invites and other users come in step 2
-  (each user's own data). Set `JAP_ADMIN_EMAIL` in `.env` to allow only your address.
+  account is the admin, and sign-up then closes: `POST /api/auth/sign-up` answers 409
+  `sign_up_closed` from then on. Set `JAP_ADMIN_EMAIL` in `.env` to allow only your address.
 - **Passwords** are at least 12 characters and stored as salted scrypt hashes. Five wrong
   tries lock that account's sign-in for 15 minutes.
 - **Forgot password** emails a single-use link, good for 30 minutes, from the mailbox in
@@ -349,54 +358,65 @@ use `IMAP_HOST=imap.gmail.com`. JAP uses only Greenhouse emails that arrive afte
 waits up to 3 minutes, and never stores the code or sends it to a model. No code in time: nothing
 was sent and the job becomes Apply yourself.
 
-## Hosting: dev, test and prod
+## Hosting: local and live
 
-JAP runs for free on the Mac as three environments, published over HTTPS by JAP's own
-Cloudflare Tunnel ([PRD](https://claude.ai/artifact/WL9RYjsPDCTmknMLRqzKRj) H1 to H8,
-[hosting plan](https://claude.ai/artifact/R6yA1f9SrffxRQ968Dt2QB)). It is up while the Mac
-is on and awake.
+JAP runs for free on the Mac as two stacks, and JAP's own Cloudflare Tunnel publishes the
+live one over HTTPS ([PRD](https://claude.ai/artifact/WL9RYjsPDCTmknMLRqzKRj) H1 to H8). It
+is up while the Mac is on and awake.
 
-| | dev | test | prod |
-| --- | --- | --- | --- |
-| Address | dev.jap.tutorial.monster | test.jap.tutorial.monster | jap.tutorial.monster |
-| Code | this checkout, live reload | a tag, in `~/jap-envs/test` | a tag that passed test, in `~/jap-envs/prod` |
-| Entry port | 5173 (Vite) | 5273 (Caddy) | 5373 (Caddy) |
-| API / Inngest / DB ports | 8001 / 8290 / 5432 | 8101 / 8390 / 5433 | 8201 / 8490 / 5434 |
-| Sends applications and email | yes (your own setup) | never | yes |
+| | local | live |
+| --- | --- | --- |
+| Address | http://localhost:5173 | https://jap.tutorial.monster |
+| Env file | `.env` | `.env.live` |
+| Code | this working copy, live reload | built into the image; a file you edit changes nothing until the next `make start ENV=live` |
+| UI | Vite dev server | `npm run build`, served by Caddy, which passes `/api` to the app |
+| Entry / API / Inngest / DB ports | 5173 / 8001 / 8290 / 5432 | 5373 / 8201 / 8490 / 5434 |
+| Data folder | `data/` | `data-live/` |
+| Submits applications | **never** (`JAP_SUBMIT_ENABLED=false`) | **yes, for real** |
+| Sends email | no | yes, the real mailbox |
+| 06:00 daily search | leave off | turn on in Settings once you trust it |
+| Adminer | yes, `:8080` | no |
+| Restarts with Docker Desktop | no | yes |
+| UI badge | **DEV** | none |
 
-Every target takes `ENV=dev|test|prod`; without it you get dev, exactly as before
-(`make logs ENV=prod`, `make backup ENV=prod`). Test and prod use
-`infra/compose.release.yaml`: the built UI behind Caddy, which passes `/api` to the app (the
-browser only ever talks to one address), a self-hosted Inngest with its own keys, no source
-mounts, no Adminer, and every service restarts when Docker Desktop starts. Inngest's
-dashboard, Postgres, Adminer and Ollama are never published. Test has
-`JAP_SUBMIT_ENABLED=false` and no SMTP login, so an application prepared there is never
-sent, and the UI shows a TEST (or DEV) badge.
+Both run from this one checkout and share nothing but the Mac and Ollama: separate Docker
+project (`jap`, `jap-live`), separate database volume, separate data folder, separate ports.
+So `make reset` on local cannot touch a real application, and a broken edit cannot reach the
+public site. Every target takes `ENV=local|live`; without it you get local, exactly as before
+(`make logs ENV=live`, `make backup ENV=live`).
+
+live adds `infra/compose.release.yaml`: the built UI behind Caddy so the browser only ever
+talks to one address, a self-hosted Inngest with its own keys, no source mounts, no Adminer,
+and `restart: unless-stopped` on every service. Only live's UI port goes through the tunnel;
+the API port, Inngest's dashboard, Postgres, Adminer and Ollama are never published (H2),
+and the local stack is never published at all.
 
 **First time**
 
 1. Docker Desktop: Settings, General, turn on *Start Docker Desktop when you sign in*.
 2. `make mac-wake` so the Mac wakes at 05:55 for the 06:00 search.
-3. Tag a release on `main` (`git tag v0.13.0 && git push origin v0.13.0`), then
-   `make env-create ENV=test REF=v0.13.0` and `make env-create ENV=prod REF=v0.13.0`.
-   Each writes `~/jap-envs/<env>/.env` with its own ports, database password and Inngest keys.
-   Add the OpenRouter key to both, and the real mailbox password to prod only.
-4. Cloudflare dashboard, Zero Trust, Networks, Tunnels: create a tunnel named `jap`, and add
-   three public hostnames: `jap.tutorial.monster` to `http://host.docker.internal:5373`,
-   `test.jap.tutorial.monster` to `:5273` and `dev.jap.tutorial.monster` to `:5173`.
-   Copy `infra/tunnel/.env.tunnel.example` to `.env.tunnel` and paste the token.
-5. Only once sign-in is merged and running (PRD H6, S1 to S9): `make tunnel-start`.
+3. `make start ENV=live`. The first run writes `.env.live` from `.env.example` plus
+   `infra/env/live.env`, with a fresh database password and Inngest keys. Put the OpenRouter
+   key and the real mailbox password in it, then run it again.
+4. Cloudflare dashboard, Zero Trust, Networks, Tunnels: create a tunnel named `jap` and add
+   one public hostname, `jap.tutorial.monster` to `http://host.docker.internal:5373`. Copy
+   `infra/tunnel/.env.tunnel.example` to `infra/tunnel/.env.tunnel` and paste the token.
+5. `make tunnel-start`, then open https://jap.tutorial.monster and create your account. live
+   starts empty: it does not share the local stack's profile, resume or jobs.
+
+Before the tunnel opens, turn on two-step sign-in (Settings > Account) and add a Cloudflare
+rate-limiting rule on `/api/auth/*`. The sign-in page is then on the public internet, and the
+per-account lockout is the only limit JAP itself applies.
 
 **Releasing**
 
-1. `make promote ENV=test REF=v0.14.0`: checks the tag out in the test worktree, builds,
-   migrates and waits for `/api/health`.
-2. Check it at test.jap.tutorial.monster (a search, one application prepared), then
-   `make mark-passed`.
-3. `make promote ENV=prod REF=v0.14.0`: refuses a tag that has not passed test, backs up
-   prod first, then the same steps.
-4. Something wrong: `make rollback ENV=prod` goes back to the previous tag. If the new tag
-   changed the database, restore the backup taken in step 3 (`make restore ENV=prod FILE=...`).
+There is no promotion step: live runs whatever this checkout builds.
+
+1. Make the change and check it on local (`make start`, `make test`).
+2. `make backup ENV=live` if the change has a migration.
+3. `make start ENV=live` rebuilds the image, restarts live and applies migrations.
+4. Something wrong: `git checkout <last good tag>` and `make start ENV=live` again. If a
+   migration changed data, `make restore ENV=live FILE=data-live/backups/<file>.sql.gz`.
 
 ## Make targets
 
@@ -423,9 +443,7 @@ sent, and the UI shows a TEST (or DEV) badge.
 | `make llm-check` | One tiny test call to each OpenRouter model (no personal data) |
 | `make ollama-check` | Is Ollama answering with `nomic-embed-text` pulled |
 | `make demo` / `make demo-clear` | Load or remove the demo postings used to check dedup and the filters |
-| `make env-create ENV=test REF=...` | Make the test or prod worktree in `~/jap-envs` and its `.env` |
-| `make promote ENV=... REF=...` / `make rollback ENV=...` | Move test or prod to a tag, or back to the one before |
-| `make mark-passed` | After checking test by hand, allow its tag into prod |
+| `make env ENV=live` | Write `.env.live` with a fresh database password and Inngest keys (`make start ENV=live` does it too) |
 | `make tunnel-start` / `tunnel-stop` / `tunnel-status` | JAP's Cloudflare Tunnel (`.env.tunnel`) |
 | `make mac-wake` | Wake the Mac at 05:55 every day for the 06:00 search |
 
@@ -433,8 +451,8 @@ sent, and the UI shows a TEST (or DEV) badge.
 
 ```
 Makefile            .env.example
-infra/              compose.yaml, compose.release.yaml (test, prod), docker/ (Dockerfiles),
-                    caddy/, env/ (test, prod settings), tunnel/, postgres/init.sql, scripts/
+infra/              compose.yaml, compose.release.yaml (live), docker/ (Dockerfiles),
+                    caddy/, env/live.env, tunnel/, postgres/init.sql, scripts/
 seed/               companies.yaml, skills.yaml
 backend/            main.py, config.py, schemas/, database/ (+ migrations/), api/,
                     sources/, pipeline/, llm/, functions/ (Inngest), tests/
@@ -447,6 +465,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.16.0 | 4 Nov 2026 | Two environments instead of three (PRD H1 to H8 revised): `ENV=local\|live`, both from this one checkout, with their own env file, Docker project, database volume, data folder (`data/`, `data-live/`) and ports. `live` is the release stack behind the Cloudflare Tunnel at jap.tutorial.monster and the only one that submits or sends email; `local` never does either. Removed the test environment and the git worktrees in `~/jap-envs`, with `make env-create`, `promote`, `mark-passed` and `rollback`; a release is now `make start ENV=live`. `JAP_DATA_HOST_DIR` keeps the two data folders apart. README says plainly that JAP is a personal, single-user tool |
 | 0.15.0 | 2 Nov 2026 | Logs, Health and Insights (PRD 1.19, Part A: O1 to O12, O15): JSON log lines with request, run, application and Inngest ids, scrubbed of personal data and secrets; warnings, errors and apply steps kept 30 days in `log_event`, API timings per route in `route_stat`; Docker log cap; `X-Request-ID`; Settings > Health; hourly `health-watch` with alert emails at most once a day; a timeline on each application; the Insights page; optional Sentry (`SENTRY_DSN`); `make health-check` and `make errors`; migration `0008_observability` |
 | 0.14.0 | 2 Nov 2026 | Hosting with dev, test and prod (PRD 1.17, H1 to H8): every make target takes `ENV=dev\|test\|prod`; test and prod run from git worktrees in `~/jap-envs` with `infra/compose.release.yaml` (built UI behind Caddy, self-hosted Inngest, no Adminer, restart on Docker start); `make env-create`, `promote`, `mark-passed`, `rollback`, `tunnel-start/stop/status`, `mac-wake`; the UI calls `/api` on its own address; `JAP_ENV` badge; `JAP_SUBMIT_ENABLED=false` in test never submits |
 | 0.13.0 | 2 Nov 2026 | Sign-in and accounts, step 1 (PRD 1.18, S1 to S9, U21). Sign-in screen before anything loads: create the first account (the admin; sign-up then closes), sign in, Forgot password with an emailed single-use 30-minute link, and the two-step code. Settings > Account: Change password, Two-step sign-in with a QR code and 8 recovery codes, Sign out and Sign out everywhere; Sign out also at the foot of the sidebar. Backend: `app_user`, `auth_session` and `password_reset` (migration 0007), scrypt hashes, a 15-minute lock after 5 wrong tries, TOTP with replay protection, HttpOnly host-only session cookies (7 days idle, 30 days at most; `__Host-` and Secure with `JAP_COOKIE_SECURE`), every `/api` route but health and `/api/auth/*` behind a session, `/api/inngest` closed to proxied requests, writes from other origins refused. `make set-password`, `make two-step-off`, `make sign-out-all`; `make form-check` now runs inside the app container |

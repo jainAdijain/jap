@@ -1,9 +1,8 @@
 # JAP's own Cloudflare Tunnel (PRD H1, H6): one outbound connection from the Mac, no router
-# ports. The public hostnames live in the Cloudflare dashboard (README, Hosting):
-#   jap.tutorial.monster       -> http://host.docker.internal:5373  (prod)
-#   test.jap.tutorial.monster  -> http://host.docker.internal:5273  (test)
-#   dev.jap.tutorial.monster   -> http://host.docker.internal:5173  (dev)
-# Only these UI ports are published; never Inngest, Postgres, Adminer or Ollama (H2).
+# ports. The public hostname lives in the Cloudflare dashboard (README, Hosting):
+#   jap.tutorial.monster -> http://host.docker.internal:5373  (the live stack's Caddy)
+# That one UI port is all that is published; never the API port, Inngest, Postgres, Adminer
+# or Ollama (H2), and never the local stack.
 # Run through the Makefile: make tunnel-start (reads TUNNEL_TOKEN from .env.tunnel).
 name: jap-tunnel
 

@@ -42,7 +42,7 @@ live in `docs/` and are **not in git**: this repo is public and they carry perso
 
 ```
 Makefile            every job has one target; `make help` lists them
-infra/              compose.yaml (dev), compose.release.yaml (test/prod), docker/, caddy/,
+infra/              compose.yaml (local), compose.release.yaml (live), docker/, caddy/,
                     env/, tunnel/, postgres/init.sql, scripts/
 seed/               companies.yaml, skills.yaml
 backend/            main.py, config.py, api/, schemas/, database/ (+migrations/), sources/,
@@ -78,8 +78,10 @@ Ollama is **not** in Docker — it runs natively on the Mac for the GPU, reached
 Services: ui 5173, app 8001 (`/api`), inngest 8290, db 5432, adminer 8080 — all bound to
 127.0.0.1, all overridable with `JAP_*_PORT` in `.env`.
 
-Every target takes `ENV=dev|test|prod`; dev is this checkout, test and prod are git worktrees in
-`~/jap-envs`. Leave `ENV` off unless the task is about hosting.
+Every target takes `ENV=local|live`. Both run from this checkout: `local` is the dev stack
+(`.env`, `data/`, never submits), `live` is the release stack behind the Cloudflare Tunnel at
+jap.tutorial.monster (`.env.live`, `data-live/`, submits for real). Leave `ENV` off unless the
+task is about hosting, and never run anything with `ENV=live` without being asked.
 
 ### Do not run without being asked
 
@@ -112,8 +114,18 @@ still passes locally.
 - **Logs are scrubbed** (`backend/observability/scrub.py`): emails, phone numbers, keys, tokens
   and security codes are replaced, and answers, resume text and cover letters are never written
   at all. Keep it that way when adding log lines.
-- **Secrets:** `.env` is gitignored and holds the OpenRouter key and the mailbox password. Never
-  commit it, never echo its values into output, never add a real key to `.env.example`.
+- **Secrets:** `.env` and `.env.live` are gitignored and hold the OpenRouter key and the mailbox
+  password. Never commit one, never echo its values into output, never add a real key to
+  `.env.example`. Concretely, and without exception:
+  - Do not open `.env`, `.env.*` or `.env.tunnel` with the read tool, `cat`, `head` or an editor.
+    To check whether a key is set, test it and print only `set`/`empty`
+    (`grep -qE '^KEY=.+' .env && echo set`), never the line.
+  - Do not print rendered configuration. `docker compose config` substitutes every variable, so
+    its output contains the live secrets: use `config -q`, which validates and prints nothing.
+    When a field must be inspected, parse to JSON and select only that field.
+  - Never grep or filter output that may contain a secret. A pattern matches substrings, and a
+    port or id can appear inside a random key.
+  - Copy values between env files with a script that writes them, never one that prints them.
 
 ## Conventions
 

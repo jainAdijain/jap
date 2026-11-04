@@ -2,8 +2,6 @@
 # Restores a backup made by backup.sh: infra/scripts/restore.sh data/backups/<file>.sql.gz
 set -eu
 COMPOSE="${COMPOSE:-docker compose -f infra/compose.yaml}"
-# test and prod keep their own data/ in their worktree (make backup ENV=prod).
-cd "${JAP_ROOT:-.}"
 FILE="${1:?Usage: restore.sh data/backups/<file>.sql.gz}"
 printf 'This replaces the current database with %s. Type yes to continue: ' "$FILE"
 read -r answer

@@ -4,13 +4,18 @@
 !.env.example
 !.env.tunnel.example
 
-# Runtime data (resumes, screenshots, cover letters, backups)
+# Runtime data (resumes, screenshots, cover letters, backups). data/ is the local stack's,
+# data-live/ is the live stack's (JAP_DATA_HOST_DIR).
 data/*
 !data/.gitkeep
+data-live/
 
 # Product artifacts (PRD, build plan, engineering design doc). This repo is public and they
 # carry personal data, so they stay on the Mac. AGENTS.md tells agents to read them if present.
 docs/
+
+# Local notes for this machine (NOTES.local.md): never committed, this repo is public.
+NOTES.local.md
 
 # Python
 __pycache__/
