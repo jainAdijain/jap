@@ -49,6 +49,12 @@ button:disabled { opacity: 0.45; cursor: default; }
 .btn-danger { color: var(--fail-fg); }
 a { color: var(--accent); }
 input[type='text'], input[type='search'], input[type='email'], input[type='password'], input[type='tel'], input[type='url'], input[type='time'], input[type='number'], select, textarea { min-height: 34px; padding: 6px 10px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); width: 100%; }
+/* Chrome pins the native select arrow 4 or 5px from the border whatever the padding is, which
+   crowds it against the edge, so draw our own at the same 10px inset as the label. */
+:root { --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='none' stroke='%235d6876' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m1 1.5 5 5 5-5'/%3E%3C/svg%3E"); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme='light']) { --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='none' stroke='%2393a0ab' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m1 1.5 5 5 5-5'/%3E%3C/svg%3E"); } }
+:root[data-theme='dark'] { --chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 8' fill='none' stroke='%2393a0ab' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='m1 1.5 5 5 5-5'/%3E%3C/svg%3E"); }
+select { appearance: none; -webkit-appearance: none; padding-right: 30px; background-image: var(--chevron); background-repeat: no-repeat; background-position: right 10px center; background-size: 11px 7px; }
 textarea { resize: vertical; line-height: 1.5; }
 input[type='checkbox'], input[type='radio'] { accent-color: var(--accent); }
 .mono { font-family: var(--mono); font-size: 13px; font-variant-numeric: tabular-nums; }
@@ -77,7 +83,7 @@ p { margin: 0; }
 .side nav svg { width: 18px; height: 18px; flex: none; stroke: currentColor; fill: none; stroke-width: 1.7; }
 .side nav .badge { margin-left: auto; font-size: 11px; font-weight: 600; padding: 1px 7px; border-radius: 999px; background: var(--you-bg); color: var(--you-fg); }
 .side nav .alert-dot { margin-left: auto; width: 8px; height: 8px; border-radius: 50%; background: var(--fail-fg); }
-.side-foot { margin-top: auto; border-top: 1px solid var(--side-hi); padding: 14px 8px 0; display: grid; gap: 4px; font-size: 12px; }
+.side-foot { margin-top: auto; border-top: 1px solid var(--side-hi); padding: 14px 8px 0; display: grid; grid-template-columns: minmax(0, 1fr); gap: 4px; font-size: 12px; }
 .side-foot b { color: var(--side-strong); font-weight: 500; }
 .side-foot .live { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--accent); margin-right: 6px; }
 .side-foot .live.busy { animation: pulse 1.2s ease-in-out infinite; }
@@ -161,7 +167,7 @@ table.jobs tbody tr.closed .t-title { color: var(--muted); }
 .empty { padding: 48px 16px; text-align: center; color: var(--muted); display: grid; gap: 10px; justify-items: center; white-space: normal; }
 .empty b { color: var(--text); }
 .foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; padding: 10px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
-.foot select { width: auto; min-height: 30px; padding: 2px 8px; }
+.foot select { width: auto; min-height: 30px; padding: 2px 26px 2px 8px; }
 .pages { display: flex; gap: 4px; align-items: center; flex-wrap: wrap; }
 .pages button { min-width: 32px; min-height: 30px; padding: 2px 8px; justify-content: center; }
 .pages button[aria-current='page'] { background: var(--accent); border-color: var(--accent); color: var(--on-accent); }

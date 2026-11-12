@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.16.0 (local and live), 4 Nov 2026.**
+**Version 0.16.1 (sidebar foot and dropdowns), 12 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -465,6 +465,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.16.1 | 12 Nov 2026 | Fix the foot of the sidebar: a long email address stretched the single grid column past the panel, so the line above Sign out and the Sign out button itself were drawn over the work area. The column is `minmax(0, 1fr)`, so the address is cut with an ellipsis (the full one stays in the tooltip) and the row ends where the panel does. Dropdown arrows no longer crowd the field border: Chrome pins the native arrow 4 or 5px from the edge whatever the padding is, so every select draws its own chevron at the same 10px inset as its label, which also makes selects exactly as tall as the search box beside them. The version under the logo said 0.15.0 |
 | 0.16.0 | 4 Nov 2026 | Two environments instead of three (PRD H1 to H8 revised): `ENV=local\|live`, both from this one checkout, with their own env file, Docker project, database volume, data folder (`data/`, `data-live/`) and ports. `live` is the release stack behind the Cloudflare Tunnel at jap.tutorial.monster and the only one that submits or sends email; `local` never does either. Removed the test environment and the git worktrees in `~/jap-envs`, with `make env-create`, `promote`, `mark-passed` and `rollback`; a release is now `make start ENV=live`. `JAP_DATA_HOST_DIR` keeps the two data folders apart. README says plainly that JAP is a personal, single-user tool |
 | 0.15.0 | 2 Nov 2026 | Logs, Health and Insights (PRD 1.19, Part A: O1 to O12, O15): JSON log lines with request, run, application and Inngest ids, scrubbed of personal data and secrets; warnings, errors and apply steps kept 30 days in `log_event`, API timings per route in `route_stat`; Docker log cap; `X-Request-ID`; Settings > Health; hourly `health-watch` with alert emails at most once a day; a timeline on each application; the Insights page; optional Sentry (`SENTRY_DSN`); `make health-check` and `make errors`; migration `0008_observability` |
 | 0.14.0 | 2 Nov 2026 | Hosting with dev, test and prod (PRD 1.17, H1 to H8): every make target takes `ENV=dev\|test\|prod`; test and prod run from git worktrees in `~/jap-envs` with `infra/compose.release.yaml` (built UI behind Caddy, self-hosted Inngest, no Adminer, restart on Docker start); `make env-create`, `promote`, `mark-passed`, `rollback`, `tunnel-start/stop/status`, `mac-wake`; the UI calls `/api` on its own address; `JAP_ENV` badge; `JAP_SUBMIT_ENABLED=false` in test never submits |
