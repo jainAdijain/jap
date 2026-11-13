@@ -73,7 +73,7 @@ function Shell() {
         <div className="logo">
           <span className="logo-mark">JAP</span>
           <span className="logo-name">
-            Job Application Pipeline<small>Version 0.17.0</small>
+            Job Application Pipeline<small>Version 0.17.1</small>
           </span>
           {health?.env && health.env !== 'prod' && (
             <span className={`env-badge env-${health.env}`} title={`This is the ${health.env} copy of JAP, not prod`}>

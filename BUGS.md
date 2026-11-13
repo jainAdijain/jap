@@ -19,6 +19,7 @@ commit that fixes them.
 | [JAP-2](#jap-2--bug--a-spent-openrouter-key-is-retried-until-it-fills-the-log) | Bug | Open | A spent OpenRouter key is retried until it fills the log |
 | [JAP-3](#jap-3--bug--the-skills-matching-preset-can-never-match-with-an-empty-required-list) | Bug | Open | The skills matching preset can never match with an empty Required list |
 | [JAP-4](#jap-4--issue--jap_env-still-says-dev-and-prod-after-the-locallive-rename) | Issue | Open | `JAP_ENV` still says `dev` and `prod` after the local/live rename |
+| [JAP-5](#jap-5--bug--a-job-title-wider-than-its-column-showed-as-nothing-but) | Bug | Fixed (v0.17.1) | A job title wider than its column showed as nothing but `...` |
 
 ---
 
@@ -108,3 +109,34 @@ The badge logic in `App.tsx` hides the badge when `health.env === 'prod'`, so re
 value to `live` without touching that condition would start showing a badge on the live site.
 Both need changing together, and the log and alert text should be read through for the old
 words at the same time.
+
+---
+
+## JAP-5 — Bug — A job title wider than its column showed as nothing but `...`
+
+**Status:** Fixed (v0.17.1). Reported 13 Nov 2026, seen on live.
+
+Rows in the Jobs list whose title was wider than the Job title column drew the dot and then
+`...` and nothing else — the title was gone, while the side panel showed it in full. Short
+titles in the same list were fine, which made it look like bad data for particular jobs.
+
+Not data: every `title_display` on live was clean (no leading whitespace, nothing empty, four
+starting with punctuation and all of those deliberate, such as `.NET Engineer`). It was
+layout.
+
+The title is wrapped in a `<button>` so a row can be opened from the keyboard, and the global
+rule `button, .btn { display: inline-flex }` makes that button an **atomic inline-level box**.
+`text-overflow: ellipsis` on the surrounding `.t-title` can shorten *text* in a line box, but
+it cannot cut into an atomic box: when the button did not fit, Chrome dropped the whole box
+and painted the ellipsis in its place.
+
+The unseen dot decides which of two wrong renderings you get, which is why it reproduced on
+live and not at first locally. With the dot present something on the line fits, so Chrome
+paints the ellipsis after it and the row reads `• ...`. With no dot the button is first on the
+line and Chrome hard-clips it instead, cutting the title mid-word with no ellipsis. Both are
+wrong; the dot only changes how.
+
+Fixed in `styles.css` by making `.t-title` a flex line with `min-width: 0` and the button
+`display: block` with its own `overflow: hidden; text-overflow: ellipsis`, so the button
+shrinks to the column and shortens its own text. Checked at 700, 900, 1150, 1400 and 1800px
+wide: the button never exceeds the cell and truncates only when it has to.
