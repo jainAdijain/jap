@@ -10,12 +10,13 @@ import {
   type ListingPage,
   type ListingRow,
   type ListingStatus,
+  type SkillsMatch,
   type Run,
   type SortKey,
   type WorkMode,
 } from '../api/client'
 import JobDrawer from '../components/JobDrawer'
-import { ago, atsLabel, errorText, fitsLine, plural, shortDate, STARTED_BY, STATUS, workModeLabel } from '../format'
+import { ago, atsLabel, errorText, fitsLine, plural, shortDate, skillsWords, STARTED_BY, STATUS, workModeLabel } from '../format'
 import { useApp } from '../appContext'
 
 type Strip = 'active' | 'not_applied' | 'needs_input' | 'ready_for_review' | 'applied' | 'failed'
@@ -31,6 +32,7 @@ const COLUMNS: { key: SortKey; label: string }[] = [
   { key: 'title', label: 'Job title' },
   { key: 'company', label: 'Company' },
   { key: 'location', label: 'Location' },
+  { key: 'skills', label: 'Skills match' },
   { key: 'work_mode', label: 'Work mode' },
   { key: 'status', label: 'Status' },
   { key: 'posted', label: 'Posted' },
@@ -38,14 +40,38 @@ const COLUMNS: { key: SortKey; label: string }[] = [
 const FITS: { key: Condition; label: string }[] = [
   { key: 'role', label: 'Job title' },
   { key: 'location', label: 'Location' },
-  { key: 'skills', label: 'Skills' },
 ]
+// Minimum share of my required skills (F5). It narrows this list only; preferences stay as they are.
+const MIN_SKILLS = ['25', '50', '75', '100']
 const PER_PAGE = [10, 25, 50]
+
+/** Required x of y with %, the missing ones, and nice to have x of y (F5). A job that
+ *  states no skills reads Skills not stated: unknown, like Work mode not stated. */
+function SkillsCell({ match }: { match: SkillsMatch }) {
+  const w = skillsWords(match)
+  if (!match.stated) {
+    return (
+      <td title="No skills were found in this job description, so the match isn't known">
+        <span className="mode-unclear">Skills not stated</span>
+      </td>
+    )
+  }
+  if (!w.required && !w.nice) return <td className="muted">–</td>
+  // Kept short for the column: the tooltip and the job panel give it in full.
+  const sub = w.required ? [match.nice_total ? `Nice ${match.nice_hit.length} of ${match.nice_total}` : '', w.missing].filter(Boolean).join(' · ') : ''
+  const hit = match.required_total ? match.required_hit : match.nice_hit
+  return (
+    <td title={[w.required, w.missing, w.nice, hit.length ? `Asks for ${hit.join(', ')}` : ''].filter(Boolean).join('\n')}>
+      <div style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{w.required ?? w.nice}</div>
+      {sub && <div className="t-sub">{sub}</div>}
+    </td>
+  )
+}
 // Rows that can be ticked: not Sent, not Closed and not being worked on right now.
 const pickable = (r: ListingRow) => !['applied', 'closed', 'applying'].includes(r.status)
 
-type Filters = { q: string; role: string; location: string; work_mode: WorkMode | 'unknown' | ''; posted_days: string; matched: Condition | '' }
-const NO_FILTERS: Filters = { q: '', role: '', location: '', work_mode: '', posted_days: '', matched: '' }
+type Filters = { q: string; role: string; location: string; work_mode: WorkMode | 'unknown' | ''; posted_days: string; matched: Condition | ''; min_skills: string }
+const NO_FILTERS: Filters = { q: '', role: '', location: '', work_mode: '', posted_days: '', matched: '', min_skills: '' }
 
 // Per-browser conveniences: rows per page, and which jobs I have opened (the unseen dot).
 const store = {
@@ -391,6 +417,7 @@ export default function JobsPage() {
       work_mode: filters.work_mode || undefined,
       posted_days: filters.posted_days ? Number(filters.posted_days) : undefined,
       matched: filters.matched || undefined,
+      min_skills: filters.min_skills ? Number(filters.min_skills) : undefined,
       sort: sort.key,
       dir: sort.dir,
       page: pageNo,
@@ -482,7 +509,7 @@ export default function JobsPage() {
     })
   }
   const sortBy = (key: SortKey) => {
-    setSort(sort.key === key ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'posted' ? 'desc' : 'asc' })
+    setSort(sort.key === key ? { key, dir: sort.dir === 'asc' ? 'desc' : 'asc' } : { key, dir: key === 'posted' || key === 'skills' ? 'desc' : 'asc' })
     setPageNo(1)
   }
   const open = (id: string) => {
@@ -575,7 +602,7 @@ export default function JobsPage() {
               <option value="">All job titles</option>
               {roles.map((r) => (
                 <option key={r.role ?? OTHER_ROLE} value={r.role ?? OTHER_ROLE}>
-                  {r.role ?? 'Other (fits on skills or location)'} ({r.listings})
+                  {r.role ?? 'Other (fits on location)'} ({r.listings})
                 </option>
               ))}
             </select>
@@ -608,6 +635,14 @@ export default function JobsPage() {
                 </option>
               ))}
             </select>
+            <select aria-label="Skills match" value={filters.min_skills} onChange={(e) => set('min_skills', e.target.value)}>
+              <option value="">Any skills match</option>
+              {MIN_SKILLS.map((n) => (
+                <option key={n} value={n}>
+                  {n === '100' ? 'All required skills' : `${n}%+ of required skills`}
+                </option>
+              ))}
+            </select>
             {filtered && (
               <button type="button" className="btn-quiet" style={{ color: 'var(--accent)' }} onClick={clear}>
                 Clear filters
@@ -634,12 +669,13 @@ export default function JobsPage() {
           <table className="jobs">
             <colgroup>
               <col style={{ width: 44 }} />
-              <col style={{ width: '30%' }} />
-              <col style={{ width: '17%' }} />
-              <col style={{ width: '17%' }} />
-              <col style={{ width: '11%' }} />
+              <col style={{ width: '26%' }} />
               <col style={{ width: '14%' }} />
-              <col style={{ width: '11%' }} />
+              <col style={{ width: '14%' }} />
+              <col style={{ width: '16%' }} />
+              <col style={{ width: '9%' }} />
+              <col style={{ width: '12%' }} />
+              <col style={{ width: '9%' }} />
             </colgroup>
             <thead>
               <tr>
@@ -658,7 +694,7 @@ export default function JobsPage() {
             <tbody>
               {page && rows.length === 0 ? (
                 <tr>
-                  <td colSpan={7} style={{ height: 'auto', cursor: 'default' }}>
+                  <td colSpan={8} style={{ height: 'auto', cursor: 'default' }}>
                     <div className="empty">
                       {filtered ? (
                         <>
@@ -704,7 +740,6 @@ export default function JobsPage() {
                         {fits && (
                           <div className="t-sub" title={fits}>
                             {fits}
-                            {r.nice_skills.length > 0 && ` · also ${r.nice_skills.slice(0, 2).join(', ')}`}
                           </div>
                         )}
                       </td>
@@ -716,6 +751,7 @@ export default function JobsPage() {
                         </div>
                       </td>
                       <td title={loc}>{loc}</td>
+                      <SkillsCell match={r.skills_match} />
                       <td>{r.work_mode ? workModeLabel(r.work_mode) : <span className="mode-unclear">Not stated</span>}</td>
                       <td>
                         <span className={`pill ${cls}`}>{label}</span>

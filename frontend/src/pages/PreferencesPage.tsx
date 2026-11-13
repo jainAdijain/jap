@@ -10,9 +10,8 @@ type Remote = 'none' | 'mine' | 'all'
 const PRESETS: { key: string; rule: Condition[][]; title: ReactNode; note: string }[] = [
   { key: 'or', rule: [['role'], ['location']], title: <>Job title <b>or</b> location fits</>, note: 'More jobs, some less relevant.' },
   { key: 'and', rule: [['location', 'role']], title: <>Job title <b>and</b> location fit</>, note: 'Recommended.' },
-  { key: 'skills', rule: [['location', 'role', 'skills']], title: <>Job title and location fit, <b>and</b> it asks for your required skills</>, note: 'Fewest jobs.' },
 ]
-const WORDS: Record<Condition, string> = { role: 'job title', location: 'location', skills: 'required skills' }
+const WORDS: Record<Condition, string> = { role: 'job title', location: 'location' }
 const key = (rule: Condition[][]) => JSON.stringify(rule.map((c) => [...c].sort()).sort())
 const REMOTE_WORD = /^(remote|anywhere|worldwide|global|wfh|work from home)$/i
 
@@ -235,7 +234,7 @@ export default function PreferencesPage() {
       <div className="sec">
         <div className="sec-l">
           <h2>Skills</h2>
-          <p>Filled in from your resume. Required skills count when Matching asks for skills; nice-to-have ones show on jobs that ask for them.</p>
+          <p>Filled in from your resume. Skills never hide a job. Each job shows how many of your required and nice-to-have skills it asks for, and you can sort and filter Jobs by that.</p>
         </div>
         <div className="sec-r">
           <div className="two">
@@ -335,7 +334,7 @@ export default function PreferencesPage() {
       <div className="sec">
         <div className="sec-l">
           <h2>Matching</h2>
-          <p>How strictly a job has to fit.</p>
+          <p>How strictly a job has to fit. Skills are not part of this: they are shown on each job as a skills match.</p>
         </div>
         <div className="sec-r">
           <div className="radio-list" role="radiogroup" aria-label="Matching">

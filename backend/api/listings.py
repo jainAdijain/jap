@@ -5,7 +5,8 @@ pipeline.matching), newest first. A listing is hidden when none of its postings 
 company I still follow, unless it has an application: those stay in my history (I12), and
 the panel says I stopped following the company. The filter bar narrows by role, location,
 status and matched
-condition without touching the profile (F2).
+condition without touching the profile (F2). Skills never hide a job: each row carries its
+skills match, which the list can be sorted by and filtered on with a minimum (F5).
 """
 
 import uuid
@@ -38,6 +39,7 @@ from schemas.listing import (
     ListingSummary,
     MergeIn,
     RoleCounts,
+    SkillsMatch,
     StatusCounts,
 )
 
@@ -46,7 +48,7 @@ STATUSES = (
     "manual_apply", "skipped", "closed",
 )  # fmt: skip
 STATUS_FILTER = "^(open|active|all|" + "|".join(STATUSES) + ")$"
-OTHER_ROLE = "__other"  # role filter value for listings matched through Skills or Location
+OTHER_ROLE = "__other"  # role filter value for listings matched through Location only
 SORTS = {
     "title": Listing.title_display,
     "company": Company.name,
@@ -54,6 +56,7 @@ SORTS = {
     "work_mode": cast(Listing.work_mode, Text),
     "status": cast(Listing.status, Text),
     "posted": Listing.last_posted_at,
+    "skills": Listing.required_pct,  # then nice to have; unknown last either way (F5)
 }
 
 router = APIRouter(prefix="/listings", tags=["listings"])
@@ -82,12 +85,34 @@ def platforms(postings: list[Posting]) -> list[ATS]:
     return [ATS(s) for s in sorted(found)]
 
 
-async def nice_to_have(session: AsyncSession) -> list[str]:
+async def my_skills(session: AsyncSession) -> tuple[list[str], list[str]]:
+    """My required and nice-to-have skills, the totals the stored skills match is out of."""
     profile = await session.scalar(select(Profile))
-    return list(profile.nice_to_have_skills) if profile else []
+    if profile is None:
+        return [], []
+    must = list(profile.must_have_skills)
+    return must, [s for s in profile.nice_to_have_skills if s not in must]
 
 
-def to_row(listing: Listing, company: str, postings: list[Posting], nice: list[str]) -> ListingRow:
+def skills_match(listing: Listing, mine: tuple[list[str], list[str]]) -> SkillsMatch:
+    must, nice = mine
+    stated = bool(listing.skills)
+    hit = [s for s in must if s in listing.required_hit]
+    return SkillsMatch(
+        stated=stated,
+        required_hit=hit,
+        required_missing=[s for s in must if s not in hit] if stated else [],
+        required_total=len(must),
+        required_pct=listing.required_pct if stated and must else None,
+        nice_hit=[s for s in nice if s in listing.nice_hit],
+        nice_total=len(nice),
+    )
+
+
+def to_row(
+    listing: Listing, company: str, postings: list[Posting], mine: tuple[list[str], list[str]]
+) -> ListingRow:
+    match = skills_match(listing, mine)
     return ListingRow(
         id=listing.id,
         title=listing.title_display,
@@ -102,7 +127,8 @@ def to_row(listing: Listing, company: str, postings: list[Posting], nice: list[s
         role=listing.canonical_role,
         matched=listing.matched or [],
         matched_role=listing.matched_role,
-        nice_skills=[s for s in nice if s in listing.skills],
+        nice_skills=match.nice_hit,
+        skills_match=match,
     )
 
 
@@ -116,7 +142,8 @@ async def listings(
     status: str = Query("open", pattern=STATUS_FILTER),
     role: str | None = Query(None, max_length=200),
     location: str | None = Query(None, max_length=100),
-    matched: str | None = Query(None, pattern="^(role|skills|location)$"),
+    matched: str | None = Query(None, pattern="^(role|location)$"),
+    min_skills: int | None = Query(None, ge=0, le=100),
     q: str | None = Query(None, max_length=100),
     work_mode: str | None = Query(None, pattern="^(remote|hybrid|onsite|unknown)$"),
     posted_days: int | None = Query(None, ge=1, le=365),
@@ -140,6 +167,8 @@ async def listings(
         where.append(func.array_to_string(Listing.locations, " | ").ilike(f"%{location.strip()}%"))
     if matched:
         where.append(Listing.matched.contains(cast([matched], ARRAY(Text))))
+    if min_skills:  # at least this % of my required skills; unknown is not a pass (F5)
+        where.append(Listing.required_pct >= min_skills)
     if work_mode == "unknown":
         where.append(Listing.work_mode.is_(None))
     elif work_mode:
@@ -157,7 +186,11 @@ async def listings(
         )
     base = select(Listing, Company.name).join(Company, Company.id == Listing.company_id)
     key = SORTS[sort]
-    order = (key.desc() if dir == "desc" else key.asc()).nulls_last()
+    order = [(key.desc() if dir == "desc" else key.asc()).nulls_last()]
+    if sort == "skills":  # required %, then nice to have, then newest
+        nice_n = func.cardinality(Listing.nice_hit)
+        order += [nice_n.desc() if dir == "desc" else nice_n.asc()]
+        order += [Listing.last_posted_at.desc().nulls_last()]
     total = await session.scalar(
         select(func.count())
         .select_from(Listing)
@@ -167,18 +200,18 @@ async def listings(
     rows = (
         await session.execute(
             base.where(*where)
-            .order_by(order, Listing.title_display, Listing.id)
+            .order_by(*order, Listing.title_display, Listing.id)
             .offset((page - 1) * page_size)
             .limit(page_size)
         )
     ).all()
     by_listing = await postings_of(session, [listing.id for listing, _ in rows])
-    nice = await nice_to_have(session)
+    mine = await my_skills(session)
     return ListingPage(
         total=int(total or 0),
         page=page,
         page_size=page_size,
-        rows=[to_row(listing, name, by_listing[listing.id], nice) for listing, name in rows],
+        rows=[to_row(listing, name, by_listing[listing.id], mine) for listing, name in rows],
     )
 
 
@@ -241,7 +274,7 @@ async def load_detail(session: AsyncSession, listing_id: uuid.UUID) -> ListingDe
         .order_by(Listing.title_display)
     )
     return ListingDetail(
-        **to_row(listing, company.name, postings, await nice_to_have(session)).model_dump(),
+        **to_row(listing, company.name, postings, await my_skills(session)).model_dump(),
         skills=listing.skills,
         seniority=listing.seniority,
         remote_regions=listing.remote_regions,

@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.17.1 (long job titles show again), 13 Nov 2026.**
+**Version 0.18.0 (skills match instead of a skills filter), 13 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -38,10 +38,12 @@ The UI follows the [redesign mockup v0.5](https://claude.ai/artifact/5V2SRvBgWZu
   actions and content follow the job's status. `/` jumps to the search box (its tooltip says so).
 - **Profile**: what is sent to employers. Resume and its versions, contact details and links,
   Saved answers, and the cover letter style.
-- **Job preferences**: what decides which jobs show. Job titles, required and nice-to-have
-  skills, locations, companies to follow, jobs to hide, and Matching.
+- **Job preferences**: what decides which jobs show. Job titles, locations, companies to
+  follow, jobs to hide, and Matching; and your required and nice-to-have skills, which never
+  hide a job but give each one a skills match.
 - **Insights**: jobs found and sent per week, results by job site, and AI spend (PRD 1.19).
-- **Settings**: applying (JAP prepares, I send; or JAP applies for me, with a daily limit),
+- **Settings**: applying (JAP prepares, I send; or JAP applies for me, with a daily limit
+  and a required-skills bar),
   the daily search, Search history, AI usage, System status (backup and form check) and
   Health (Daily search, stuck searches, errors, slow pages, disk, alerts sent).
 
@@ -140,12 +142,11 @@ job** in the job panel splits a wrong join, and is remembered on later searches.
 ## Which jobs are listed
 
 Jobs lists only the jobs that fit your Job preferences. The match rule is one or more rows
-of Role, Skills and Location: a job is listed when it meets every condition in at least one
-row. Job preferences offers three choices under **Matching**: job title or location; job
-title and location (the default for a new profile); job title, location and required skills.
+of Role and Location: a job is listed when it meets every condition in at least one
+row. Job preferences offers two choices under **Matching**: job title or location; job
+title and location (the default, in the database and in code).
 A rule saved earlier that is none of these is kept and shown as Custom. Role means the job's cleaned title contains
-one of your target roles (engineer and developer count alike); Skills means every must-have
-skill is in the job; Location means a job location names one of yours, or the job is remote
+one of your target roles (engineer and developer count alike); Location means a job location names one of yours, or the job is remote
 and allows one of your Remote regions, or it is Remote - Worldwide, or you chose **All remote
 jobs** (`remote_any`). Under Locations, office cities come with On-site and Hybrid ticks, and
 remote jobs are one of three choices: none, only those open to your countries, or all. On top of that, the work
@@ -159,6 +160,31 @@ what it matched. The status strip counts each job once; the Job title filter cou
 job under the first job title it matches, or Other. The toolbar searches title, company and
 location and filters by job title, location, work mode, posted date and what it fits on,
 without changing your preferences. Every column sorts, and the table pages 10, 25 or 50 rows. Every run ends with the same filter.
+
+### Skills match
+
+Skills never hide a job (PRD 1.21, F5). Until 0.18.0 a third Matching choice listed a job
+only when it named every one of your required skills, and a job whose description gave no
+skills failed it, so good jobs went missing. Now the same SQL pass that filters also writes
+a skills match on every listing (`required_hit`, `nice_hit`, `required_pct`), and Jobs
+shows it in its own column:
+
+- **Required**: how many of your required skills the job asks for, with the percentage and
+  the missing ones, for example "4 of 6 required (67%)", "Missing aws, kafka".
+- **Nice to have**: how many of your nice-to-have skills it asks for, "2 of 5 nice to have".
+  With no required skills set, only this part shows.
+- **Skills not stated**: no skills were found in the job description. The match is unknown,
+  not 0, like Work mode "Not stated".
+
+The Skills match column sorts (required %, then nice to have, unknown last), and the toolbar
+filters by a minimum (25%, 50%, 75% or all of your required skills; unknown jobs are left
+out while a minimum is set). Neither changes Job preferences. The job panel's **Why it fits**
+lists the skills behind the numbers. The match is rewritten whenever you save your skills,
+accept the skills from a resume, or JAP finishes reading a job description.
+
+A match rule saved before 0.18.0 that used skills keeps its other conditions: a row of skills
+alone is dropped, and a rule left empty becomes job title and location (migration
+`0010_skills_match`, and the same when a rule is read).
 
 `make demo` loads "JAP Demo Co" with six made-up postings on a Greenhouse and a Lever board,
 so you can see grouping, a pair for the AI to settle, and Not the same job without waiting for real
@@ -237,6 +263,13 @@ unclear (A3):
   failed cover letter still stops at **Needs input**;
 - a job already waiting in Ready for review keeps waiting: the mode is fixed when a job is
   prepared, so switching takes effect from the next run.
+
+A run in Automatic mode also picks only jobs at or above the **required-skills bar** (F6):
+"Only jobs with at least N% of my required skills" on Settings, 60 by default. A job below
+the bar, or with Skills not stated, is not prepared: it stays Not applied on Jobs for you to
+apply to yourself, and its panel says so under Why it fits. With no required skills in Job
+preferences, or the bar set to 0, there is nothing to measure and the bar is off. Review
+mode has no bar, because you read every application before it goes.
 
 Submissions are at most the **Daily cap** a day (next to the switch, 20 by default; set it to 2
 to try Automatic mode) and at least 30 seconds apart. A run at the cap prepares nothing and
@@ -483,6 +516,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.18.0 | 13 Nov 2026 | Skills match instead of a skills filter (PRD 1.21, F5, F6, U15, U17, U18). Skills never hide a job: the Skills condition and the third Matching choice are gone, so matching is job title and location only, and the default rule is job title and location everywhere (the code fallback and the API default used to be any one of title, skills or location). Every job gets a skills match in the same SQL pass as the filters (migration `0010_skills_match`: `listing.required_hit`, `nice_hit`, `required_pct`): Required x of y with the percentage and the missing skills, Nice to have x of y, and Skills not stated when the description gave none, which is unknown and never 0. Jobs has a Skills match column that sorts, and a minimum filter (`sort=skills`, `min_skills`); the job panel lists the skills behind it. Automatic mode picks only jobs at or above a required-skills bar, 60% by default, set on Settings (`profile.auto_apply_min_skills`); the rest stay listed. A rule saved earlier with skills keeps its other conditions. |
 | 0.17.1 | 13 Nov 2026 | Fix a job whose title is wider than the Job title column showing as nothing but `...` (JAP-5). The title is a button so it can be opened from the keyboard, and a button is `display: inline-flex`, which makes it an atomic inline box: `text-overflow` can shorten text but cannot cut into one. Chrome therefore dropped the whole button and drew the ellipsis in its place, so the row lost its title entirely while the side panel still showed it. The row is a flex line now and the button shortens its own text, so a long title reads "Applied AI Architect, Democrati…" |
 | 0.17.0 | 13 Nov 2026 | Unfollow and re-follow (PRD 1.20, I10 to I18). Stopping following a company used to only switch its board off: its postings stayed open for ever, were never read, and kept "Reading N job descriptions" and "Searching…" on screen. Now it closes the board's open postings with the reason `unfollowed` (migration `0009_close_reason`; the other reason is `gone_from_board`), closes the jobs left with no open posting on a followed board, and nothing is deleted. Jobs with an application stay in the list with a note. No AI reading is done for an unfollowed company, queued reads included, and a search that was running cannot reopen its jobs. Following again switches the same board back on and the next search reopens the same rows, re-reading only descriptions that changed. A confirmation says how many jobs will be hidden; the search line says how many were reopened. `make close-unfollowed` closes what earlier unfollows left open |
 | 0.16.2 | 13 Nov 2026 | Fix Profile claiming there is no resume for about a second on every visit. Switching tabs unmounts the page, so its resume list started empty again each time and the section drew "No resume yet. JAP needs one before it can apply.", without the skills found in the resume, until `/api/resumes` answered. On live that is roughly a second, because every call crosses the Cloudflare Tunnel, while locally it is 5ms, which is why it never showed in dev. Profile now paints the active version the store already caches and only says there is no resume once the list has really arrived; Saved answers waits the same way instead of flashing "No saved answers yet". An upload writes the new version back to the store, so the next visit paints that one and not the one before it |

@@ -6,7 +6,7 @@ from typing import Literal
 from pydantic import BaseModel, EmailStr, Field, HttpUrl, field_validator
 
 WorkMode = Literal["remote", "hybrid", "onsite"]
-Condition = Literal["role", "skills", "location"]
+Condition = Literal["role", "location"]  # skills never hide a job (PRD 1.21, F5)
 ApplyMode = Literal["review", "automatic"]
 
 
@@ -39,7 +39,7 @@ class ProfileIn(BaseModel):
     locations: list[str] = []
     remote_regions: list[str] = []
     remote_any: bool = False  # every remote job passes Location, whatever its regions
-    match_rule: list[list[Condition]] = [["role"], ["skills"], ["location"]]
+    match_rule: list[list[Condition]] = [["location", "role"]]  # job title and location
     work_modes: list[WorkMode] = ["remote", "hybrid", "onsite"]
     excluded_companies: list[str] = []
     excluded_title_words: list[str] = []
@@ -67,6 +67,16 @@ class ProfileIn(BaseModel):
         if not v:
             raise ValueError("Tick at least one work mode")
         return list(dict.fromkeys(v))
+
+    @field_validator("match_rule", mode="before")
+    @classmethod
+    def without_skills(cls, v: object) -> object:
+        """A rule from before 1.21 may still name skills: it keeps its other conditions, and
+        one left with nothing becomes job title and location."""
+        if not isinstance(v, list) or not any(isinstance(c, list) and "skills" in c for c in v):
+            return v
+        kept = [[x for x in c if x != "skills"] for c in v if isinstance(c, list)]
+        return [c for c in kept if c] or [["location", "role"]]
 
     @field_validator("match_rule")
     @classmethod
@@ -98,6 +108,7 @@ class ProfileOut(ProfileIn):
     daily_run: bool
     daily_run_at: time
     daily_cap: int
+    auto_apply_min_skills: int  # F6: Automatic applies at or above this % of required skills
     spend: Spend
 
 
@@ -117,3 +128,4 @@ class ProfileSwitches(BaseModel):
     daily_run_at: time | None = None  # in JAP_TZ; 06:00 unless changed for testing
     daily_cap: int | None = Field(default=None, ge=0, le=100)  # A1: 20 unless lowered
     spend_cap_usd: float | None = Field(default=None, ge=0, le=100)  # $2 unless changed
+    auto_apply_min_skills: int | None = Field(default=None, ge=0, le=100)  # F6: 60, 0 = off

@@ -37,6 +37,7 @@ async def to_out(session: AsyncSession, profile: Profile) -> ProfileOut:
         daily_run=profile.daily_run,
         daily_run_at=profile.daily_run_at,
         daily_cap=profile.daily_cap,
+        auto_apply_min_skills=profile.auto_apply_min_skills,
         spend=await month_spend(session),
     )
     return ProfileOut.model_validate(data)
@@ -87,11 +88,7 @@ async def preview(body: ProfileIn, session: Session) -> MatchPreview:
     counts = await preview_counts(session, criteria)
     return MatchPreview(
         matching_count=counts.pop("matching"),
-        by_condition={
-            "role": counts["role"],
-            "skills": counts["skills"],
-            "location": counts["location"],
-        },  # fmt: skip
+        by_condition={"role": counts["role"], "location": counts["location"]},
     )
 
 
@@ -106,6 +103,8 @@ async def flip_switches(body: ProfileSwitches, session: Session) -> ProfileOut:
         profile.daily_run_at = body.daily_run_at.replace(second=0, microsecond=0, tzinfo=None)
     if body.daily_cap is not None:
         profile.daily_cap = body.daily_cap
+    if body.auto_apply_min_skills is not None:
+        profile.auto_apply_min_skills = body.auto_apply_min_skills
     if body.spend_cap_usd is not None:
         profile.spend_cap_usd = Decimal(str(round(body.spend_cap_usd, 2)))
     await session.commit()

@@ -6,8 +6,9 @@ different specialization, and a borderline pair that should show as Possible dup
 (Phase 3). It also loads "Globex Demo" on an Ashby board with six jobs for the match rule
 (Phase 4): Remote - Worldwide, Remote - US only, Remote - APAC, an Intern title, a job whose
 work mode is unclear, and one in Berlin. Embeddings and extracted fields are written
-directly, so loading costs nothing and needs no Ollama or model key. make demo-clear
-removes all of it.
+directly, so loading costs nothing and needs no Ollama or model key. Skills go through
+skill_alias as enrichment does (postgresql is stored as postgres), so each demo job's skills
+match (F5) reads as a real one would. make demo-clear removes all of it.
 """
 
 import asyncio
@@ -25,6 +26,7 @@ from database.session import get_sessionmaker
 from pipeline.dedup import dedup, refresh_listings
 from pipeline.ingest import html_to_text
 from pipeline.matching import refilter_from_profile
+from pipeline.resume import normalize_skills, skill_aliases
 
 COMPANY = "JAP Demo Co"
 TOKEN = "jap-demo"
@@ -138,10 +140,13 @@ async def _add(
 async def load() -> str:
     async with get_sessionmaker()() as session:
         boards = {a: await _board(session, a, TOKEN, COMPANY) for a in ("greenhouse", "lever")}
+        aliases = await skill_aliases(session)
         for ats, ext, title, locations, days, body, cosine in POSTINGS:
             remote = "Remote" in locations[0]
             extracted: dict[str, Any] = {
-                "skills": ["python", "postgresql"] if "Backend" in title else ["kafka", "spark"],
+                "skills": normalize_skills(
+                    ["python", "postgresql"] if "Backend" in title else ["kafka", "spark"], aliases
+                ),
                 "seniority": "junior" if "Junior" in title else "senior",
                 "work_mode": "remote" if remote else "onsite",
                 "remote_regions": ["India"] if remote else [],
@@ -153,7 +158,7 @@ async def load() -> str:
         globex = await _board(session, "ashby", FILTER_TOKEN, FILTER_COMPANY)
         for k, (ext, title, locations, days, skills, mode, regions) in enumerate(FILTER_POSTINGS):
             extracted = {
-                "skills": skills,
+                "skills": normalize_skills(skills, aliases),
                 "seniority": "intern" if "Intern" in title else "mid",
                 "work_mode": mode or "unknown",
                 "remote_regions": regions,

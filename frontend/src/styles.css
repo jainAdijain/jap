@@ -139,7 +139,7 @@ p { margin: 0; }
 .bulk b { font-weight: 600; margin-right: 4px; }
 .hidden-head { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 12px; border-bottom: 1px solid var(--line); font-size: 13px; background: var(--new-bg); }
 .table-scroll { overflow-x: auto; }
-table.jobs { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; min-width: 900px; }
+table.jobs { width: 100%; border-collapse: separate; border-spacing: 0; table-layout: fixed; min-width: 1040px; }
 table.jobs thead th { position: sticky; top: 0; background: var(--surface); text-align: left; font-size: 12px; font-weight: 600; color: var(--muted); padding: 0; border-bottom: 1px solid var(--line); white-space: nowrap; }
 table.jobs thead th button { border: none; background: none; width: 100%; text-align: left; color: inherit; font-size: 12px; font-weight: 600; padding: 10px 12px; min-height: 0; border-radius: 0; display: flex; gap: 4px; align-items: center; }
 table.jobs thead th button:hover:not(:disabled) { color: var(--text); background: none; }
