@@ -63,22 +63,30 @@ function Suggestions({ resume, must, nice, onAccepted }: { resume: Resume; must:
 }
 
 function ResumeSection({ onLinks }: { onLinks: (links: string[]) => void }) {
-  const { profile, setProfile, refresh, toast } = useApp()
-  const [versions, setVersions] = useState<Resume[]>([])
+  const { profile, setProfile, refresh, toast, resume, setResume } = useApp()
+  const [versions, setVersions] = useState<Resume[] | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const input = useRef<HTMLInputElement>(null)
-  const load = useCallback(async () => setVersions(await api.resumes()), [])
+  const load = useCallback(async () => {
+    const fresh = await api.resumes()
+    setVersions(fresh)
+    setResume(fresh.find((v) => v.is_active) ?? null)
+  }, [setResume])
   useEffect(() => {
     load().catch((err) => setError(errorText(err)))
   }, [load])
-  const parsing = versions.some((v) => v.status === 'parsing')
+  // Leaving Profile unmounts this page, so the list is empty again on every visit while
+  // /api/resumes goes out. Stand on the active version the store already holds until it
+  // answers, and say nothing about having no resume until one of the two has (U12).
+  const all = versions ?? (resume ? [resume] : [])
+  const parsing = all.some((v) => v.status === 'parsing')
   useEffect(() => {
     if (!parsing) return
     const t = setInterval(() => void load().catch(() => undefined), 2000)
     return () => clearInterval(t)
   }, [parsing, load])
-  const active = versions.find((v) => v.is_active)
+  const active = all.find((v) => v.is_active)
   useEffect(() => onLinks(active?.links_found ?? []), [active?.links_found, onLinks])
 
   const upload = async (file: File) => {
@@ -95,7 +103,7 @@ function ResumeSection({ onLinks }: { onLinks: (links: string[]) => void }) {
     }
   }
   const pending = active && active.status === 'parsed' && !active.accepted_at ? active : null
-  const earlier = versions.filter((v) => !v.is_active)
+  const earlier = all.filter((v) => !v.is_active)
   return (
     <div className="sec">
       <div className="sec-l">
@@ -111,8 +119,10 @@ function ResumeSection({ onLinks }: { onLinks: (links: string[]) => void }) {
               </a>{' '}
               <span className="muted">· uploaded {shortDate(active.uploaded_at)}</span>
             </span>
-          ) : (
+          ) : versions ? (
             <span className="muted">No resume yet. JAP needs one before it can apply.</span>
+          ) : (
+            <span className="muted">Loading…</span>
           )}
           <label className={busy ? 'btn btn-primary' : active ? 'btn' : 'btn btn-primary'} style={{ cursor: 'pointer' }}>
             {busy ? 'Uploading…' : active ? 'Upload new version' : 'Upload resume'}
@@ -178,7 +188,8 @@ function ResumeSection({ onLinks }: { onLinks: (links: string[]) => void }) {
 }
 
 function SavedAnswers() {
-  const [answers, setAnswers] = useState<Answer[]>([])
+  // null until /api/answers answers, so a revisit never flashes "No saved answers yet".
+  const [answers, setAnswers] = useState<Answer[] | null>(null)
   const [editing, setEditing] = useState<Answer | null>(null)
   const [error, setError] = useState<string | null>(null)
   const load = useCallback(async () => setAnswers(await api.answers()), [])
@@ -227,8 +238,8 @@ function SavedAnswers() {
         <p>Reused when a form asks the same question again, such as notice period, salary or work permit. Answers you type for a job are saved here.</p>
       </div>
       <div className="sec-r">
-        {answers.length === 0 && !editing && <p className="muted">No saved answers yet.</p>}
-        {answers.length > 0 && (
+        {answers?.length === 0 && !editing && <p className="muted">No saved answers yet.</p>}
+        {answers && answers.length > 0 && (
           <div>
             {answers.map((a) =>
               editing?.id === a.id ? (

@@ -69,7 +69,7 @@ export function AppProvider({ children }: { children: ReactNode }) {
     timer.current = window.setTimeout(() => setToast(null), 6000)
   }, [])
 
-  const store: Store = { profile, setProfile, summary, runs, health, healthError, ops, resume, tick, refresh, toast }
+  const store: Store = { profile, setProfile, summary, runs, health, healthError, ops, resume, setResume, tick, refresh, toast }
   // Keep the active resume fresh after an upload on Profile.
   useEffect(() => {
     api.resumes().then((v) => setResume(v.find((r) => r.is_active) ?? null), () => undefined)
