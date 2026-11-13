@@ -20,6 +20,7 @@ from database.session import get_sessionmaker
 from pipeline import notify
 from pipeline.apply import flow
 from pipeline.apply.form import FormField, FormRead, SubmitResult
+from pipeline.matching import Criteria, refilter
 from tests.test_llm_call import Stub
 
 FORM = [
@@ -560,6 +561,54 @@ async def test_find_and_apply_picks_within_the_cap(
     async with get_sessionmaker()() as session:
         only = await flow.pick(session, run["id"])
     assert len(only) == 1
+
+
+async def test_automatic_mode_picks_only_at_or_above_the_skills_bar(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], api: httpx.AsyncClient,
+    events: list[tuple[str, dict[str, Any]]],
+) -> None:  # fmt: skip
+    """F6: Automatic mode applies on its own only at or above the bar (60% of my required
+    skills by default). A job below it, or with Skills not stated, stays Not applied on the
+    list; Review mode, and a profile with no required skills, are not held back."""
+    at_bar = setup["listing"]  # 3 of 5 = 60%
+    below = _listing(sql, "Platform Engineer", ext="2")  # 2 of 5 = 40%
+    unknown = _listing(sql, "Data Engineer", ext="3")  # Skills not stated
+    full = _listing(sql, "Site Reliability Engineer", ext="4")
+    sql.execute("UPDATE profile SET must_have_skills = '{a,b,c,d,e}'")
+    for listing, skills in ((at_bar, "{a,b,c}"), (below, "{a,b,x}"), (full, "{a,b,c,d,e,f}")):
+        sql.execute("UPDATE listing SET skills = %s WHERE id = %s", (skills, listing))
+    async with get_sessionmaker()() as session:
+        await refilter(session, Criteria(target_roles=("Engineer",), match_rule=(("role",),),
+                                         must_have_skills=("a", "b", "c", "d", "e")))  # fmt: skip
+        await session.commit()
+    pcts = dict(sql.execute("SELECT id::text, required_pct FROM listing").fetchall())
+    assert pcts == {at_bar: 60, below: 40, unknown: None, full: 100}
+    run = (await api.post("/api/runs", json={"mode": "find_and_apply"})).json()
+
+    async def picked() -> set[str]:
+        async with get_sessionmaker()() as session:
+            return set(await flow.pick(session, run["id"]))
+
+    everything = {at_bar, below, unknown, full}
+    assert await picked() == everything  # Review mode: I read each one first, no bar
+    sql.execute("UPDATE profile SET apply_mode = 'automatic'")
+    assert await picked() == {at_bar, full}  # at the bar counts; below and unknown wait
+    sql.execute("UPDATE profile SET auto_apply_min_skills = 61")
+    assert await picked() == {full}
+    sql.execute("UPDATE profile SET auto_apply_min_skills = 40")
+    assert await picked() == {at_bar, below, full}
+    sql.execute("UPDATE profile SET auto_apply_min_skills = 0")  # the bar turned off
+    assert await picked() == everything
+    sql.execute("UPDATE profile SET auto_apply_min_skills = 60, must_have_skills = '{}'")
+    assert await picked() == everything  # no required skills: nothing to measure
+    # The jobs held back are untouched: still listed, Not applied, and I can apply by hand.
+    sql.execute("UPDATE profile SET must_have_skills = '{a,b,c,d,e}'")
+    assert await picked() == {at_bar, full}
+    rows = sql.execute("SELECT status::text, matched IS NOT NULL FROM listing").fetchall()
+    assert rows == [("not_applied", True)] * 4
+    by_hand = await api.post(f"/api/listings/{below}/apply")
+    assert by_hand.status_code == 202
+    assert events[-1] == ("listing/apply.requested", {"listing_id": below, "run_id": None})
 
 
 async def test_find_only_run_joins_upgrade_to_find_and_apply(

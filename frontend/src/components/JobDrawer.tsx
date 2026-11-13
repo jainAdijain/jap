@@ -128,12 +128,24 @@ function WhyItFits({ listing, profile }: { listing: ListingDetail; profile: Prof
   } else {
     items.push(["Location isn't one of yours", false])
   }
-  const required = profile?.must_have_skills ?? []
-  const asked = required.filter((s) => listing.skills.includes(s))
-  const missing = required.filter((s) => !listing.skills.includes(s))
-  if (asked.length) items.push([`Asks for ${asked.join(', ')}, from your required skills`, true])
-  if (missing.length && listing.skills.length) items.push([`Doesn't ask for ${missing.join(', ')}`, false])
-  if (listing.nice_skills.length) items.push([`Also asks for ${listing.nice_skills.join(', ')}, nice to have`, true])
+  // Skills match (F5): shown, never a reason a job is hidden. Unknown is not 0.
+  const s = listing.skills_match
+  if (!s.stated) {
+    if (s.required_total || s.nice_total) items.push(["Skills not stated, so the skills match isn't known", false])
+  } else {
+    if (s.required_total) {
+      const got = s.required_hit.length ? `: ${s.required_hit.join(', ')}` : ''
+      items.push([`Required skills: ${s.required_hit.length} of ${s.required_total} (${s.required_pct ?? 0}%)${got}`, s.required_hit.length > 0])
+      if (s.required_missing.length) items.push([`Missing ${s.required_missing.join(', ')}`, false])
+    }
+    if (s.nice_total) {
+      const got = s.nice_hit.length ? `: ${s.nice_hit.join(', ')}` : ''
+      items.push([`Nice to have: ${s.nice_hit.length} of ${s.nice_total}${got}`, s.nice_hit.length > 0])
+    }
+  }
+  const bar = profile?.apply_mode === 'automatic' && s.required_total ? profile.auto_apply_min_skills : 0
+  if (bar > 0 && (s.required_pct === null || s.required_pct < bar))
+    items.push([`${s.stated ? 'Below' : 'Not known to meet'} your ${bar}% required-skills bar, so JAP won't send it on its own`, false])
   if (!listing.work_mode) items.push(['Work mode not stated, so JAP never sends it on its own', false])
   return (
     <Sec title="Why it fits">

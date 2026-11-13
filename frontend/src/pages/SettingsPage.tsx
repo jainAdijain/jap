@@ -329,6 +329,7 @@ export default function SettingsPage() {
   const { profile, setProfile, toast } = useApp()
   const [time, setTime] = useState<string | null>(null)
   const [cap, setCap] = useState<string | null>(null)
+  const [bar, setBar] = useState<string | null>(null)
   const [limit, setLimit] = useState<string | null>(null)
   const flip = async (s: Switches, done?: string) => {
     try {
@@ -398,6 +399,33 @@ export default function SettingsPage() {
                       }}
                     />
                     <span>applications a day</span>
+                  </span>
+                  <span className="inline">
+                    <label htmlFor="skills-bar">Only jobs with at least</label>
+                    <input
+                      id="skills-bar"
+                      type="number"
+                      min={0}
+                      max={100}
+                      step={5}
+                      style={{ width: 80 }}
+                      value={bar ?? String(profile.auto_apply_min_skills)}
+                      onChange={(e) => setBar(e.target.value)}
+                      onBlur={() => {
+                        const n = Number(bar)
+                        if (bar !== null && bar !== '' && Number.isInteger(n) && n >= 0 && n <= 100 && n !== profile.auto_apply_min_skills)
+                          void flip({ auto_apply_min_skills: n }, n ? `JAP sends only jobs with at least ${n}% of your required skills.` : 'JAP sends jobs whatever their skills match.')
+                        setBar(null)
+                      }}
+                    />
+                    <span>% of my required skills</span>
+                  </span>
+                  <span className="d" style={{ gridColumn: 1 }}>
+                    {profile.must_have_skills.length === 0
+                      ? 'You have no required skills in Job preferences, so this is not used yet.'
+                      : profile.auto_apply_min_skills === 0
+                        ? 'Off: JAP sends jobs whatever their skills match.'
+                        : 'Jobs below this, or with no skills stated, stay on your list for you to apply to yourself.'}
                   </span>
                 </span>
               )}

@@ -9,7 +9,18 @@ from datetime import datetime, time
 from decimal import Decimal
 from typing import Any
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, Numeric, Text, Time, func
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    SmallInteger,
+    Text,
+    Time,
+    func,
+)
 from sqlalchemy.dialects.postgresql import ARRAY, ENUM, JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -75,6 +86,8 @@ class Profile(Timestamps, Base):
     daily_run_at: Mapped[time] = mapped_column(Time, server_default="06:00")
     daily_run_last_at: Mapped[datetime | None]
     daily_cap: Mapped[int] = mapped_column(Integer, server_default="20")
+    # F6: Automatic mode applies only at or above this share of my required skills.
+    auto_apply_min_skills: Mapped[int] = mapped_column(SmallInteger, server_default="60")
     spend_cap_usd: Mapped[Decimal | None] = mapped_column(Numeric(8, 2))  # None: .env cap
 
 
@@ -145,6 +158,11 @@ class Listing(Timestamps, Base):
     status: Mapped[str] = mapped_column(LISTING_STATUS, server_default="not_applied")
     matched: Mapped[list[str] | None] = mapped_column(ARRAY(Text))  # null = not listed (F3)
     matched_role: Mapped[str | None] = mapped_column(Text)  # target role it counts under (U2)
+    # Skills match (F5), written with matched: my skills the job asks for, and the share of
+    # my required ones (null = unknown: the job states no skills, or I have none required).
+    required_hit: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    nice_hit: Mapped[list[str]] = mapped_column(ARRAY(Text), server_default="{}")
+    required_pct: Mapped[int | None] = mapped_column(SmallInteger)
     first_posted_at: Mapped[datetime | None]
     last_posted_at: Mapped[datetime | None]
     applied_at: Mapped[datetime | None]

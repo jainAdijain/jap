@@ -43,7 +43,8 @@ async def test_save_and_reload(
     assert body["target_roles"] == ["Backend Engineer", "Data Engineer"]
     assert body["must_have_skills"] == ["python", "postgres"]
     assert body["nice_to_have_skills"] == ["kubernetes"]  # python is already must-have
-    assert body["match_rule"] == [["location", "role"], ["skills"]]
+    # A rule saved with skills keeps its other conditions (PRD 1.21): skills never hide a job.
+    assert body["match_rule"] == [["location", "role"]]
     assert body["links"] == [{"label": "GitHub", "url": "https://github.com/asharao"}]
     assert events == [("profile/saved", {})]
     contact = await api.put("/api/profile", json={**PROFILE, "phone": "+91 99999 00000"})
@@ -73,6 +74,15 @@ async def test_switches(api: httpx.AsyncClient) -> None:
     assert body["daily_run_at"] == "16:42:00" and body["daily_run"] is True
     bad = await api.patch("/api/profile", json={"daily_run_at": "25:00"})
     assert bad.status_code == 422
+    # F6: the required-skills bar Automatic mode needs, 60% unless changed; 0 turns it off.
+    assert body["auto_apply_min_skills"] == 60
+    body = (await api.patch("/api/profile", json={"auto_apply_min_skills": 75})).json()
+    assert body["auto_apply_min_skills"] == 75 and body["apply_mode"] == "automatic"
+    body = (await api.patch("/api/profile", json={"auto_apply_min_skills": 0})).json()
+    assert body["auto_apply_min_skills"] == 0
+    for out_of_range in (-1, 101):
+        bad = await api.patch("/api/profile", json={"auto_apply_min_skills": out_of_range})
+        assert bad.status_code == 422
 
 
 async def test_spend_shows_this_month(api: httpx.AsyncClient, sql: psycopg.Connection[Any]) -> None:

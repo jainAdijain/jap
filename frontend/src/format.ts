@@ -1,4 +1,4 @@
-import type { Ats, ListingRow, ListingStatus, Run } from './api/client'
+import type { Ats, ListingRow, ListingStatus, Run, SkillsMatch } from './api/client'
 
 export const ATS_LIST: { key: Ats; label: string; example: string }[] = [
   { key: 'greenhouse', label: 'Greenhouse', example: 'boards.greenhouse.io/<board>' },
@@ -59,7 +59,7 @@ export const STATUS: Record<ListingStatus, [string, string]> = {
 export const workModeLabel = (mode: string | null) =>
   mode === 'onsite' ? 'On-site' : mode === 'hybrid' ? 'Hybrid' : mode === 'remote' ? 'Remote' : 'Not stated'
 
-/** "Fits Backend Engineer · Bangalore · your skills": what the job matched. */
+/** "Fits Backend Engineer · Bangalore": what the job matched. */
 export function fitsLine(row: ListingRow): string {
   const parts: string[] = []
   if (row.matched.includes('role')) parts.push(row.matched_role ?? 'your job titles')
@@ -67,7 +67,6 @@ export function fitsLine(row: ListingRow): string {
     const office = row.locations.find((l) => !/remote/i.test(l))
     parts.push(row.work_mode === 'remote' || !office ? 'Remote' : office.split(',')[0])
   }
-  if (row.matched.includes('skills')) parts.push('your skills')
   return parts.length ? `Fits ${parts.join(' · ')}` : ''
 }
 
@@ -81,3 +80,14 @@ export const STARTED_BY: Record<Run['trigger'], string> = {
 export const money = (n: number) => `$${n.toFixed(2)}`
 
 export const errorText = (err: unknown) => (err instanceof Error ? err.message : String(err))
+
+/** The skills match as words (F5): "4 of 6 required (67%)", "2 of 5 nice to have", or
+ *  Skills not stated when the job names none. Unknown is never shown as 0. */
+export function skillsWords(m: SkillsMatch): { required: string | null; nice: string | null; missing: string } {
+  if (!m.stated) return { required: null, nice: null, missing: '' }
+  return {
+    required: m.required_total ? `${m.required_hit.length} of ${m.required_total} required (${m.required_pct ?? 0}%)` : null,
+    nice: m.nice_total ? `${m.nice_hit.length} of ${m.nice_total} nice to have` : null,
+    missing: m.required_missing.length ? `Missing ${m.required_missing.join(', ')}` : '',
+  }
+}

@@ -37,7 +37,8 @@ export type Check = { ok: boolean; detail: string }
 export type Health = { ok: boolean; env?: string; checks: Record<string, Check> }
 
 export type WorkMode = 'remote' | 'hybrid' | 'onsite'
-export type Condition = 'role' | 'skills' | 'location'
+/** What a job can fit on. Skills never hide a job (PRD 1.21), so they are not a condition. */
+export type Condition = 'role' | 'location'
 export type Link = { label: string; url: string }
 export type Spend = { month_usd: number; cap_usd: number; reached: boolean }
 
@@ -65,6 +66,8 @@ export type Profile = ProfileFields & {
   daily_run: boolean
   daily_run_at: string // HH:MM:SS in JAP_TZ
   daily_cap: number
+  /** Automatic mode sends only at or above this % of my required skills (F6); 0 is off. */
+  auto_apply_min_skills: number
   spend: Spend
 }
 
@@ -149,6 +152,7 @@ export type Switches = {
   daily_run?: boolean
   daily_run_at?: string
   daily_cap?: number
+  auto_apply_min_skills?: number
   spend_cap_usd?: number
 }
 
@@ -214,14 +218,26 @@ export type ListingRow = {
   matched: Condition[]
   matched_role: string | null
   nice_skills: string[]
+  skills_match: SkillsMatch
 }
-export type SortKey = 'title' | 'company' | 'location' | 'work_mode' | 'status' | 'posted'
+/** How a job fits my skills (F5). Shown on every job; it never hides one. */
+export type SkillsMatch = {
+  stated: boolean // false: the job states no skills, shown as Skills not stated
+  required_hit: string[]
+  required_missing: string[]
+  required_total: number
+  required_pct: number | null // null when unknown
+  nice_hit: string[]
+  nice_total: number
+}
+export type SortKey = 'title' | 'company' | 'location' | 'skills' | 'work_mode' | 'status' | 'posted'
 export type ListingFilters = {
   q?: string
   status?: 'open' | 'active' | 'all' | ListingStatus
   role?: string
   location?: string
   matched?: Condition
+  min_skills?: number
   work_mode?: WorkMode | 'unknown'
   posted_days?: number
   sort?: SortKey
@@ -235,7 +251,7 @@ export type ListingSummary = {
   by_role: (StatusCounts & { role: string | null })[]
   locations: string[]
 }
-/** Role filter value for listings matched through Skills or Location only. */
+/** Role filter value for listings matched through Location only. */
 export const OTHER_ROLE = '__other'
 export type ListingPage = { total: number; page: number; page_size: number; rows: ListingRow[] }
 export type AlsoOn = {

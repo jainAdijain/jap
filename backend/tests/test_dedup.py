@@ -29,7 +29,9 @@ def _listings(sql: psycopg.Connection[Any]) -> list[tuple[str, int]]:
 
 async def _list_engineers(api: httpx.AsyncClient) -> None:
     """A profile whose rule lists every demo engineering job."""
-    saved = await api.put("/api/profile", json={"target_roles": ["Engineer"]})
+    saved = await api.put(
+        "/api/profile", json={"target_roles": ["Engineer"], "match_rule": [["role"]]}
+    )
     assert saved.status_code == 200, saved.text
 
 

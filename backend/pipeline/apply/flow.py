@@ -646,10 +646,24 @@ async def read_and_save(session: AsyncSession, app_id: str, url: str) -> int:
     return len(read.fields)
 
 
+def skills_bar(profile: Profile | None) -> int:
+    """The % of my required skills a job needs before Automatic mode applies on its own
+    (F6); 0 when there is no bar: Review mode, no required skills, or the bar set to 0."""
+    if profile is None or profile.apply_mode != "automatic" or not profile.must_have_skills:
+        return 0
+    return int(profile.auto_apply_min_skills)
+
+
 async def pick(session: AsyncSession, run_id: str) -> list[str]:
     """pick (Find and apply): listed, Not applied listings with an open primary posting,
     newest first, up to what is left of today's cap. A run scoped to some roles picks
-    only the listings counted under those roles."""
+    only the listings counted under those roles.
+
+    In Automatic mode JAP sends on its own, so it picks only jobs at or above the auto-apply
+    bar (F6): at least auto_apply_min_skills % of my required skills. A job below the bar,
+    or with Skills not stated, stays Not applied on the list for me to apply by hand. With
+    no required skills, or a bar of 0, there is nothing to measure and every job is picked.
+    Review mode prepares for me to read first, so the bar does not apply there."""
     run = await session.get(Run, uuid.UUID(run_id))
     profile = await session.scalar(select(Profile))
     if run is None or run.mode != "find_and_apply":
@@ -664,15 +678,19 @@ async def pick(session: AsyncSession, run_id: str) -> list[str]:
         .join(WatchedBoard, WatchedBoard.id == Posting.watched_board_id)
         .where(WatchedBoard.active)
     )
+    where = [
+        Listing.matched.is_not(None),
+        Listing.status == "not_applied",
+        Listing.id.in_(watched),
+        Posting.state == "open",
+    ]
+    bar = skills_bar(profile)
+    if bar:
+        where.append(Listing.required_pct >= bar)
     rows = await session.scalars(
         select(Listing)
         .join(Posting, Posting.id == Listing.primary_posting_id)
-        .where(
-            Listing.matched.is_not(None),
-            Listing.status == "not_applied",
-            Listing.id.in_(watched),
-            Posting.state == "open",
-        )
+        .where(*where)
         .order_by(Listing.last_posted_at.desc().nulls_last())
     )
     matcher = role_matcher((run.scope or {}).get("roles"))

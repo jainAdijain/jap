@@ -9,6 +9,19 @@ from schemas.job import ATS
 from schemas.posting import PostingDetail
 
 
+class SkillsMatch(BaseModel):
+    """How a job fits my skills (F5). Never a filter: a job with a low or unknown match is
+    still listed."""
+
+    stated: bool  # False: no skills were extracted for the job, shown as Skills not stated
+    required_hit: list[str]  # my required skills the job asks for
+    required_missing: list[str]  # my required skills it does not name
+    required_total: int  # 0: I have no required skills, only the nice-to-have part shows
+    required_pct: int | None  # None when unknown (not stated, or no required skills)
+    nice_hit: list[str]
+    nice_total: int
+
+
 class ListingRow(BaseModel):
     id: UUID
     title: str
@@ -21,9 +34,10 @@ class ListingRow(BaseModel):
     platforms: list[ATS]  # boards with an open posting of this listing (the badge)
     postings: int
     role: str  # canonical role
-    matched: list[str]  # conditions it met: role, skills, location (F3)
+    matched: list[str]  # conditions it met: role, location (F3)
     matched_role: str | None  # the target role it counts under in Jobs by role (U2)
-    nice_skills: list[str]  # my nice-to-have skills the job asks for, shown as tags
+    nice_skills: list[str]  # my nice-to-have skills the job asks for
+    skills_match: SkillsMatch
 
 
 class ListingPage(BaseModel):
@@ -46,7 +60,7 @@ class StatusCounts(BaseModel):
 
 
 class RoleCounts(StatusCounts):
-    role: str | None  # None: listed through Skills or Location only
+    role: str | None  # None: listed through Location only
 
 
 class ListingSummary(BaseModel):
