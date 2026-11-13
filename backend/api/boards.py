@@ -2,6 +2,10 @@
 
 POST /api/boards/detect turns a pasted board URL or a company name into (ATS, token) and
 checks the board answers; nothing is saved until the UI then POSTs /api/boards.
+
+DELETE stops following: the board is kept but switched off, and its open postings are
+closed as unfollowed (I10 to I15, pipeline/unfollow.py). POST of the same company switches
+the same board back on; nothing is fetched until the next search (I16).
 """
 
 import uuid
@@ -12,7 +16,8 @@ from sqlalchemy import select
 from api.errors import ApiError
 from database.models import WatchedBoard
 from database.session import Session
-from schemas.board import BoardIn, BoardOut, DetectIn, DetectOut
+from pipeline.unfollow import effect, unfollow
+from schemas.board import BoardIn, BoardOut, DetectIn, DetectOut, UnfollowEffect
 from schemas.job import ATS
 from sources import base
 from sources.detect import NotABoard, detect
@@ -85,10 +90,24 @@ async def add(body: BoardIn, session: Session) -> BoardOut:
     return to_out(board)
 
 
-@router.delete("/{board_id}", status_code=204)
-async def stop_watching(board_id: uuid.UUID, session: Session) -> None:
+@router.get("/{board_id}/unfollow", response_model=UnfollowEffect)
+async def unfollow_effect(board_id: uuid.UUID, session: Session) -> UnfollowEffect:
+    """What stopping following would do, for the confirmation (I15). Changes nothing."""
     board = await session.get(WatchedBoard, board_id)
     if board is None:
         raise ApiError(404, "not_found", "No such board")
-    board.active = False  # kept, so its postings keep their board
-    await session.commit()
+    found = await effect(session, board_id)
+    return UnfollowEffect(
+        display_name=board.display_name,
+        hidden=found.hidden,
+        kept=found.kept,
+        unread=found.unread,
+    )
+
+
+@router.delete("/{board_id}", status_code=204)
+async def stop_watching(board_id: uuid.UUID, session: Session) -> None:
+    """Stop following: the board is kept (its postings keep their board) and its open
+    postings are closed as unfollowed. Safe to repeat."""
+    if await unfollow(session, board_id) is None:
+        raise ApiError(404, "not_found", "No such board")

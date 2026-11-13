@@ -3,7 +3,8 @@
 Every Job becomes a posting row keyed on (source, external_id). The raw payload and the
 HTML are stored unchanged; description_text is the HTML stripped to plain text, and its
 hash decides whether the posting needs extracting again (I4). A posting that is no longer
-on its board is marked Closed, never deleted.
+on its board is marked Closed, never deleted. A board I stopped following stores and
+closes nothing (I14): its postings were closed by the unfollow (pipeline/unfollow.py).
 """
 
 import hashlib
@@ -19,7 +20,7 @@ from sqlalchemy import func, select, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import Posting
+from database.models import Posting, WatchedBoard
 from schemas.job import Job
 
 BLOCK = {"p", "div", "br", "li", "ul", "ol", "h1", "h2", "h3", "h4", "h5", "h6", "tr", "section"}
@@ -95,13 +96,29 @@ def _row(job: Job, board_id: uuid.UUID, now: datetime) -> dict[str, Any]:
         "state": "open",
         "last_seen_at": now,
         "closed_at": None,
+        "close_reason": None,
     }
 
 
-async def store_jobs(session: AsyncSession, board_id: uuid.UUID, jobs: list[Job]) -> Stored:
-    """Upsert every job on (source, external_id) and say which need extracting."""
+async def followed(session: AsyncSession, board_id: uuid.UUID) -> bool:
+    """Whether the board is still followed, holding it so until this transaction ends: an
+    unfollow (which locks the board row) waits for a store in flight and then closes what
+    it stored, or goes first and the store finds the board off (I14)."""
+    active = await session.scalar(
+        select(WatchedBoard.active).where(WatchedBoard.id == board_id).with_for_update(read=True)
+    )
+    return bool(active)
+
+
+async def store_jobs(session: AsyncSession, board_id: uuid.UUID, jobs: list[Job]) -> Stored | None:
+    """Upsert every job on (source, external_id) and say which need extracting. None when
+    the board was unfollowed meanwhile: nothing is stored, so nothing reopens (I14)."""
+    if not await followed(session, board_id):
+        await session.rollback()
+        return None
     out = Stored()
     if not jobs:
+        await session.commit()
         return out
     now = datetime.now(UTC)
     rows = {(j.source.value, j.external_id): _row(j, board_id, now) for j in jobs}
@@ -144,17 +161,36 @@ async def close_missing(
 ) -> int:
     """Mark Closed every open posting of this board that the board no longer lists (I6).
 
-    only (a test on the title) limits it to the postings a scoped run looked at (T3)."""
-    where = [Posting.watched_board_id == board_id, Posting.state == "open"]
+    A posting closed by an unfollow that the board no longer lists either stays Closed, and
+    its reason becomes gone_from_board (I16): the employer took it down while I was away.
+    only (a test on the title) limits both to the postings a scoped run looked at (T3).
+    Returns how many open postings were closed."""
+    if not await followed(session, board_id):
+        await session.rollback()
+        return 0
+    missing = [
+        Posting.watched_board_id == board_id,
+        (Posting.state == "open") | (Posting.close_reason == "unfollowed"),
+    ]
     if seen_external_ids:
-        where.append(Posting.external_id.not_in(seen_external_ids))
-    if only is not None:
-        rows = await session.execute(select(Posting.id, Posting.title_raw).where(*where))
-        ids = [pid for pid, title in rows if only(title)]
-        if not ids:
-            return 0
-        where.append(Posting.id.in_(ids))
-    stmt = update(Posting).where(*where).values(state="closed", closed_at=func.now())
-    result = await session.execute(stmt)
+        missing.append(Posting.external_id.not_in(seen_external_ids))
+    rows = await session.execute(
+        select(Posting.id, Posting.title_raw, Posting.state).where(*missing)
+    )
+    found = [(pid, state) for pid, title, state in rows if only is None or only(title)]
+    open_ids = [pid for pid, state in found if state == "open"]
+    stale_ids = [pid for pid, state in found if state != "open"]
+    if open_ids:
+        await session.execute(
+            update(Posting)
+            .where(Posting.id.in_(open_ids), Posting.state == "open")
+            .values(state="closed", closed_at=func.now(), close_reason="gone_from_board")
+        )
+    if stale_ids:
+        await session.execute(
+            update(Posting)
+            .where(Posting.id.in_(stale_ids), Posting.close_reason == "unfollowed")
+            .values(close_reason="gone_from_board")
+        )
     await session.commit()
-    return int(result.rowcount or 0)  # type: ignore[attr-defined]
+    return len(open_ids)

@@ -90,6 +90,7 @@ function runCounts(run: Run, boldNew = false): ReactNode {
   const fresh = `${c.new_listings ?? c.new ?? 0} new`
   const parts = [plural(c.boards ?? 0, 'company', 'companies'), `${plural(c.fetched ?? 0, 'job')} found`]
   const after: string[] = []
+  if (c.reopened) after.push(`${c.reopened} reopened`)
   if (c.merged) after.push(`${c.merged} merged as ${c.merged === 1 ? 'a duplicate' : 'duplicates'}`)
   if (run.mode === 'find_and_apply') after.push(`${c.apply_queued ?? 0} to apply`)
   return (

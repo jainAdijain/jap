@@ -16,7 +16,7 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
-from database.models import Posting, Profile
+from database.models import Posting, Profile, WatchedBoard
 from llm import call
 from pipeline.resume import normalize_skills, sensitive_from_profile, skill_aliases
 from schemas.extract import FIELDS, Extracted, from_output, output_model
@@ -47,8 +47,18 @@ class ExtractResult:
     sent_to_model: str | None = None
 
 
-async def extract_posting(session: AsyncSession, posting_id: uuid.UUID) -> ExtractResult:
+async def wanted_posting(session: AsyncSession, posting_id: uuid.UUID) -> Posting | None:
+    """The posting, or None when it is not to be read: it is gone, closed, or its company
+    is no longer followed (I13). A read queued before an unfollow ends here, unspent."""
     posting = await session.get(Posting, posting_id)
+    if posting is None or posting.state != "open":
+        return None
+    board = await session.get(WatchedBoard, posting.watched_board_id)
+    return posting if board is not None and board.active else None
+
+
+async def extract_posting(session: AsyncSession, posting_id: uuid.UUID) -> ExtractResult:
+    posting = await wanted_posting(session, posting_id)
     if posting is None:
         return ExtractResult(skipped=True, fields=[])
     if posting.extracted_hash == posting.description_hash:
@@ -110,7 +120,7 @@ async def embed(texts: str) -> list[float]:
 
 async def embed_posting(session: AsyncSession, posting_id: uuid.UUID) -> bool:
     """Embed title and description for near-match dedup (Phase 3). False when cached."""
-    posting = await session.get(Posting, posting_id)
+    posting = await wanted_posting(session, posting_id)
     if posting is None or posting.embedded_hash == posting.description_hash:
         return False
     description_hash = posting.description_hash

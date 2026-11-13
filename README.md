@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.16.2 (Profile no longer flashes empty), 13 Nov 2026.**
+**Version 0.17.0 (unfollow closes a company's jobs), 13 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -105,6 +105,23 @@ in Inngest, throttled to one request a second per ATS. Job descriptions are read
 extract model once per description: a re-run with unchanged postings costs nothing. The
 first run on a big board (some list 700+ jobs) makes one model call per job, so start with a
 few companies and watch **AI usage** in Settings.
+
+**Stop following** a company (the × on its name) asks first and says how many jobs it hides.
+It closes every open posting of that board with the reason `unfollowed` and closes the jobs
+left with no open posting on a company you still follow; nothing is deleted. Jobs you applied
+to, or started an application for, stay in the list, and their panel says you stopped
+following the company. No job description of an unfollowed company is read by the AI, reads
+already queued included, and a search that is running stores nothing for it.
+
+**Following it again** switches the same board back on and fetches nothing until the next
+search. That search reopens the jobs the board still lists, on the same rows: an unchanged
+description reuses its stored reading, a changed one is read once, a job the employer took
+down meanwhile stays Closed (its reason becomes `gone_from_board`), and a job you applied to
+stays Sent. The search line counts reopened jobs apart from new ones.
+
+Companies unfollowed before 0.17.0 left their postings open. `make close-unfollowed` lists
+them and changes nothing; `make close-unfollowed APPLY=1` closes them. On live, run
+`make backup ENV=live` first.
 
 ## One row per job
 
@@ -431,6 +448,7 @@ There is no promotion step: live runs whatever this checkout builds.
 | `make seed` | Load `seed/companies.yaml` and `seed/skills.yaml` |
 | `make test` | ruff, mypy, pytest for app; lint and build for ui |
 | `make backup` / `make restore FILE=...` | Dump to / restore from `data/backups/` (the app also makes one every day) |
+| `make close-unfollowed` | List open postings of companies you no longer follow; `APPLY=1` closes them (back up first) |
 | `make code-mail-check` | Log in to the mailbox over IMAP and count the Greenhouse emails it holds (security codes, PRD A5) |
 | `make qa` | Dedup QA set: place the 106 labelled job pairs and print the accuracy |
 | `make form-check` | Read one live form per ATS now (the weekly form test); nothing is submitted |
@@ -465,6 +483,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.17.0 | 13 Nov 2026 | Unfollow and re-follow (PRD 1.20, I10 to I18). Stopping following a company used to only switch its board off: its postings stayed open for ever, were never read, and kept "Reading N job descriptions" and "Searching…" on screen. Now it closes the board's open postings with the reason `unfollowed` (migration `0009_close_reason`; the other reason is `gone_from_board`), closes the jobs left with no open posting on a followed board, and nothing is deleted. Jobs with an application stay in the list with a note. No AI reading is done for an unfollowed company, queued reads included, and a search that was running cannot reopen its jobs. Following again switches the same board back on and the next search reopens the same rows, re-reading only descriptions that changed. A confirmation says how many jobs will be hidden; the search line says how many were reopened. `make close-unfollowed` closes what earlier unfollows left open |
 | 0.16.2 | 13 Nov 2026 | Fix Profile claiming there is no resume for about a second on every visit. Switching tabs unmounts the page, so its resume list started empty again each time and the section drew "No resume yet. JAP needs one before it can apply.", without the skills found in the resume, until `/api/resumes` answered. On live that is roughly a second, because every call crosses the Cloudflare Tunnel, while locally it is 5ms, which is why it never showed in dev. Profile now paints the active version the store already caches and only says there is no resume once the list has really arrived; Saved answers waits the same way instead of flashing "No saved answers yet". An upload writes the new version back to the store, so the next visit paints that one and not the one before it |
 | 0.16.1 | 12 Nov 2026 | Fix the foot of the sidebar: a long email address stretched the single grid column past the panel, so the line above Sign out and the Sign out button itself were drawn over the work area. The column is `minmax(0, 1fr)`, so the address is cut with an ellipsis (the full one stays in the tooltip) and the row ends where the panel does. Dropdown arrows no longer crowd the field border: Chrome pins the native arrow 4 or 5px from the edge whatever the padding is, so every select draws its own chevron at the same 10px inset as its label, which also makes selects exactly as tall as the search box beside them. The version under the logo said 0.15.0 |
 | 0.16.0 | 4 Nov 2026 | Two environments instead of three (PRD H1 to H8 revised): `ENV=local\|live`, both from this one checkout, with their own env file, Docker project, database volume, data folder (`data/`, `data-live/`) and ports. `live` is the release stack behind the Cloudflare Tunnel at jap.tutorial.monster and the only one that submits or sends email; `local` never does either. Removed the test environment and the git worktrees in `~/jap-envs`, with `make env-create`, `promote`, `mark-passed` and `rollback`; a release is now `make start ENV=live`. `JAP_DATA_HOST_DIR` keeps the two data folders apart. README says plainly that JAP is a personal, single-user tool |

@@ -719,7 +719,10 @@ export default function JobDrawer({ id, onClose, onOpen, onApply }: Props) {
             </p>
           )}
         </div>
-        <div className="drawer-body">{body}</div>
+        <div className="drawer-body">
+          {listing?.unfollowed && <div className="note-box plain">You stopped following this company. This job stays here because it has an application.</div>}
+          {body}
+        </div>
       </aside>
     </div>
   )

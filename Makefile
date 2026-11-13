@@ -37,7 +37,7 @@ TUNNEL_ENV := infra/tunnel/.env.tunnel
 TUNNEL := docker compose --env-file $(TUNNEL_ENV) -f infra/tunnel/compose.yaml
 
 .DEFAULT_GOAL := help
-.PHONY: help env tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check demo demo-clear
+.PHONY: help env tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check demo demo-clear
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
@@ -111,6 +111,9 @@ backup: ## Dump the database to this environment's backups folder
 
 restore: ## Restore a backup: make restore FILE=data/backups/<file>.sql.gz
 	@DATA_DIR="$(JAP_DATA_HOST_DIR)" COMPOSE="$(COMPOSE)" infra/scripts/restore.sh "$(FILE)"
+
+close-unfollowed: ## List open postings of unfollowed companies; APPLY=1 closes them (back up first)
+	$(COMPOSE) exec app python -m pipeline.unfollow $(if $(filter 1 true,$(APPLY)),--apply)
 
 health-check: ## Run the hourly health watch now: delete old log rows, email alerts that are due
 	@curl -fsS -X POST http://127.0.0.1:$(JAP_API_PORT)/api/ops/health-check > /dev/null && \

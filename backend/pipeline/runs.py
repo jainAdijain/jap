@@ -128,11 +128,14 @@ async def finish_run(
 
 
 async def embeddings_pending(session: AsyncSession) -> int:
-    """Open postings still waiting for their embedding (near-match dedup needs it)."""
+    """Open postings of followed boards still waiting for their embedding (near-match
+    dedup needs it)."""
     count = await session.scalar(
         select(func.count())
         .select_from(Posting)
+        .join(WatchedBoard, WatchedBoard.id == Posting.watched_board_id)
         .where(
+            WatchedBoard.active,
             Posting.state == "open",
             Posting.embedded_hash.is_distinct_from(Posting.description_hash),
         )

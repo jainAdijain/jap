@@ -208,6 +208,8 @@ class Posting(Timestamps, Base):
     first_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
     last_seen_at: Mapped[datetime] = mapped_column(server_default=func.now())
     closed_at: Mapped[datetime | None]
+    # Why it is closed (I10): gone_from_board or unfollowed. Null while open.
+    close_reason: Mapped[str | None] = mapped_column(Text)
 
 
 class Run(Timestamps, Base):
