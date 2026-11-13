@@ -1,4 +1,4 @@
-import { useEffect, useState, type ReactNode } from 'react'
+import { useEffect, useState, type InputHTMLAttributes, type ReactNode } from 'react'
 
 import { api, type Run, type Status, type Switches } from '../api/client'
 import { atsLabel, errorText, money, STARTED_BY, when } from '../format'
@@ -8,6 +8,64 @@ import AccountSection from './AccountSection'
 const hhmm = (t: string) => t.slice(0, 5)
 const size = (bytes: number) =>
   bytes < 1024 * 1024 ? `${Math.max(1, Math.round(bytes / 1024))} KB` : bytes < 1024 ** 3 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${(bytes / 1024 ** 3).toFixed(1)} GB`
+
+/** A setting you type rather than tick (JAP-6).
+ *
+ * Everything else on this page saves the moment it is clicked, and these did too — but only
+ * when the field lost focus. With no button and no answer to Enter, a typed number looked
+ * ignored until you happened to click somewhere else. Enter saves, so does the Save button
+ * that appears as soon as the value differs from the saved one, Escape forgets it, and
+ * leaving the field still saves so nothing typed is lost. What was typed stays on screen
+ * until the save comes back, or a slow connection would show the old value again in between.
+ */
+function Typed({
+  saved,
+  commit,
+  children,
+  ...rest
+}: {
+  saved: string
+  commit: (value: string) => Promise<void>
+  children?: ReactNode
+} & Omit<InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'onBlur' | 'onKeyDown' | 'children'>) {
+  const [draft, setDraft] = useState<string | null>(null)
+  const [saving, setSaving] = useState(false)
+  const pending = draft !== null && draft !== saved
+  const apply = async () => {
+    if (!pending) {
+      setDraft(null)
+      return
+    }
+    setSaving(true)
+    await commit(draft)
+    setSaving(false)
+    setDraft(null)
+  }
+  return (
+    <>
+      <input
+        {...rest}
+        value={draft ?? saved}
+        onChange={(e) => setDraft(e.target.value)}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') {
+            e.preventDefault()
+            void apply()
+          }
+          if (e.key === 'Escape') setDraft(null)
+        }}
+        onBlur={() => void apply()}
+      />
+      {children}
+      {pending && (
+        // mousedown would blur the field first and take the button away before the click.
+        <button type="button" className="btn-primary btn-sm" disabled={saving} onMouseDown={(e) => e.preventDefault()} onClick={() => void apply()}>
+          {saving ? 'Saving…' : 'Save'}
+        </button>
+      )}
+    </>
+  )
+}
 
 function problems(run: Run): [string, string] {
   if (run.status === 'failed') return [run.error ?? 'The search failed', 'error-text']
@@ -327,10 +385,6 @@ function Health() {
 
 export default function SettingsPage() {
   const { profile, setProfile, toast } = useApp()
-  const [time, setTime] = useState<string | null>(null)
-  const [cap, setCap] = useState<string | null>(null)
-  const [bar, setBar] = useState<string | null>(null)
-  const [limit, setLimit] = useState<string | null>(null)
   const flip = async (s: Switches, done?: string) => {
     try {
       setProfile(await api.setSwitches(s))
@@ -349,8 +403,6 @@ export default function SettingsPage() {
   const automatic = profile.apply_mode === 'automatic'
   const spend = profile.spend
   const pct = Math.min(100, spend.cap_usd ? (spend.month_usd / spend.cap_usd) * 100 : 100)
-  const capValue = cap ?? String(profile.daily_cap)
-  const limitValue = limit ?? spend.cap_usd.toFixed(2)
   return (
     <section className="page">
       <div className="page-head">
@@ -384,41 +436,39 @@ export default function SettingsPage() {
                 <span className="more">
                   <span className="inline">
                     <label htmlFor="cap">Send at most</label>
-                    <input
+                    <Typed
                       id="cap"
                       type="number"
                       min={0}
                       max={100}
                       style={{ width: 80 }}
-                      value={capValue}
-                      onChange={(e) => setCap(e.target.value)}
-                      onBlur={() => {
-                        const n = Number(cap)
-                        if (cap !== null && Number.isInteger(n) && n >= 0 && n <= 100 && n !== profile.daily_cap) void flip({ daily_cap: n }, `At most ${n} a day.`)
-                        setCap(null)
+                      saved={String(profile.daily_cap)}
+                      commit={async (v) => {
+                        const n = Number(v)
+                        if (Number.isInteger(n) && n >= 0 && n <= 100 && n !== profile.daily_cap) await flip({ daily_cap: n }, `At most ${n} a day.`)
                       }}
-                    />
-                    <span>applications a day</span>
+                    >
+                      <span>applications a day</span>
+                    </Typed>
                   </span>
                   <span className="inline">
                     <label htmlFor="skills-bar">Only jobs with at least</label>
-                    <input
+                    <Typed
                       id="skills-bar"
                       type="number"
                       min={0}
                       max={100}
                       step={5}
                       style={{ width: 80 }}
-                      value={bar ?? String(profile.auto_apply_min_skills)}
-                      onChange={(e) => setBar(e.target.value)}
-                      onBlur={() => {
-                        const n = Number(bar)
-                        if (bar !== null && bar !== '' && Number.isInteger(n) && n >= 0 && n <= 100 && n !== profile.auto_apply_min_skills)
-                          void flip({ auto_apply_min_skills: n }, n ? `JAP sends only jobs with at least ${n}% of your required skills.` : 'JAP sends jobs whatever their skills match.')
-                        setBar(null)
+                      saved={String(profile.auto_apply_min_skills)}
+                      commit={async (v) => {
+                        const n = Number(v)
+                        if (v !== '' && Number.isInteger(n) && n >= 0 && n <= 100 && n !== profile.auto_apply_min_skills)
+                          await flip({ auto_apply_min_skills: n }, n ? `JAP sends only jobs with at least ${n}% of your required skills.` : 'JAP sends jobs whatever their skills match.')
                       }}
-                    />
-                    <span>% of my required skills</span>
+                    >
+                      <span>% of my required skills</span>
+                    </Typed>
                   </span>
                   <span className="d" style={{ gridColumn: 1 }}>
                     {profile.must_have_skills.length === 0
@@ -434,15 +484,13 @@ export default function SettingsPage() {
           <div className="inline spread">
             <label className="inline" htmlFor="daily-at">
               Search for new jobs every day at
-              <input
+              <Typed
                 id="daily-at"
                 type="time"
                 style={{ width: 'auto' }}
-                value={time ?? hhmm(profile.daily_run_at)}
-                onChange={(e) => setTime(e.target.value)}
-                onBlur={() => {
-                  if (time && time !== hhmm(profile.daily_run_at)) void flip({ daily_run_at: time }, `Daily search at ${time}.`)
-                  setTime(null)
+                saved={hhmm(profile.daily_run_at)}
+                commit={async (v) => {
+                  if (v) await flip({ daily_run_at: v }, `Daily search at ${v}.`)
                 }}
               />
             </label>
@@ -477,18 +525,16 @@ export default function SettingsPage() {
             </span>
             <label className="inline">
               Monthly limit ($)
-              <input
+              <Typed
                 type="number"
                 min={0}
                 max={100}
                 step={0.5}
                 style={{ width: 90 }}
-                value={limitValue}
-                onChange={(e) => setLimit(e.target.value)}
-                onBlur={() => {
-                  const n = Number(limit)
-                  if (limit !== null && limit.trim() !== '' && Number.isFinite(n) && n >= 0 && n <= 100 && n !== spend.cap_usd) void flip({ spend_cap_usd: n }, `Monthly limit set to ${money(n)}.`)
-                  setLimit(null)
+                saved={spend.cap_usd.toFixed(2)}
+                commit={async (v) => {
+                  const n = Number(v)
+                  if (v.trim() !== '' && Number.isFinite(n) && n >= 0 && n <= 100 && n !== spend.cap_usd) await flip({ spend_cap_usd: n }, `Monthly limit set to ${money(n)}.`)
                 }}
               />
             </label>

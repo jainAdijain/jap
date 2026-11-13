@@ -32,7 +32,7 @@ settings = get_settings()
 setup_logging()
 setup_sentry()
 
-app = FastAPI(title="JAP", version="0.18.0")
+app = FastAPI(title="JAP", version="0.18.1")
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,

@@ -20,6 +20,7 @@ commit that fixes them.
 | [JAP-3](#jap-3--bug--the-skills-matching-preset-can-never-match-with-an-empty-required-list) | Bug | Open | The skills matching preset can never match with an empty Required list |
 | [JAP-4](#jap-4--issue--jap_env-still-says-dev-and-prod-after-the-locallive-rename) | Issue | Open | `JAP_ENV` still says `dev` and `prod` after the local/live rename |
 | [JAP-5](#jap-5--bug--a-job-title-wider-than-its-column-showed-as-nothing-but) | Bug | Fixed (v0.17.1) | A job title wider than its column showed as nothing but `...` |
+| [JAP-6](#jap-6--bug--settings-you-type-saved-only-when-the-field-lost-focus) | Bug | Fixed (v0.18.1) | Settings you type saved only when the field lost focus |
 
 ---
 
@@ -140,3 +141,33 @@ Fixed in `styles.css` by making `.t-title` a flex line with `min-width: 0` and t
 `display: block` with its own `overflow: hidden; text-overflow: ellipsis`, so the button
 shrinks to the column and shortens its own text. Checked at 700, 900, 1150, 1400 and 1800px
 wide: the button never exceeds the cell and truncates only when it has to.
+
+---
+
+## JAP-6 — Bug — Settings you type saved only when the field lost focus
+
+**Status:** Fixed (v0.18.1). Reported 13 Nov 2026, seen on live.
+
+Settings says "Changes save straight away" at the top, and every radio and switch on the page
+does exactly that. The four fields you *type* did not: they saved on blur only, so the way to
+apply a number was to click somewhere else on the page. There was no Save button, and Enter —
+the usual way to say "apply what I typed" — did nothing whatever.
+
+Measured before the fix, typing in the monthly AI limit:
+
+| action | PATCH /api/profile sent | Save button on page |
+| --- | --- | --- |
+| typed `7.5` | 0 | 0, none exists |
+| pressed Enter | 0 | 0 |
+| clicked outside | 1 | — |
+
+The four: "Send at most N applications a day" and "Only jobs with at least N% of my required
+skills" (both under JAP applies for me), the daily search time, and the monthly AI limit. Each
+had its own copy of the same local-state-plus-onBlur code in `SettingsPage.tsx`.
+
+Fixed with one small `Typed` component in that file, used by all four. Enter commits, so does
+a Save button that appears beside the field the moment the value differs from the saved one,
+Escape forgets the edit, and blur still commits so nothing typed is lost. The button suppresses
+mousedown, or the blur would fire first and take the button away before the click landed. What
+was typed stays on screen until the save returns, instead of flicking back to the old value in
+between on a slow connection — the JAP-1 fault in miniature.
