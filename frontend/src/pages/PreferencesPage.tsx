@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 
-import { api, type Board, type Condition, type MatchPreview, type WorkMode } from '../api/client'
+import { api, type Board, type Condition, type MatchPreview, type UnfollowEffect, type WorkMode } from '../api/client'
 import TagInput from '../components/TagInput'
 import { atsLabel, errorText, plural } from '../format'
 import { useApp } from '../appContext'
@@ -19,7 +19,7 @@ const REMOTE_WORD = /^(remote|anywhere|worldwide|global|wfh|work from home)$/i
 const joinOr = (items: string[]) => (items.length <= 1 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`)
 
 function Companies() {
-  const { toast } = useApp()
+  const { toast, refresh } = useApp()
   const [boards, setBoards] = useState<Board[]>([])
   const [text, setText] = useState('')
   const [busy, setBusy] = useState(false)
@@ -48,13 +48,29 @@ function Companies() {
       setBusy(false)
     }
   }
+  const [leaving, setLeaving] = useState<{ board: Board; effect: UnfollowEffect } | null>(null)
+  const ask = async (b: Board) => {
+    setError(null)
+    try {
+      setLeaving({ board: b, effect: await api.unfollowEffect(b.id) })
+    } catch (err) {
+      setError(errorText(err))
+    }
+  }
   const remove = async (b: Board) => {
-    await api.removeBoard(b.id)
-    await load()
-    toast({
-      text: `Stopped following ${b.display_name}. Its jobs are hidden.`,
-      undo: () => void api.addBoard({ ats: b.ats, board_token: b.board_token, display_name: b.display_name }).then(load),
-    })
+    setBusy(true)
+    try {
+      await api.removeBoard(b.id)
+      setLeaving(null)
+      await load()
+      await refresh()
+      toast(`Stopped following ${b.display_name}. Its jobs are hidden.`)
+    } catch (err) {
+      setLeaving(null)
+      setError(errorText(err))
+    } finally {
+      setBusy(false)
+    }
   }
   const shown = all ? boards : boards.slice(0, 12)
   const broken = boards.filter((b) => b.last_ok === false)
@@ -86,7 +102,7 @@ function Companies() {
               <span key={b.id} data-ats={b.ats} className={b.last_ok === false ? 'tag warn' : 'tag'} title={b.last_ok === false ? `${atsLabel(b.ats)} board “${b.board_token}” could not be read at the last search` : `${atsLabel(b.ats)} · ${b.board_token}`}>
                 {b.display_name}
                 <span className="muted">&nbsp;· {atsLabel(b.ats)}</span>
-                <button type="button" aria-label={`Stop following ${b.display_name}`} onClick={() => void remove(b)}>
+                <button type="button" aria-label={`Stop following ${b.display_name}`} onClick={() => void ask(b)}>
                   ×
                 </button>
               </span>
@@ -99,6 +115,29 @@ function Companies() {
                 </button>
               </span>
             )}
+          </div>
+        )}
+        {leaving && (
+          <div className="modal-bg" onClick={() => setLeaving(null)}>
+            <div className="modal" role="dialog" aria-modal="true" aria-labelledby="unfollow-title" onClick={(e) => e.stopPropagation()}>
+              <div>
+                <h2 id="unfollow-title">Stop following {leaving.board.display_name}?</h2>
+                <ul>
+                  <li>{leaving.effect.hidden > 0 ? `This hides ${plural(leaving.effect.hidden, 'job')} from ${leaving.board.display_name}.` : `No jobs from ${leaving.board.display_name} are on your list right now.`}</li>
+                  {leaving.effect.kept > 0 && <li>{plural(leaving.effect.kept, 'job')} you applied to or started {leaving.effect.kept === 1 ? 'stays' : 'stay'} in your history.</li>}
+                  {leaving.effect.unread > 0 && <li>JAP stops reading its {plural(leaving.effect.unread, 'unread job description')}.</li>}
+                  <li className="muted">Nothing is deleted. Follow it again any time and its jobs come back at the next search.</li>
+                </ul>
+              </div>
+              <div className="mfoot">
+                <button type="button" onClick={() => setLeaving(null)}>
+                  Keep following
+                </button>
+                <button type="button" className="btn-primary" autoFocus disabled={busy} onClick={() => void remove(leaving.board)}>
+                  {busy ? 'Stopping…' : 'Stop following'}
+                </button>
+              </div>
+            </div>
           </div>
         )}
         {broken.length > 0 && (

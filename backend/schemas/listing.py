@@ -83,6 +83,7 @@ class ListingDetail(ListingRow):
     application: ApplicationOut | None  # the newest attempt: prepared, waiting or sent
     attempts: int
     apply_blocked: str | None  # why Apply now is not offered, None when it is
+    unfollowed: bool = False  # I stopped following its company (I12); shown as a note
 
 
 class MergeIn(BaseModel):

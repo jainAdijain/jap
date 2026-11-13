@@ -7,7 +7,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.errors import ApiError
-from database.models import Posting, Run
+from database.models import Posting, Run, WatchedBoard
 from database.session import Session
 from functions.events import send
 from pipeline.runs import queue_run
@@ -17,10 +17,13 @@ router = APIRouter(prefix="/runs", tags=["runs"])
 
 
 async def extracting(session: AsyncSession) -> int:
+    """Postings still to be read by the AI: open ones of companies I follow (I13)."""
     count = await session.scalar(
         select(func.count())
         .select_from(Posting)
+        .join(WatchedBoard, WatchedBoard.id == Posting.watched_board_id)
         .where(
+            WatchedBoard.active,
             Posting.state == "open",
             Posting.extracted_hash.is_distinct_from(Posting.description_hash),
         )

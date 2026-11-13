@@ -2,7 +2,9 @@
 
 Only listings that match My profile are shown (listing.matched, written by
 pipeline.matching), newest first. A listing is hidden when none of its postings comes from a
-company I still watch. The filter bar narrows by role, location, status and matched
+company I still follow, unless it has an application: those stay in my history (I12), and
+the panel says I stopped following the company. The filter bar narrows by role, location,
+status and matched
 condition without touching the profile (F2).
 """
 
@@ -24,6 +26,7 @@ from functions.events import send
 from pipeline.apply.flow import ACTIVE, MAYBE_SENT, maybe_sent, why_not
 from pipeline.dedup import DedupConflict, merge_listings
 from pipeline.matching import refilter_from_profile
+from pipeline.unfollow import IN_HISTORY
 from schemas.application import ApplyQueued, RetryIn
 from schemas.job import ATS
 from schemas.listing import (
@@ -104,7 +107,7 @@ def to_row(listing: Listing, company: str, postings: list[Posting], nice: list[s
 
 
 def listed() -> list[ColumnElement[bool]]:
-    return [Listing.matched.is_not(None), watched()]
+    return [Listing.matched.is_not(None), or_(watched(), Listing.status.in_(IN_HISTORY))]
 
 
 @router.get("", response_model=ListingPage)
@@ -260,6 +263,9 @@ async def load_detail(session: AsyncSession, listing_id: uuid.UUID) -> ListingDe
         application=await application_out(session, attempts[0]) if attempts else None,
         attempts=len(attempts),
         apply_blocked=await why_not(session, listing.id),
+        unfollowed=not await session.scalar(
+            select(watched()).select_from(Listing).where(Listing.id == listing.id)
+        ),
     )
 
 

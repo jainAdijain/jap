@@ -101,6 +101,9 @@ export type Detected = {
   already_watched: boolean
 }
 
+/** What stopping following a company does, counted in jobs as Jobs shows them. */
+export type UnfollowEffect = { display_name: string; hidden: number; kept: number; unread: number }
+
 export type RunCounts = {
   listed?: number
   merged?: number
@@ -304,6 +307,7 @@ export type ListingDetail = ListingRow & {
   application: Application | null
   attempts: number
   apply_blocked: string | null
+  unfollowed?: boolean // I stopped following its company
 }
 export type DuplicateSide = { id: string; title: string; platforms: Ats[]; locations: string[] }
 export type Duplicate = {
@@ -457,6 +461,7 @@ export const api = {
   duplicates: () => request<Duplicate[]>('/api/duplicates'),
   decide: (id: string, decision: 'merged' | 'kept_apart') =>
     request<void>(`/api/duplicates/${id}`, json('POST', { decision })),
+  unfollowEffect: (id: string) => request<UnfollowEffect>(`/api/boards/${id}/unfollow`),
   removeBoard: (id: string) => request<void>(`/api/boards/${id}`, { method: 'DELETE' }),
   answers: () => request<Answer[]>('/api/answers'),
   addAnswer: (a: Omit<Answer, 'id'>) => request<Answer>('/api/answers', json('POST', a)),

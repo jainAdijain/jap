@@ -2,7 +2,8 @@
 
 Throttled to 1 start per second per ATS host, 2 retries. A board that 404s is marked
 last_ok = false and the run carries on; one that keeps failing after its retries is
-reported in the run's counts instead of failing the whole run.
+reported in the run's counts instead of failing the whole run. A board unfollowed while its
+run was going stores nothing (I14).
 """
 
 import uuid
@@ -20,6 +21,11 @@ from schemas.job import ATS
 from sources import ADAPTERS, BoardNotFound, SourceChanged, SourceUnavailable, base
 
 EVENTS_PER_SEND = 100
+# What a fetch of a board I no longer follow returns: nothing stored, closed or queued.
+UNFOLLOWED: dict[str, Any] = {
+    "ok": True, "unfollowed": True, "fetched": 0, "new": 0, "changed": 0, "unchanged": 0,
+    "reopened": 0, "seen": [], "to_enrich": [],
+}  # fmt: skip
 
 
 async def _mark(board_id: uuid.UUID, ok: bool) -> None:
@@ -36,6 +42,8 @@ async def fetch_step(board_id: str, roles: list[str] | None = None) -> dict[str,
         board = await session.get(WatchedBoard, uuid.UUID(board_id))
         if board is None:
             raise inngest.NonRetriableError("board not found")
+        if not board.active:
+            return dict(UNFOLLOWED)  # unfollowed after the run listed its boards (I14)
         adapter = ADAPTERS[ATS(board.ats)]
         token, name = board.board_token, board.display_name
     try:
@@ -53,6 +61,8 @@ async def fetch_step(board_id: str, roles: list[str] | None = None) -> dict[str,
     jobs = [j for j in jobs if in_scope(j.title, matcher)]  # a scoped run's roles only (T3)
     async with get_sessionmaker()() as session:
         stored = await store_jobs(session, uuid.UUID(board_id), jobs)
+    if stored is None:
+        return dict(UNFOLLOWED)  # unfollowed while the board was being read: discarded
     await _mark(uuid.UUID(board_id), ok=True)
     return {
         "ok": True,
@@ -89,6 +99,9 @@ async def fetch_board(ctx: inngest.Context) -> dict[str, Any]:
         return {"board_id": board_id, "ok": False, "error": exc.message or "fetch failed"}
     if not fetched["ok"]:
         return {"board_id": board_id, **fetched}
+    if fetched.get("unfollowed"):
+        counted = {k: 0 for k in ("fetched", "new", "changed", "unchanged", "reopened")}
+        return {"board_id": board_id, "ok": True, **counted, "closed": 0, "enrich_queued": 0}
     closed = await ctx.step.run("close-missing", close_step, board_id, fetched["seen"], roles)
     to_enrich: list[str] = fetched["to_enrich"]
     for i in range(0, len(to_enrich), EVENTS_PER_SEND):
