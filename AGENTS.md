@@ -174,6 +174,19 @@ still passes locally.
   CI fails below 95% accuracy or on any wrong merge. Touching
   `pipeline/dedup.py` or `pipeline/canonical.py` means running it.
 
+## Bugs and issues
+
+`BUGS.md` is the numbered list of known defects, in one serial order that is never renumbered
+and never reused. Read it at the start of a session, before reporting anything as new.
+
+Aditya says whether something is a **bug** or an **issue**; you give it the next free `JAP-N`,
+write it up well enough to act on weeks later (symptom, where it shows, root cause if known,
+the files involved, what the fix would be) and keep the status current. The `JAP-` prefix
+avoids GitHub turning a bare `#2` into a link to pull request 2.
+
+Cite the id in commit subjects next to the version — `Fix the enrich retry storm (v0.17.0,
+JAP-2)` — and close the entry in the same commit that fixes it.
+
 ## Releases
 
 A user-visible change gets a version bump in three places, kept in step:
