@@ -13,6 +13,8 @@ export type Store = {
   healthError: string | null
   ops: Ops | null
   resume: Resume | null // the active version, attached to every application
+  /** Profile keeps this current after an upload, so the next visit paints the right one. */
+  setResume: (r: Resume | null) => void
   /** Bumped by every refresh, so pages reload their own lists too. */
   tick: number
   refresh: () => Promise<void>
