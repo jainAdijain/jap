@@ -51,7 +51,7 @@ export const STATUS: Record<ListingStatus, [string, string]> = {
   applying: ['In progress', 's-ready'],
   applied: ['Sent', 's-sent'],
   failed: ['Failed', 's-fail'],
-  manual_apply: ['Apply yourself', 's-you'],
+  manual_apply: ['Finish yourself', 's-you'],
   skipped: ['Hidden', 's-new'],
   closed: ['Closed', 's-new'],
 }

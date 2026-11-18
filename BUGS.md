@@ -25,6 +25,7 @@ commit that fixes them.
 | [JAP-8](#jap-8--bug--thanks-already-on-the-page-counted-as-a-confirmation) | Bug | Fixed (v0.18.3) | Thanks already on the page counted as a confirmation |
 | [JAP-9](#jap-9--bug--ashby-yesno-questions-were-not-read) | Bug | Fixed (v0.18.3) | Ashby Yes/No questions were not read |
 | [JAP-10](#jap-10--bug--remote-jobs-failed-location-when-the-model-had-not-read-them) | Bug | Fixed (v0.19.1) | Remote jobs failed Location when the model had not read them |
+| [JAP-11](#jap-11--bug--ashby-applications-were-sent-half-filled) | Bug | Fixed (v0.19.2) | Ashby applications were sent half filled |
 
 ---
 
@@ -275,3 +276,79 @@ by hand is kept), and filters them again. Tests: `tests/test_workplace.py`,
 
 Not covered: a job that says remote only in its description (the Certa case) still needs the
 model to read it.
+
+---
+
+## JAP-11 — Bug — Ashby applications were sent half filled
+
+**Status:** Fixed (v0.19.2). Reported 18 Nov 2026 by Aditya from the screenshot of Atlan's Ashby
+form (AI Native Builder); Certa's AI Engineer form failed the same way. JAP pressed Submit and
+reported "Submitted, but the page did not confirm the application".
+
+What the form held when Submit was pressed:
+
+- Not filled: the SMS and WhatsApp opt-in Yes/No radios, the Location typeahead, "How did you
+  learn about this opportunity?" and the acknowledgement checkbox.
+- Wrong: "Are you currently eligible to work in the country you are applying for?" showed
+  **No** (the answer was Yes), and "Will you require visa sponsorship?" was left empty (the
+  answer was No).
+- Phone without its country code (+91).
+- A picture puzzle (CAPTCHA) on the form, untouched.
+
+Causes, all in `backend/pipeline/apply/`:
+
+1. Ashby marks a question required only by a class on its title (`_required_...`, the * drawn by
+   CSS), with no `required` attribute on radios, checkboxes or the typeahead. `read_form.js`
+   looked for that class only on button questions (JAP-9), so the rest read as optional, and
+   `map_fields` fills an optional field only when the answer bank already has it. They went
+   out empty, silently.
+2. `BUTTONS_JS` clicked the first button with the answer's text whose ancestors, up to six
+   levels, held the question's title. From the eligibility question's "No", six levels reach
+   the box holding every question, visa included, so the visa answer "No" was clicked on the
+   eligibility question, turning its Yes into No, and the visa question got nothing.
+3. The Location typeahead lists places only after typing, so it read as a select with no
+   options, and contact fields skipped selects: My profile's location was never used.
+4. The phone came from My profile as saved, without a country code; Greenhouse has a separate
+   country picker, Ashby does not.
+5. The CAPTCHA check knew only reCAPTCHA's checkbox frame, hCaptcha and Turnstile, not a picture
+   puzzle (a reCAPTCHA or hCaptcha challenge, Arkose/FunCaptcha, GeeTest), and nothing looked
+   at the form again before pressing Submit.
+
+Fixed:
+
+- `read_form.js`: a field's title class marks it required (`markedRequired`); the question
+  title of an Ashby field entry is its label; an input with `aria-autocomplete="list"` is a
+  combobox; every field reports the value the page holds now; picture puzzles are detected,
+  ignoring the challenge frame an invisible reCAPTCHA parks off screen.
+- `BUTTONS_JS`: a button belongs to the nearest question title above it; walking up stops at
+  the first box that holds any title.
+- `fields.py`: a typeahead labelled as a location gets My profile's first location, and
+  `form.py` `_combo` types it (then its first part, "Bengaluru") and picks the closest place.
+  A phone on a form with no country picker gets the country code of where I live
+  (`international`, `DIAL_CODES`).
+- `form.py` `_check_before_submit`: just before Submit the form is read again. An empty
+  required field (including one the first read missed), a choice showing another answer than
+  JAP's, or a CAPTCHA stops it before Submit with the reason; nothing is sent.
+- A CAPTCHA is never solved or worked around. The job stops at **Finish yourself: puzzle**
+  (application at Needs input with only the puzzle open, listing `manual_apply`, in Review and
+  Automatic mode). `make finish` (`infra/scripts/finish.py`, run on the Mac with uv) opens the
+  same form filled in, in a visible browser; I solve it and press Submit, and it waits for the
+  confirmation, keeps a screenshot and marks the job Applied
+  (`python -m pipeline.apply.finish done`). The panel also has **I sent it**
+  (`POST /api/applications/{id}/finished`). A puzzle that only appears after Submit holds the
+  form, so that is not sent either and becomes Finish yourself.
+
+Tests: `tests/forms/ashby_atlan.html`, a copy of Atlan's form with every field type, two
+Yes/No button questions in a row, a typeahead that searches after typing, and `?captcha` /
+`?challenge` puzzles. `test_reads_every_ashby_field_type`,
+`test_ashby_form_is_filled_and_each_button_goes_to_its_question`,
+`test_an_empty_required_field_stops_before_submit`,
+`test_a_puzzle_stops_before_submit_and_is_never_touched`, `test_phone_gets_its_country_code`,
+`test_a_puzzle_is_finish_yourself`, `test_a_puzzle_at_submit_is_finish_yourself`.
+
+Not covered: the live Atlan form itself was not opened while fixing this (the build machine
+could not reach jobs.ashbyhq.com). The fixture follows Ashby's markup as JAP-7 to JAP-9 saw
+it; run `make form-check ENV=live` after merging to read a live Ashby form. Required
+questions JAP has no saved answer for (SMS and WhatsApp opt-in, how you heard about the job,
+the acknowledgement) now stop at Needs input once; the answers go to the answer bank and fill
+every later Ashby form.

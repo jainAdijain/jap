@@ -190,6 +190,13 @@ async def apply_listing(ctx: inngest.Context) -> dict[str, Any]:
                 f"submit-wait-{i}", datetime.fromisoformat(str(result["wait_until"]))
             )
             continue
+        if result.get("status") == "needs_input":  # Finish yourself: a puzzle (JAP-11)
+            status = await wait_for_me(ctx, app_id, "application/answered", "needs_input", "finish")
+            if status == "expired":
+                await ctx.step.run("expire-finish", expire_step, app_id, "finished application")
+                await _alert(ctx, app_id)
+                return {"application_id": app_id, "status": "failed"}
+            return {"application_id": app_id, "status": status}
         if result.get("status") == "applied":
             await ctx.step.send_event(
                 "send-submitted",

@@ -59,7 +59,7 @@ async def check(session: AsyncSession, ats: str, posting_id: str) -> FormCheck:
         row.fields = len(read.fields)
         row.required = sum(1 for f in read.fields if f.required)
         if read.captcha:
-            row.error = "The form shows a CAPTCHA (jobs on it stop at Needs input)"
+            row.error = "The form shows a CAPTCHA (jobs on it stop at Finish yourself: puzzle)"
         break
     session.add(row)
     await session.commit()
