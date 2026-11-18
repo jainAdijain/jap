@@ -37,7 +37,7 @@ TUNNEL_ENV := infra/tunnel/.env.tunnel
 TUNNEL := docker compose --env-file $(TUNNEL_ENV) -f infra/tunnel/compose.yaml
 
 .DEFAULT_GOAL := help
-.PHONY: help env tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check writer-export writer-import demo demo-clear
+.PHONY: help env tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check reader-export reader-import writer-export writer-import demo demo-clear
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
@@ -145,6 +145,13 @@ email-test: ## Send one test email from the mailbox in .env: make email-test TO=
 
 code-mail-check: ## Log in to the mailbox over IMAP and count Greenhouse emails (security codes)
 	$(COMPOSE) exec app python -m pipeline.apply.security_code
+
+reader-export: ## One batch of unread postings for the Claude reader, redacted, as JSON (PRD 1.25): LIMIT=25
+	@$(COMPOSE) exec -T app python -m pipeline.claude_reader export --limit $(or $(LIMIT),25)
+
+reader-import: ## The Claude reader's fields back in, checked: make reader-import FILE=fields.json
+	@test -f "$(FILE)" || { echo "Usage: make reader-import FILE=fields.json"; exit 1; }
+	@$(COMPOSE) exec -T app python -m pipeline.claude_reader import < "$(FILE)"
 
 writer-export: ## Jobs at Needs you for the Claude writer, redacted, as JSON (PRD 1.22)
 	@$(COMPOSE) exec -T app python -m pipeline.claude_writer export

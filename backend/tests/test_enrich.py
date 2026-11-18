@@ -29,6 +29,16 @@ FULL = {
 }
 
 
+@pytest.fixture(autouse=True)
+def openrouter_reader(monkeypatch: pytest.MonkeyPatch) -> None:
+    """These tests are about JAP's own read (JAP_READER=openrouter, the fallback); the
+    Claude reader, the default, is tested in test_claude_reader.py."""
+    from config import get_settings
+
+    monkeypatch.setenv("JAP_READER", "openrouter")
+    get_settings.cache_clear()
+
+
 def _ids(sql: psycopg.Connection[Any]) -> list[Any]:
     return [r[0] for r in sql.execute("SELECT id FROM posting ORDER BY external_id")]
 
