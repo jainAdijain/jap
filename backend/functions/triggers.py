@@ -8,8 +8,10 @@ burst of saves makes one run, and a run already queued is reused (T4).
 daily-schedule: ticks every minute in JAP_TZ and fires when the Daily run is on and its
 time (06:00 unless changed) has come. A tick is due only in the first few minutes after
 that time, so a slot missed while the Mac slept is skipped, not caught up (accepted for v1).
-In Review mode it finds jobs only; in Automatic mode it finds and applies (Phase 8), within
-the daily cap, so the morning run applies without me.
+It finds and applies within the daily cap in both modes (W1, PRD 1.22). In Automatic mode
+that sends without me (Phase 8); in Review mode the new jobs are prepared and wait at Ready
+for review or Needs you, where the scheduled Claude session picks up what JAP could not
+write itself, and nothing is sent before I approve.
 """
 
 from datetime import UTC, datetime, time, timedelta
@@ -55,9 +57,8 @@ async def daily_step() -> str | None:
         if not daily_due(now, profile.daily_run_at, last):
             return None
         profile.daily_run_last_at = datetime.now(UTC)
-        mode = "find_and_apply" if profile.apply_mode == "automatic" else "find_only"
         await session.commit()
-        run, created = await queue_run(session, "scheduled", mode)
+        run, created = await queue_run(session, "scheduled", "find_and_apply")
     return str(run.id) if created else None
 
 

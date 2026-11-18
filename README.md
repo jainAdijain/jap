@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.18.3 (Ashby Yes/No questions and confirmations), 18 Nov 2026.**
+**Version 0.19.0 (Daily run prepares in Review mode), 18 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -273,8 +273,11 @@ mode has no bar, because you read every application before it goes.
 
 Submissions are at most the **Daily cap** a day (next to the switch, 20 by default; set it to 2
 to try Automatic mode) and at least 30 seconds apart. A run at the cap prepares nothing and
-says "daily cap reached". The Daily run finds jobs only in Review mode, and finds and applies
-in Automatic mode. Switching back to Review makes the next run prepare without submitting.
+says "daily cap reached". The Daily run finds and prepares the new jobs that fit in both modes
+(PRD 1.22, W1): Automatic mode sends them, Review mode leaves them at Ready for review or Needs
+you. A scheduled Claude session (outside JAP) can then answer what is at Needs you from the
+resume and answer bank; nothing is sent before you approve. Switching back to Review makes the
+next run prepare without submitting.
 
 ## When something fails
 
@@ -516,6 +519,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.19.0 | 18 Nov 2026 | The Daily run prepares the new jobs that fit in Review mode too (PRD 1.22, W1), not only in Automatic mode. They wait at Ready for review, or at Needs you when JAP cannot write an answer itself (no AI key credit), where a scheduled Claude session picks them up. Nothing is sent before Approve; the daily cap still limits how many are prepared |
 | 0.18.3 | 18 Nov 2026 | Fix two faults found sending the first Supabase (Ashby) applications. A page that already thanked you before Submit counted as a confirmation (JAP-8): Ashby shows "Thanks for your interest" in a banner on every form, so JAP called a job Applied while the Submit button was still spinning. Only words of thanks the page did not show before Submit count now, and JAP waits for them. Ashby's Yes/No questions were not read (JAP-9): their buttons have no type attribute and sit beside a hidden checkbox, so a required question such as "Are you over the age of 18?" went unanswered. They are read now, marked required from the question's title, and clicked like other button questions |
 | 0.18.2 | 18 Nov 2026 | Fix every Ashby application failing with "No application form found on the page" (JAP-7). Ashby's hosted page shows "Fetching application form" and draws the fields a moment after the network goes quiet, so JAP read an empty page; the weekly form test had failed on Ashby for the same reason. The reader now also waits, up to 15 seconds, for a visible form field (not the hidden resume-autofill file input Ashby attaches first) before reading. A page with no form at all still fails, after that wait |
 | 0.18.1 | 13 Nov 2026 | Fix the four settings you type rather than tick saving only when the field lost focus (JAP-6). Settings says changes save straight away, and every radio and switch does, but "Send at most N applications a day", "Only jobs with at least N% of my required skills", the daily search time and the monthly AI limit waited for a click somewhere else: Enter did nothing at all and there was no button, so a typed number looked ignored. Enter saves now, so does a Save button that appears beside the field as soon as the value differs from the saved one, Escape forgets the edit, and leaving the field still saves so nothing typed is lost. What was typed stays on screen until the save comes back, instead of showing the old value again in between |

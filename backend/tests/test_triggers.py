@@ -149,7 +149,9 @@ async def test_daily_step_fires_once_when_on(
     run_id = await daily_step()
     assert run_id is not None
     assert await daily_step() is None  # the same slot does not fire twice
-    assert sql.execute("SELECT trigger, status FROM run").fetchall() == [("scheduled", "queued")]
+    assert sql.execute("SELECT trigger, status, mode FROM run").fetchall() == [
+        ("scheduled", "queued", "find_and_apply")
+    ]  # Review mode prepares too (W1); nothing is sent before Approve
     last = sql.execute("SELECT daily_run_last_at FROM profile").fetchone()
     assert last is not None and last[0] <= datetime.now(UTC)
 
