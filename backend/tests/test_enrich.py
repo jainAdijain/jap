@@ -51,7 +51,9 @@ async def test_extract_fills_fields_once(
     assert result.sent_to_model is not None and "<jd>" in result.sent_to_model
     extracted = sql.execute("SELECT extracted FROM posting").fetchone()[0]  # type: ignore[index]
     assert extracted["skills"] == ["python", "postgres", "sql"]
-    assert extracted["work_mode"] == "remote" and extracted["direct"] == []
+    # "Remote (US)" among the Greenhouse locations says remote and US (JAP-10).
+    assert extracted["work_mode"] == "remote" and extracted["remote_regions"] == ["US"]
+    assert extracted["direct"] == ["remote_regions", "work_mode"]
     assert "salary" not in extracted  # nothing stated: stays empty
 
     async with get_sessionmaker()() as session:
@@ -85,6 +87,14 @@ def test_direct_fields() -> None:
     assert direct_fields("lever", {"workplaceType": "remote"}) == {"work_mode": "remote"}
     assert direct_fields("lever", {"workplaceType": "unspecified"}) == {}
     assert direct_fields("greenhouse", {"workplaceType": "remote"}) == {}
+    assert direct_fields("greenhouse", {}, ["India", "Remote"]) == {
+        "work_mode": "remote",
+        "remote_regions": ["India"],
+    }
+    assert direct_fields("ashby", {"isRemote": True}, ["India"]) == {
+        "work_mode": "remote",
+        "remote_regions": ["India"],
+    }
 
 
 async def test_embed_is_cached_by_hash(

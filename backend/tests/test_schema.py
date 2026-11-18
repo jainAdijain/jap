@@ -208,3 +208,59 @@ def test_migration_lists_jobs_the_skills_condition_hid(
         ("Senior Backend Engineer", ["role", "location"], ["python"], ["docker"], 50),
         ("Staff Backend Engineer", ["role", "location"], [], [], None),  # Skills not stated
     ]
+
+
+def test_migration_fills_stated_work_mode(sql: psycopg.Connection[Any], database_url: str) -> None:
+    """0011 (JAP-10) on listings stored before it: a remote job the ATS marks remote gets its
+    work mode and regions and is listed at once; a value set by hand is never cleared."""
+    cfg = Config(str(BACKEND / "alembic.ini"))
+    cfg.set_main_option("script_location", str(BACKEND / "database" / "migrations"))
+    command.downgrade(cfg, "0010_skills_match")
+    try:
+        sql.execute(
+            "INSERT INTO profile (target_roles, locations, remote_regions, match_rule)"
+            """ VALUES ('{Backend Engineer}', '{Bangalore}', '{India}', '[["location"]]')"""
+        )
+        company = sql.execute(
+            "INSERT INTO company (name, canonical_name) VALUES ('Acme', 'acme') RETURNING id"
+        ).fetchone()[0]  # type: ignore[index]
+        board = sql.execute(
+            "INSERT INTO watched_board (ats, board_token, display_name, origin) "
+            "VALUES ('ashby', 'acme', 'Acme', 'user') RETURNING id"
+        ).fetchone()[0]  # type: ignore[index]
+        for n, (source, raw, locations, mode, regions) in enumerate(
+            (
+                ("ashby", '{"isRemote": true}', "{India}", None, "{}"),
+                ("greenhouse", "{}", "{India,Remote}", None, "{}"),
+                ("ashby", '{"isRemote": false}', "{India}", "remote", "{India}"),  # by hand
+                ("ashby", '{"isRemote": false}', "{London}", None, "{}"),
+            )
+        ):
+            listing = sql.execute(
+                "INSERT INTO listing (company_id, canonical_role, title_display, locations,"
+                " work_mode, remote_regions) VALUES (%s, %s, %s, %s, %s, %s) RETURNING id",
+                (company, f"job {n}", f"Job {n}", locations, mode, regions),
+            ).fetchone()[0]  # type: ignore[index]
+            posting = sql.execute(
+                "INSERT INTO posting (source, external_id, watched_board_id, listing_id,"
+                " company_name_raw, title_raw, locations, posting_url, apply_url,"
+                " description_html, description_text, description_hash, raw_payload)"
+                " VALUES (%s, %s, %s, %s, 'Acme', 'Job', %s, 'https://x', 'https://x',"
+                " '<p>x</p>', 'x', repeat('a', 64), %s) RETURNING id",
+                (source, str(n), board, listing, locations, raw),
+            ).fetchone()[0]  # type: ignore[index]
+            sql.execute(
+                "UPDATE listing SET primary_posting_id = %s WHERE id = %s", (posting, listing)
+            )
+    finally:
+        command.upgrade(cfg, "head")
+    rows = sql.execute(
+        "SELECT title_display, work_mode, remote_regions, matched FROM listing"
+        " ORDER BY title_display"
+    ).fetchall()
+    assert rows == [
+        ("Job 0", "remote", ["India"], ["location"]),  # Ashby isRemote
+        ("Job 1", "remote", ["India"], ["location"]),  # Greenhouse "India" and "Remote"
+        ("Job 2", "remote", ["India"], ["location"]),  # set by hand, kept
+        ("Job 3", None, [], None),
+    ]
