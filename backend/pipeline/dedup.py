@@ -13,9 +13,10 @@ joins its old listing (D4).
 import logging
 import uuid
 from collections import defaultdict
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Any
+from typing import Any, Protocol
 
 from pydantic import BaseModel
 from sqlalchemy import delete, func, or_, select, text, update
@@ -34,6 +35,7 @@ from database.models import (
 from llm import PersonalDataBlocked, Sensitive, SpendCapReached, call
 from llm.client import ModelCallError
 from pipeline.canonical import canonical_role, clean_company, seniority_of
+from sources import workplace
 
 log = logging.getLogger(__name__)
 
@@ -43,6 +45,33 @@ MAX_JD_CHARS = 6_000  # per side; enough to tell two jobs apart, and it caps the
 WORK_MODES = {"remote", "hybrid", "onsite"}
 # D1: a supported ATS first (all three in v1), then careers pages, then anything else.
 SOURCE_PRIORITY = {"greenhouse": 0, "lever": 0, "ashby": 0}
+
+
+class PostingLike(Protocol):
+    source: str
+    raw_payload: dict[str, Any]
+    locations: list[str]
+    extracted: dict[str, Any] | None
+
+
+def work_place(primary: PostingLike, pool: Sequence[PostingLike]) -> tuple[str | None, list[str]]:
+    """A listing's work mode (from its primary posting) and remote regions (from all of
+    them, primary first). What the ATS states comes first and is read from the stored
+    payload, so it counts even when extraction never ran (JAP-10); the model fills the rest.
+    Also used by migration 0011 on the stored listings."""
+    regions: list[str] = []
+    for p in sorted(pool, key=lambda p: p is not primary):
+        said = workplace.stated(p.source, p.raw_payload or {}, list(p.locations or []))
+        found = [
+            *said.get("remote_regions", []),
+            *((p.extracted or {}).get("remote_regions") or []),
+        ]
+        regions += [r for r in found if r not in regions]
+    said = workplace.stated(
+        primary.source, primary.raw_payload or {}, list(primary.locations or [])
+    )
+    mode = said.get("work_mode") or (primary.extracted or {}).get("work_mode")
+    return (mode if mode in WORK_MODES else None), regions
 
 
 class DedupConflict(Exception):
@@ -250,18 +279,13 @@ async def refresh_listings(session: AsyncSession, listing_ids: set[uuid.UUID]) -
         listing.title_display = primary.title_raw
         locations: list[str] = []
         skills: list[str] = []
-        regions: list[str] = []
         for p in sorted(pool, key=lambda p: p.id != primary.id):
             locations += [loc for loc in p.locations if loc not in locations]
-            extracted = p.extracted or {}
-            skills += [s for s in extracted.get("skills") or [] if s not in skills]
-            regions += [r for r in extracted.get("remote_regions") or [] if r not in regions]
+            skills += [s for s in (p.extracted or {}).get("skills") or [] if s not in skills]
         listing.locations = locations
         listing.skills = skills
-        listing.remote_regions = regions
+        listing.work_mode, listing.remote_regions = work_place(primary, pool)
         fields = primary.extracted or {}
-        mode = fields.get("work_mode")
-        listing.work_mode = mode if mode in WORK_MODES else None
         seniority = fields.get("seniority")
         listing.seniority = seniority if seniority and seniority != "unknown" else None
         listing.first_posted_at = min(_when(p) for p in postings)

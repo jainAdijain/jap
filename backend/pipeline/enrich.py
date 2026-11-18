@@ -1,10 +1,11 @@
 """Filling what the ATS did not give (I3, I4): model extraction and the dedup embedding.
 
-Fields the ATS states directly (Ashby salary, Lever and Ashby workplace type) are copied
-and never sent for extraction. The rest is extracted once per description: a posting whose
-extracted_hash equals its description_hash is skipped, so an unchanged posting costs
-nothing on the next run. The embedding is cached the same way and costs nothing anyway
-(Ollama on the Mac).
+Fields the ATS states directly are copied and never sent for extraction: Ashby salary, and
+the work mode and a remote job's regions (sources/workplace.py: Ashby and Lever
+workplaceType, Ashby isRemote, a "Remote" location entry). The rest is extracted once per
+description: a posting whose extracted_hash equals its description_hash is skipped, so an
+unchanged posting costs nothing on the next run. The embedding is cached the same way and
+costs nothing anyway (Ollama on the Mac).
 """
 
 import uuid
@@ -20,23 +21,21 @@ from database.models import Posting, Profile, WatchedBoard
 from llm import call
 from pipeline.resume import normalize_skills, sensitive_from_profile, skill_aliases
 from schemas.extract import FIELDS, Extracted, from_output, output_model
-from sources import ashby
+from sources import ashby, workplace
 
 MAX_JD_CHARS = 12_000  # about 3,000 tokens; longer descriptions are cut, which caps cost
 EMBED_CHARS = 6_000  # nomic-embed-text reads 2,048 tokens by default in Ollama
-WORKPLACE = {"remote": "remote", "hybrid": "hybrid", "onsite": "onsite", "on-site": "onsite"}
 
 
-def direct_fields(source: str, raw: dict[str, Any]) -> dict[str, Any]:
+def direct_fields(
+    source: str, raw: dict[str, Any], locations: list[str] | None = None
+) -> dict[str, Any]:
     out: dict[str, Any] = {}
     if source == "ashby":
         salary = ashby.salary(raw)
         if salary is not None:
             out["salary"] = salary.model_dump()
-    if source in ("ashby", "lever"):
-        mode = WORKPLACE.get(str(raw.get("workplaceType") or "").lower())
-        if mode:
-            out["work_mode"] = mode
+    out.update(workplace.stated(source, raw, locations or []))
     return out
 
 
@@ -64,7 +63,7 @@ async def extract_posting(session: AsyncSession, posting_id: uuid.UUID) -> Extra
     if posting.extracted_hash == posting.description_hash:
         return ExtractResult(skipped=True, fields=[])  # cached by description hash (I4)
     description_hash = posting.description_hash
-    direct = direct_fields(posting.source, posting.raw_payload)
+    direct = direct_fields(posting.source, posting.raw_payload, posting.locations)
     wanted = [f for f in FIELDS if f not in direct]
     sent: str | None = None
     values: dict[str, Any] = dict(direct)

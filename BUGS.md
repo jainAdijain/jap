@@ -24,6 +24,7 @@ commit that fixes them.
 | [JAP-7](#jap-7--bug--every-ashby-form-read-as-no-application-form-found) | Bug | Fixed (v0.18.2) | Every Ashby form read as "No application form found" |
 | [JAP-8](#jap-8--bug--thanks-already-on-the-page-counted-as-a-confirmation) | Bug | Fixed (v0.18.3) | Thanks already on the page counted as a confirmation |
 | [JAP-9](#jap-9--bug--ashby-yesno-questions-were-not-read) | Bug | Fixed (v0.18.3) | Ashby Yes/No questions were not read |
+| [JAP-10](#jap-10--bug--remote-jobs-failed-location-when-the-model-had-not-read-them) | Bug | Fixed (v0.19.1) | Remote jobs failed Location when the model had not read them |
 
 ---
 
@@ -240,3 +241,37 @@ buttons are allowed, and a title whose class says required makes the question re
 `BUTTONS_JS` clicks buttons with no `type` too. Checked against the live Supabase form, which
 now reads twelve fields including this one as a required Yes/No.
 
+---
+
+## JAP-10 — Bug — Remote jobs failed Location when the model had not read them
+
+**Status:** Fixed (v0.19.1). Found 18 Nov 2026 on live, with the OpenRouter key out of credit.
+
+Remote jobs open to India were not listed for a profile matching on Remote regions = India.
+With no extraction, a listing's work mode and remote regions stayed empty, and the Location
+condition in `backend/pipeline/matching.py` needs the job to be remote and either a remote
+region or a single location string carrying both "remote" and the region. Three shapes:
+
+- Ashby with `isRemote: true` (or `workplaceType: Remote`) and location "India" (Atlan, AI
+  Native Builder/Architect): saved as locations {India}, work mode empty.
+- Greenhouse with separate "India" and "Remote" location entries (Together AI, Infra Agent
+  Systems): neither entry has both words.
+- Ashby with "remote-first" only in the description (Certa).
+
+Cause: `direct_fields` in `backend/pipeline/enrich.py` already copied Ashby and Lever
+`workplaceType`, but only into `posting.extracted`, which is written when the extraction call
+succeeds; a failed call wrote nothing. It also ignored Ashby `isRemote` and Greenhouse's
+"Remote" entries, and never gave remote regions.
+
+Fixed: `backend/sources/workplace.py` reads the work mode the ATS states (Ashby and Lever
+`workplaceType`, Ashby `isRemote`, a location entry saying remote) and, for a remote job, its
+regions ("Remote - India" gives India; "India" beside "Remote", or with `isRemote`, gives
+India; the office beside "Remote (US)" is not a region). `refresh_listings` in
+`backend/pipeline/dedup.py` reads these from the stored payload on every refresh
+(`work_place`), ahead of what the model says, so they count with no extraction at all.
+Migration 0011 works them out once for the listings already stored, only adding (a value set
+by hand is kept), and filters them again. Tests: `tests/test_workplace.py`,
+`test_migration_fills_stated_work_mode`.
+
+Not covered: a job that says remote only in its description (the Certa case) still needs the
+model to read it.

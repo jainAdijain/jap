@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.19.0 (Claude writer: Daily run prepares, redacted export and import), 18 Nov 2026.**
+**Version 0.19.1 (Remote jobs matched from what the ATS states), 18 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -148,7 +148,10 @@ title and location (the default, in the database and in code).
 A rule saved earlier that is none of these is kept and shown as Custom. Role means the job's cleaned title contains
 one of your target roles (engineer and developer count alike); Location means a job location names one of yours, or the job is remote
 and allows one of your Remote regions, or it is Remote - Worldwide, or you chose **All remote
-jobs** (`remote_any`). Under Locations, office cities come with On-site and Hybrid ticks, and
+jobs** (`remote_any`). Whether a job is remote, and its regions, come first from what the ATS
+states (Ashby and Lever workplace type, Ashby isRemote, a location entry such as "Remote -
+India" or "Remote" beside "India"; `backend/sources/workplace.py`), so this works before or
+without the model reading the job, and the model fills in the rest. Under Locations, office cities come with On-site and Hybrid ticks, and
 remote jobs are one of three choices: none, only those open to your countries, or all. On top of that, the work
 mode must be one you ticked (a job that doesn't say is listed with Work mode "Not stated"),
 and excluded companies and title words are dropped.
@@ -536,6 +539,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.19.1 | 18 Nov 2026 | PRD 1.24 (I2). Fix remote jobs failing Location when the model had not read them (JAP-10), as when the OpenRouter key is out of credit. The work mode and a remote job's regions now come from what the ATS states, read from the stored payload on every listing refresh: Ashby and Lever workplace type, Ashby isRemote, or a location entry saying remote ("Remote - India", or "India" beside "Remote"). Migration 0011 fills them once for the stored listings, keeping values set by hand, and filters them again. A job that says remote only in its description still needs the model |
 | 0.19.0 | 18 Nov 2026 | Claude writer (PRD 1.22, W1 to W7). The Daily run prepares the new jobs that fit in Review mode too, not only in Automatic mode: they wait at Ready for review, or at Needs you when JAP cannot write an answer itself (no AI key credit). `make writer-export` gives a scheduled Claude session the jobs at Needs you (frozen description, open questions, resume, answer bank) with name, email, phone, address and profile links replaced by placeholders, and refuses if anything personal is left; `make writer-import FILE=...` puts its answers back with the real values filled in locally, through the same step as the Needs you panel. Nothing is approved or sent by either; drafted answers are not saved to the answer bank |
 | 0.18.3 | 18 Nov 2026 | Fix two faults found sending the first Supabase (Ashby) applications. A page that already thanked you before Submit counted as a confirmation (JAP-8): Ashby shows "Thanks for your interest" in a banner on every form, so JAP called a job Applied while the Submit button was still spinning. Only words of thanks the page did not show before Submit count now, and JAP waits for them. Ashby's Yes/No questions were not read (JAP-9): their buttons have no type attribute and sit beside a hidden checkbox, so a required question such as "Are you over the age of 18?" went unanswered. They are read now, marked required from the question's title, and clicked like other button questions |
 | 0.18.2 | 18 Nov 2026 | Fix every Ashby application failing with "No application form found on the page" (JAP-7). Ashby's hosted page shows "Fetching application form" and draws the fields a moment after the network goes quiet, so JAP read an empty page; the weekly form test had failed on Ashby for the same reason. The reader now also waits, up to 15 seconds, for a visible form field (not the hidden resume-autofill file input Ashby attaches first) before reading. A page with no form at all still fails, after that wait |
