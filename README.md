@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.19.1 (Remote jobs matched from what the ATS states), 18 Nov 2026.**
+**Version 0.19.2 (Every Ashby field read, Finish yourself: puzzle), 18 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -227,16 +227,37 @@ opens the posting's public form in a headless Chromium (Playwright), lists every
 whether it is required, and fills it:
 
 - Contact fields (name, first and last name, email, phone, LinkedIn, GitHub, website,
-  location) come from My profile, by code. No model ever sees or fills them.
+  location) come from My profile, by code. No model ever sees or fills them. A phone field
+  on a form with no country code picker of its own (Ashby) gets the number with its country
+  code (+91 when you live in India and the saved number has none). A location typeahead
+  (Ashby's Location) is typed into and the closest place picked.
+- Every Ashby field type is read: text, Yes/No and multiple-choice radios, Yes/No buttons
+  (each answer clicked under its own question), the location typeahead and checkboxes, all
+  marked required from the question's title as Ashby draws it.
 - The resume field gets your active resume, under its original file name.
 - Other questions are looked up in the answer bank (exact question, or 80% alike).
 - A required free-text question with no saved answer gets an answer drafted for this job
   from the JD and your resume (the `answer` prompt, redacted like every model call). Drafts
   are not saved to the answer bank unless you save them.
 - A question only you can answer (notice period, salary, start date, work authorisation,
-  relocation and the like), a required choice with no saved answer, a file JAP doesn't have,
-  or a CAPTCHA stops the job at **Needs input**. Answer in the panel; the answers go to the
+  relocation and the like), a required choice with no saved answer, or a file JAP doesn't
+  have stops the job at **Needs input**. Answer in the panel; the answers go to the
   answer bank (untick the box to skip that) and JAP prepares the form again.
+- A picture puzzle (CAPTCHA) is never solved or worked around. JAP fills in everything else,
+  stops before Submit and the job shows **Finish yourself: puzzle** (see below).
+
+Just before pressing Submit, JAP reads the form again as the page holds it. A required field
+still empty, a choice showing another answer than JAP's, or a CAPTCHA that has appeared stops
+it before Submit with the reason, so nothing half-filled is sent.
+
+**Finish yourself: puzzle.** The job panel says the form has a puzzle and nothing was sent.
+On the Mac, in the JAP folder, run `make finish ENV=live` (or `make finish APP=<id> ENV=live`,
+copied from the panel). It opens the same form in a visible Chromium window, filled in with
+your answers and resume by the same code JAP submits with. Solve the puzzle and press Submit
+there; JAP waits up to 20 minutes for the page to confirm, keeps a screenshot, marks the job
+**Applied** and sends the usual email. If you send it another way, press **I sent it** in the
+panel. The first `make finish` installs Chromium for it (needs `uv`). A puzzle that only shows
+after Submit holds the form, so it counts as not sent and becomes Finish yourself too.
 
 In Review mode (the default) the job then waits at **Ready for review**:
 every answer is shown, with where it came from, and editable. Nothing is sent until you
@@ -262,8 +283,10 @@ unclear (A3):
 
 - a job whose posting doesn't say remote, hybrid or onsite (**Work mode unclear**) stops at
   Ready for review, with "Automatic mode left this one for you" and the reason;
-- a question only you can answer, a required choice with no saved answer, a CAPTCHA or a
-  failed cover letter still stops at **Needs input**;
+- a question only you can answer, a required choice with no saved answer or a failed cover
+  letter still stops at **Needs input**;
+- a form with a picture puzzle stops at **Finish yourself: puzzle**, filled in, for you to
+  finish with `make finish`;
 - a job already waiting in Ready for review keeps waiting: the mode is fixed when a job is
   prepared, so switching takes effect from the next run.
 
@@ -505,6 +528,7 @@ There is no promotion step: live runs whatever this checkout builds.
 | `make test` | ruff, mypy, pytest for app; lint and build for ui |
 | `make backup` / `make restore FILE=...` | Dump to / restore from `data/backups/` (the app also makes one every day) |
 | `make close-unfollowed` | List open postings of companies you no longer follow; `APPLY=1` closes them (back up first) |
+| `make finish [APP=<id>]` | Finish a job with a picture puzzle: opens the filled form in a visible browser on the Mac, you solve and submit, JAP checks the confirmation (JAP-11) |
 | `make code-mail-check` | Log in to the mailbox over IMAP and count the Greenhouse emails it holds (security codes, PRD A5) |
 | `make qa` | Dedup QA set: place the 106 labelled job pairs and print the accuracy |
 | `make form-check` | Read one live form per ATS now (the weekly form test); nothing is submitted |
@@ -539,6 +563,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.19.2 | 18 Nov 2026 | PRD 1.26 (A6). Fix half-filled Ashby applications (JAP-11), found on Atlan's form. Every Ashby field type is read and marked required from the question's title: Yes/No and multiple-choice radios, the location typeahead (typed into, closest place picked) and checkboxes. Each Yes/No button answer is clicked under its own question (the visa question's "No" had landed on "eligible to work"). A phone on a form with no country picker gets its country code. Just before Submit the form is read again, and an empty required field, a choice showing another answer or a CAPTCHA stops it with the reason. A picture puzzle is never solved: JAP fills the form, stops before Submit and the job shows **Finish yourself: puzzle**; `make finish` opens the filled form in a visible browser on the Mac, you solve and submit, and JAP checks the confirmation and marks it Applied (or press I sent it) |
 | 0.19.1 | 18 Nov 2026 | PRD 1.24 (I2). Fix remote jobs failing Location when the model had not read them (JAP-10), as when the OpenRouter key is out of credit. The work mode and a remote job's regions now come from what the ATS states, read from the stored payload on every listing refresh: Ashby and Lever workplace type, Ashby isRemote, or a location entry saying remote ("Remote - India", or "India" beside "Remote"). Migration 0011 fills them once for the stored listings, keeping values set by hand, and filters them again. A job that says remote only in its description still needs the model |
 | 0.19.0 | 18 Nov 2026 | Claude writer (PRD 1.22, W1 to W7). The Daily run prepares the new jobs that fit in Review mode too, not only in Automatic mode: they wait at Ready for review, or at Needs you when JAP cannot write an answer itself (no AI key credit). `make writer-export` gives a scheduled Claude session the jobs at Needs you (frozen description, open questions, resume, answer bank) with name, email, phone, address and profile links replaced by placeholders, and refuses if anything personal is left; `make writer-import FILE=...` puts its answers back with the real values filled in locally, through the same step as the Needs you panel. Nothing is approved or sent by either; drafted answers are not saved to the answer bank |
 | 0.18.3 | 18 Nov 2026 | Fix two faults found sending the first Supabase (Ashby) applications. A page that already thanked you before Submit counted as a confirmation (JAP-8): Ashby shows "Thanks for your interest" in a banner on every form, so JAP called a job Applied while the Submit button was still spinning. Only words of thanks the page did not show before Submit count now, and JAP waits for them. Ashby's Yes/No questions were not read (JAP-9): their buttons have no type attribute and sit beside a hidden checkbox, so a required question such as "Are you over the age of 18?" went unanswered. They are read now, marked required from the question's title, and clicked like other button questions |

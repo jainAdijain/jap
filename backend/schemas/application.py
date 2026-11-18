@@ -41,6 +41,7 @@ class PendingOut(BaseModel):
     options: list[str] = []
     blocked: bool = False  # a CAPTCHA or a file: can't be answered here
     draft_failed: bool = False  # a free-text question the writer model couldn't draft
+    finish: bool = False  # the picture puzzle: I finish the filled form with make finish
 
 
 class ClaimOut(BaseModel):

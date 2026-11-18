@@ -67,20 +67,27 @@ ERRORS_JS = """() => [...document.querySelectorAll(
   .filter((el) => el.offsetParent !== null && !el.querySelector('[role="alert"]'))
   .map((el) => (el.innerText || '').replace(/\\s+/g, ' ').trim()).filter(Boolean)"""
 # Click the button whose text is the answer, in the button group under the question
-# (read_form.js keys such a field "buttons:<question>"). True when one was clicked.
+# (read_form.js keys such a field "buttons:<question>"). True when one was clicked. A button
+# belongs to the nearest question title above it: walking up from a "No" button stops at the
+# first box that holds any title, so the "No" of one question is never taken for the next
+# question's "No" (JAP-11: "eligible to work" was set to No by the visa question's answer).
 BUTTONS_JS = """([question, answer]) => {
   const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
   const strip = (s) => clean(s).replace(/\\s*[*✱★]\\s*$/, '');
+  const q = strip(question);
+  const TITLES = 'label, legend, [class*="title" i], [class*="label" i]';
   for (const b of document.querySelectorAll('button[type="button"], button:not([type])')) {
     if (clean(b.innerText) !== clean(answer)) continue;
     let p = b.parentElement;
     for (let i = 0; i < 6 && p; i++, p = p.parentElement) {
-      const titles = p.querySelectorAll('label, legend, [class*="title" i], [class*="label" i]');
-      const q = strip(question);
-      if ([...titles].some((l) => !l.contains(b) && strip(l.innerText) === q)) {
+      const titles = [...p.querySelectorAll(TITLES)]
+        .filter((l) => !l.contains(b) && !l.querySelector('button') && strip(l.innerText));
+      if (!titles.length) continue;
+      if (titles.some((l) => strip(l.innerText) === q)) {
         b.click();
         return true;
       }
+      break;  // the nearest question is another one
     }
   }
   return false;
@@ -96,6 +103,18 @@ CODE_LENGTH = re.compile(r"(\d+)[- ]character code", re.I)
 # (when Submit was pressed, code length) -> the emailed code, or None (A5)
 GetCode = Callable[[datetime, int], Awaitable[str | None]]
 CODE_INPUT = re.compile(r"code|otp|verification|security", re.I)
+# A CAPTCHA a person must solve (JAP-11). JAP never tries to solve or get around one: it
+# stops before Submit with every field filled, and I finish the form myself (make finish).
+PUZZLE_FOUND = "Finish yourself: puzzle"
+# A picture puzzle shown after Submit (an invisible reCAPTCHA or hCaptcha escalating).
+CHALLENGE_JS = """() => [...document.querySelectorAll(
+    'iframe[src*="recaptcha"][src*="bframe"], iframe[title*="recaptcha challenge" i],'
+    + ' iframe[src*="hcaptcha"][src*="challenge"], iframe[src*="arkoselabs"],'
+    + ' iframe[src*="funcaptcha"], iframe[src*="geetest"], iframe[title*="captcha" i],'
+    + ' iframe[title*="verification challenge" i]')]
+  .some((n) => { const s = getComputedStyle(n), r = n.getBoundingClientRect();
+    return s.display !== 'none' && s.visibility !== 'hidden' && r.width > 1 && r.height > 1
+      && r.bottom + window.scrollY > 0 && r.right + window.scrollX > 0; })"""
 # Words in such text that mean the employer's site turned the submission away.
 NOT_SENT = re.compile(
     r"spam|captcha|robot|automated|try again|could not be submitted|failed|required|missing",
@@ -144,10 +163,16 @@ class SubmitResult:
     rejected: bool = False
     # The site emailed a security code and waits for it: nothing was sent
     needs_code: bool = False
+    # The form shows a CAPTCHA (before or after Submit): nothing was sent, skip the job
+    captcha: bool = False
 
 
 class FormError(Exception):
     """The form could not be opened, read or filled (a site change or a timeout)."""
+
+
+class CaptchaFound(FormError):
+    """A CAPTCHA is on the form before Submit: I finish the form myself, JAP never solves it."""
 
 
 def to_fields(raw: list[dict[str, Any]]) -> list[FormField]:
@@ -290,20 +315,53 @@ class Upload:
     mime: str
 
 
+def _best_option(texts: list[str], value: str) -> int | None:
+    """The option a typeahead offers for a value: the same text, else one holding all of
+    it, else one holding its first part ("Bengaluru, India" picks "Bengaluru, Karnataka,
+    India"), preferring one that also names its other parts."""
+    norm = [" ".join(t.split()).lower() for t in texts]
+    want = " ".join(value.split()).lower()
+    for i, t in enumerate(norm):
+        if t == want:
+            return i
+    for i, t in enumerate(norm):
+        if want in t:
+            return i
+    parts = [p.strip() for p in want.split(",") if p.strip()]
+    if not parts:
+        return None
+    hits = [i for i, t in enumerate(norm) if parts[0] in t]
+    if not hits:
+        return None
+    return max(hits, key=lambda i: sum(p in norm[i] for p in parts[1:]))
+
+
 async def _combo(page: Page, f: FormField, value: str) -> None:
-    """Pick the option of a combobox: type to filter it, then click it."""
+    """Pick the option of a combobox: type to filter it, then click it. A typeahead (Ashby's
+    Location) lists places only after typing and may not know the whole value, so when
+    nothing fits it types the first part ("Bengaluru") and picks the closest place."""
     loc = page.locator(selector(f.key)).first
-    await loc.click()
-    await loc.fill(value)
-    option = page.get_by_role("option", name=value, exact=True)
+    for typed in dict.fromkeys([value, value.split(",")[0].strip()]):
+        if not typed:
+            continue
+        await loc.click()
+        await loc.fill(typed)
+        options = page.get_by_role("option")
+        try:
+            await options.first.wait_for(timeout=3_000)
+        except Error:
+            continue
+        await page.wait_for_timeout(300)  # a typeahead may still be narrowing its list
+        texts = await options.all_inner_texts()
+        best = _best_option(texts, value)
+        if best is not None:
+            await options.nth(best).click()
+            return
     try:
-        await option.first.wait_for(timeout=3_000)
+        await page.keyboard.press("Escape")
     except Error:
-        option = page.get_by_role("option", name=re.compile(re.escape(value), re.I))
-        if await option.count() == 0:
-            await page.keyboard.press("Escape")
-            raise FormError(f'No option "{value}" for "{f.label}"') from None
-    await option.first.click()
+        pass
+    raise FormError(f'No option "{value}" for "{f.label}"')
 
 
 async def _fill(page: Page, f: FormField, value: str, files: dict[str, Upload]) -> None:
@@ -416,6 +474,54 @@ async def _fill_all(
         raise FormError(f"These fields would not keep their value, so nothing was sent: {labels}")
 
 
+def _picked(value: str, answer: str) -> bool:
+    got = {" ".join(v.split()).lower() for v in value.split(";") if v.strip()}
+    want = {" ".join(v.split()).lower() for v in answer.split(";") if v.strip()}
+    return bool(got) and (got == want or all(any(g.startswith(w) for g in got) for w in want))
+
+
+async def _check_before_submit(
+    page: Page, fields: list[FormField], answers: dict[str, str]
+) -> None:
+    """Read the form again as it is now, just before Submit (JAP-11). Stop with the reason
+    when a CAPTCHA has appeared, when a required field is empty (including one the first
+    read missed), or when a choice shows another answer than JAP's (a button group that
+    ended up "No" when the answer was "Yes"). A field whose value the page doesn't show
+    (a combobox, or buttons with no pressed state) was already checked by _fill_all."""
+    data = await page.evaluate(READ_JS)
+    if data["captcha"]:
+        raise CaptchaFound(PUZZLE_FOUND)
+    known = {f.key: f for f in fields}
+    empty: list[str] = []
+    wrong: list[str] = []
+    for r in data["fields"]:
+        key, value = str(r["key"]), r.get("value")
+        f = known.get(key)
+        required = bool(r.get("required")) or bool(REQUIRED_MARK.search(str(r.get("label") or "")))
+        required = required or (f is not None and f.required)
+        label = REQUIRED_MARK.sub("", str(r.get("label") or key)).strip() or key
+        answer = answers.get(key, "")
+        if value is None:
+            if required and not answer and not (f and f.type == "file"):
+                empty.append(label)
+            continue
+        value = str(value)
+        if required and not value.strip():
+            if r["type"] == "checkbox" and answer and not _truthy(answer):
+                continue  # a box I said no to stays unticked; the page will say if it minds
+            empty.append(label)
+        elif answer and r["type"] in ("radio", "checkboxes", "select") and value.strip():
+            if not _picked(value, answer):
+                wrong.append(f'{label} (wanted "{answer[:40]}", the page shows "{value[:40]}")')
+    problems = []
+    if empty:
+        problems.append("required fields are still empty: " + "; ".join(dict.fromkeys(empty)))
+    if wrong:
+        problems.append("these show another answer: " + "; ".join(dict.fromkeys(wrong)))
+    if problems:
+        raise FormError("Stopped before Submit, so nothing was sent: " + ", and ".join(problems))
+
+
 def _confirmations(text: str) -> set[str]:
     return {m.group(0).lower() for m in CONFIRMATION.finditer(text)}
 
@@ -487,6 +593,7 @@ async def submit_form(
         try:
             page = await _open_page(page, url)
             await _fill_all(page, fields, answers, files)
+            await _check_before_submit(page, fields, answers)
             button = page.locator(
                 'form button[type="submit"], form input[type="submit"], button[type="submit"]'
             )
@@ -523,6 +630,16 @@ async def submit_form(
             shot = True
             if confirmed_after(before, body) or form_left:
                 return SubmitResult(confirmed=True, screenshot=True, clicked=True)
+            if await page.evaluate(CHALLENGE_JS):  # a picture puzzle holds the submission
+                return SubmitResult(
+                    confirmed=False,
+                    screenshot=True,
+                    clicked=True,
+                    rejected=True,
+                    captcha=True,
+                    error=PUZZLE_FOUND + ": the site showed a picture puzzle after Submit, "
+                    "which JAP never solves, so nothing was sent",
+                )
             if SECURITY_CODE.search(body):
                 return SubmitResult(
                     confirmed=False,
@@ -570,7 +687,13 @@ async def submit_form(
                 except Error:
                     pass
             message = exc.message.splitlines()[0] if isinstance(exc, Error) else str(exc)
-            return SubmitResult(confirmed=False, screenshot=shot, clicked=clicked, error=message)
+            return SubmitResult(
+                confirmed=False,
+                screenshot=shot,
+                clicked=clicked,
+                error=message,
+                captcha=isinstance(exc, CaptchaFound),
+            )
         finally:
             try:
                 await context.tracing.stop(path=str(trace))

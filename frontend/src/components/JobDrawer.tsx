@@ -399,6 +399,42 @@ export default function JobDrawer({ id, onClose, onOpen, onApply }: Props) {
           {common}
         </>
       )
+    } else if (live?.status === 'needs_input' && live.pending.length > 0 && live.pending.every((q) => q.finish)) {
+      // Finish yourself: puzzle (JAP-11). JAP filled the form and stopped before Submit; it
+      // never solves a CAPTCHA. make finish opens the filled form on the Mac.
+      const command = `make finish APP=${live.id} ENV=live`
+      actions = (
+        <>
+          <button type="button" className="btn-primary" disabled={busy} onClick={() => void navigator.clipboard?.writeText(command).then(() => toast('Command copied. Run it in Terminal on your Mac.'))}>
+            Copy the finish command
+          </button>
+          <button type="button" disabled={busy} onClick={() => void act(() => api.finished(live.id), 'Marked as sent.')}>
+            I sent it
+          </button>
+          <button type="button" disabled={busy} onClick={() => hide('Skipped')}>
+            Skip this job
+          </button>
+          {openLink}
+        </>
+      )
+      body = (
+        <>
+          <div className="note-box warn">
+            <b>Finish yourself: puzzle.</b> This form has a picture puzzle (CAPTCHA), which JAP never solves. JAP filled in everything else and stopped before Submit, so nothing has been sent.
+          </div>
+          <Sec title="Finish it on your Mac">
+            <ol className="help">
+              <li>
+                In Terminal, in the JAP folder, run <code>{command}</code>. The form opens in a browser window, filled in with your answers.
+              </li>
+              <li>Solve the puzzle and press Submit in that window.</li>
+              <li>JAP sees the confirmation, keeps a screenshot and marks the job Sent. If you sent it another way, press I sent it.</li>
+            </ol>
+          </Sec>
+          {common}
+          <Description listing={listing} />
+        </>
+      )
     } else if (live?.status === 'needs_input') {
       const open = live.pending.filter((q) => !q.blocked)
       const ready = open.length > 0 && open.every((q) => (answers[q.key] ?? '').trim())

@@ -37,7 +37,7 @@ TUNNEL_ENV := infra/tunnel/.env.tunnel
 TUNNEL := docker compose --env-file $(TUNNEL_ENV) -f infra/tunnel/compose.yaml
 
 .DEFAULT_GOAL := help
-.PHONY: help env tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check writer-export writer-import demo demo-clear
+.PHONY: help env tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check writer-export writer-import finish demo demo-clear
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
@@ -152,6 +152,12 @@ writer-export: ## Jobs at Needs you for the Claude writer, redacted, as JSON (PR
 writer-import: ## The Claude writer's answers back in: make writer-import FILE=answers.json
 	@test -f "$(FILE)" || { echo "Usage: make writer-import FILE=answers.json"; exit 1; }
 	@$(COMPOSE) exec -T app python -m pipeline.claude_writer import < "$(FILE)"
+
+finish: ## Finish a job with a picture puzzle: the filled form opens on this Mac (APP=<id>)
+	@command -v uv >/dev/null || { echo "make finish needs uv on the Mac: brew install uv"; exit 1; }
+	@uv run --quiet --with playwright==1.64.1 python -m playwright install chromium >/dev/null
+	@JAP_COMPOSE='$(COMPOSE)' JAP_DATA_HOST_DIR='$(JAP_DATA_HOST_DIR)' \
+		uv run --quiet --with playwright==1.64.1 python infra/scripts/finish.py $(APP)
 
 llm-check: ## One test call to each OpenRouter model (needs OPENROUTER_API_KEY in .env)
 	$(COMPOSE) exec app python -m llm.check

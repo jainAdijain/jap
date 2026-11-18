@@ -36,7 +36,15 @@ from observability.logs import event
 from pipeline.apply import fields as rules
 from pipeline.apply import security_code
 from pipeline.apply.answers import bank_answer, draft_answer, pick_option
-from pipeline.apply.form import FormError, FormField, FormRead, Upload, read_form, submit_form
+from pipeline.apply.form import (
+    PUZZLE_FOUND,
+    FormError,
+    FormField,
+    FormRead,
+    Upload,
+    read_form,
+    submit_form,
+)
 from pipeline.cover_letter import LetterFailed, generate, upload_name, write_pdf
 from pipeline.resume import sensitive_from_profile
 from pipeline.runs import in_scope, role_matcher
@@ -189,15 +197,32 @@ def form_of(app: Application) -> list[FormField]:
     ]
 
 
+# A form with a picture puzzle (CAPTCHA). JAP never tries to solve or get around one: it fills
+# every field it can, stops before Submit, and I finish on my Mac with `make finish`, which
+# opens the same form filled in, in a visible browser (JAP-11).
+FINISH = PUZZLE_FOUND
+PUZZLE = {
+    "key": "captcha",
+    "label": "Picture puzzle (CAPTCHA)",
+    "blocked": True,
+    "finish": True,
+    "reason": "The form has a picture puzzle, which JAP never solves. JAP filled in the rest "
+    "and stopped before Submit. Run make finish on your Mac: it opens this form filled in; "
+    "solve the puzzle and press Submit there, and JAP checks the confirmation.",
+}
+
+
+def finish_only(pending: list[dict[str, Any]] | None) -> bool:
+    """Everything is answered and only the puzzle is left for me (Finish yourself)."""
+    return bool(pending) and all(q.get("key") == "captcha" for q in pending or [])
+
+
 async def save_form(session: AsyncSession, app_id: str, read: FormRead) -> None:
     app = await _app(session, app_id)
     app.form_fields = [{**f.as_dict(), "filled_from": ""} for f in read.fields]
     app.answers = {}
     if read.captcha:
-        app.pending_questions = [
-            {"key": "captcha", "label": "CAPTCHA", "reason": "The form shows a CAPTCHA, which JAP "
-             "does not solve. Open the posting and apply by hand, or Skip.", "blocked": True}
-        ]  # fmt: skip
+        app.pending_questions = [dict(PUZZLE)]
     await session.commit()
 
 
@@ -235,6 +260,7 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
     draft_failed = 0
     no_credits: str | None = None  # set once OpenRouter answers 402
     need_letter = False
+    picker = rules.has_country_picker(form_of(app))
     for f in form_of(app):
         prev = old.get(f.key, {})
         entry: dict[str, Any] = {**f.as_dict(), "filled_from": ""}
@@ -249,7 +275,9 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
                 need_letter = True
         elif prev.get("filled_from") == "you" and (app.answers or {}).get(f.key):
             value, source = str((app.answers or {})[f.key]), "you"
-        elif contact := (rules.contact_value(f, profile) if profile else None):
+        elif contact := (
+            rules.contact_value(f, profile, country_picker=picker) if profile else None
+        ):
             source, value = f"profile:{contact[0]}", contact[1]
         elif rules.is_resume_field(f):
             value, source = resume.original_name, "resume"
@@ -349,9 +377,13 @@ async def unclear(session: AsyncSession, app: Application) -> str | None:
 
 async def settle(session: AsyncSession, app: Application, pending: list[dict[str, Any]]) -> None:
     """Needs input when anything is pending, else Ready for review, or applying in
-    Automatic mode when nothing about the job is unclear (A3)."""
+    Automatic mode when nothing about the job is unclear (A3). When only the picture puzzle
+    is left, the job is Finish yourself (the listing shows manual_apply), in either mode."""
     app.pending_questions = pending or None
     app.review_reason = await unclear(session, app) if app.mode == "automatic" else None
+    if finish_only(pending):
+        await to_finish(session, app)
+        return
     if pending:
         app.status = "needs_input"
     elif app.mode == "automatic" and app.review_reason is None:
@@ -364,6 +396,44 @@ async def settle(session: AsyncSession, app: Application, pending: list[dict[str
     elif app.status == "ready_for_review" and app.run_id:
         await bump(session, app.run_id, "ready_for_review")
     await session.commit()
+
+
+async def to_finish(session: AsyncSession, app: Application) -> None:
+    """Finish yourself: puzzle. The attempt waits at Needs input with only the puzzle open,
+    and the listing says Finish yourself, until `make finish` (or I) report it sent."""
+    app.status = "needs_input"
+    app.pending_questions = [dict(PUZZLE)]
+    app.review_reason = FINISH
+    app.submit_started_at = None  # nothing was sent: the puzzle held the form
+    await _listing_status(session, app.listing_id, "manual_apply")
+    if app.run_id:
+        await bump(session, app.run_id, "finish_yourself")
+    await session.commit()
+    event(log, "apply.finish_yourself", FINISH, keep=True)
+
+
+async def finished(session: AsyncSession, app_id: str, screenshot: str | None) -> Application:
+    """I solved the puzzle and pressed Submit myself (`make finish`, or the panel's I sent
+    it button): the job is Applied, with the screenshot `make finish` took when given."""
+    app = await _app(session, app_id, lock=True)
+    if app.status != "needs_input" or not finish_only(app.pending_questions):
+        raise Stop(f"application is {app.status}, not waiting for you to finish it")
+    now = datetime.now(UTC)
+    app.status = "applied"
+    app.submitted_at = now
+    app.pending_questions = None
+    app.review_reason = None
+    app.error = None
+    if screenshot:
+        app.screenshot_path = screenshot
+    await session.execute(
+        update(Listing).where(Listing.id == app.listing_id).values(status="applied", applied_at=now)
+    )
+    if app.run_id:
+        await bump(session, app.run_id, "applied")
+    await session.commit()
+    event(log, "apply.submitted", "Submitted by you after the puzzle", keep=True)
+    return app
 
 
 def letter_fields(app: Application) -> list[dict[str, Any]]:
@@ -572,6 +642,11 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     get_code = security_code.waiter(site) if reads_mail and site else None
     result = await submit_form(url, fields, answers, files, shot, trace, get_code)
     app = await _app(session, app_id, lock=True)
+    if result.captcha:  # a puzzle on the form, before or after Submit: nothing was sent
+        app.screenshot_path = str(shot) if result.screenshot else app.screenshot_path
+        app.trace_path = str(trace) if trace.exists() else None
+        await to_finish(session, app)
+        return {"status": "needs_input"}
     if not result.clicked:
         event(log, "apply.submit_retry", f"Submit not pressed: {result.error}",
               level=logging.WARNING, keep=True)  # fmt: skip

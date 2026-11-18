@@ -17,6 +17,7 @@ import pytest
 from pipeline.apply import fields as rules
 from pipeline.apply.form import (
     CONFIRMATION,
+    PUZZLE_FOUND,
     FormError,
     FormField,
     Upload,
@@ -54,7 +55,7 @@ class _Handler(BaseHTTPRequestHandler):
             time.sleep(0.8)
             self._send(b"ok")
             return
-        path = FORMS / self.path.lstrip("/")
+        path = FORMS / self.path.split("?")[0].lstrip("/")
         if not path.is_file():
             self.send_response(404)
             self.end_headers()
@@ -177,11 +178,11 @@ async def test_submit_fills_uploads_and_confirms(site: str, tmp_path: Path) -> N
         tmp_path / "shot.png",
         tmp_path / "trace.zip",
     )
-    assert result.confirmed and result.clicked and result.screenshot
+    # The form has an hCaptcha: everything is filled, and JAP stops before Submit for me to
+    # finish it myself (JAP-11). Filling, uploading and confirming: ashby_atlan.html below.
+    assert result.captcha and not result.clicked and not result.confirmed and result.screenshot
     assert (tmp_path / "shot.png").exists() and (tmp_path / "trace.zip").exists()
-    sent = _Handler.posts[-1]
-    assert sent["_systemfield_name"] == "Asha Rao" and sent["q_auth"] == "yes"
-    assert sent["q_consent"] == "on"
+    assert _Handler.posts == []
 
     lever = await read_form(f"{site}/lever.html")
     up = {"resume": Upload(resume, "Asha-Rao-Resume.pdf", "application/pdf")}
@@ -256,7 +257,8 @@ async def test_a_form_that_refuses_submit_is_rejected_not_sent(site: str, tmp_pa
         f"{site}/greenhouse_boards.html", read.fields, answers, {},
         tmp_path / "s.png", tmp_path / "t.zip",
     )  # fmt: skip
-    assert result.clicked and result.rejected and not result.confirmed
+    # A required field left empty stops before Submit now (JAP-11), naming only that field.
+    assert not result.clicked and not result.confirmed
     assert result.error is not None and "Why Anthropic?" in result.error
     assert "First Name" not in result.error and _Handler.posts == []
 
@@ -311,8 +313,8 @@ async def test_yes_no_buttons_are_a_question_and_get_clicked(site: str, tmp_path
         f"{site}/ashby_buttons.html", read.fields, {"_systemfield_name": "Asha Rao"}, {},
         tmp_path / "s2.png", tmp_path / "t2.zip",
     )  # fmt: skip
-    assert result.clicked and result.rejected and _Handler.posts == []
-    assert result.error is not None and "This field is required" in result.error
+    assert not result.clicked and _Handler.posts == []  # stopped before Submit (JAP-11)
+    assert result.error is not None and "US equivalent timezone" in result.error
 
 
 def test_thanks_already_on_the_page_is_no_confirmation() -> None:
@@ -338,7 +340,7 @@ async def test_ashby_yes_no_without_a_type_and_a_banner(site: str, tmp_path: Pat
         f"{site}/ashby_yesno.html", read.fields, {"_systemfield_name": "Asha Rao"}, {},
         tmp_path / "s1.png", tmp_path / "t1.zip",
     )  # fmt: skip
-    assert unanswered.clicked and not unanswered.confirmed
+    assert not unanswered.clicked and not unanswered.confirmed  # stopped before Submit
 
     answered = await submit_form(
         f"{site}/ashby_yesno.html", read.fields,
@@ -451,3 +453,148 @@ def test_facts_only_i_know() -> None:
         assert mine(label), label
     for label in ["Why do you want to join?", "Which languages do you use?", "Describe a project"]:
         assert not mine(label), label
+
+
+ATLAN_ANSWERS = {
+    "_systemfield_name": "Asha Rao",
+    "_systemfield_email": "asha@example.com",
+    "_systemfield_phone": "+91 98765 43210",
+    "q_sms": "Yes",
+    "q_whatsapp": "No",
+    "id:q_location": "Bengaluru, India",
+    "_systemfield_resume": "resume.pdf",
+    "q_linkedin": "https://linkedin.com/in/asha",
+    "buttons:Are you currently eligible to work in the country you are applying for?": "Yes",
+    "buttons:Will you require visa sponsorship?": "No",
+    "q_source": "LinkedIn",
+    "q_ack": "Yes",
+}
+
+
+@needs_browser
+async def test_reads_every_ashby_field_type(site: str) -> None:
+    """JAP-11, as on Atlan's form: radios, a location typeahead, Yes/No buttons, a radio list
+    and a checkbox are all read, and all required from their titles' class."""
+    read = await read_form(f"{site}/ashby_atlan.html")
+    got = {f.key: (f.type, f.widget, f.required, f.options) for f in read.fields}
+    assert got == {
+        "_systemfield_name": ("text", "", True, []),
+        "_systemfield_email": ("email", "", True, []),
+        "_systemfield_phone": ("tel", "", True, []),
+        "q_sms": ("radio", "", True, ["Yes", "No"]),
+        "q_whatsapp": ("radio", "", True, ["Yes", "No"]),
+        "id:q_location": ("select", "combobox", True, []),  # a typeahead lists nothing yet
+        "_systemfield_resume": ("file", "", True, []),
+        "q_linkedin": ("text", "", False, []),
+        "buttons:Are you currently eligible to work in the country you are applying for?": (
+            "radio", "buttons", True, ["Yes", "No"]),
+        "buttons:Will you require visa sponsorship?": ("radio", "buttons", True, ["Yes", "No"]),
+        "q_source": ("radio", "", True, ["LinkedIn", "Company website", "Referral"]),
+        "q_ack": ("checkbox", "", True, ["I confirm the information I provided is accurate"]),
+    }  # fmt: skip
+    labels = {f.key: f.label for f in read.fields}
+    assert labels["q_sms"] == "Do you agree to receive SMS updates about your application?"
+    assert labels["q_ack"] == "Acknowledgement"
+    assert labels["id:q_location"] == "Location"
+    assert read.captcha is False
+
+
+@needs_browser
+async def test_ashby_form_is_filled_and_each_button_goes_to_its_question(
+    site: str, tmp_path: Path
+) -> None:
+    """The eligibility question got the visa question's "No" (JAP-11): each answer is now
+    clicked under its own question, the typeahead picks the place, and all is sent."""
+    read = await read_form(f"{site}/ashby_atlan.html")
+    resume = tmp_path / "cv.pdf"
+    resume.write_bytes(b"%PDF-1.4 cv")
+    _Handler.posts.clear()
+    result = await submit_form(
+        f"{site}/ashby_atlan.html", read.fields, ATLAN_ANSWERS,
+        {"_systemfield_resume": Upload(resume, "Asha-Rao.pdf", "application/pdf")},
+        tmp_path / "s.png", tmp_path / "t.zip",
+    )  # fmt: skip
+    assert result.confirmed, result.error
+    sent = _Handler.posts[-1]
+    assert sent["_systemfield_resume"] == {"file": "Asha-Rao.pdf", "bytes": 11}
+    del sent["_systemfield_resume"]
+    assert sent == {
+        "_systemfield_name": "Asha Rao",
+        "_systemfield_email": "asha@example.com",
+        "_systemfield_phone": "+91 98765 43210",
+        "q_sms": "Yes",
+        "q_whatsapp": "No",
+        "q_location": "Bengaluru, Karnataka, India",
+        "q_linkedin": "https://linkedin.com/in/asha",
+        "q_eligible": "Yes",
+        "q_visa": "No",
+        "q_source": "LinkedIn",
+        "q_ack": "on",
+    }
+
+
+@needs_browser
+async def test_an_empty_required_field_stops_before_submit(site: str, tmp_path: Path) -> None:
+    """A required field left empty is named, and Submit is never pressed (JAP-11)."""
+    read = await read_form(f"{site}/ashby_atlan.html")
+    resume = tmp_path / "cv.pdf"
+    resume.write_bytes(b"%PDF-1.4 cv")
+    answers = {k: v for k, v in ATLAN_ANSWERS.items() if k not in ("q_ack", "q_whatsapp")}
+    _Handler.posts.clear()
+    result = await submit_form(
+        f"{site}/ashby_atlan.html", read.fields, answers,
+        {"_systemfield_resume": Upload(resume, "cv.pdf", "application/pdf")},
+        tmp_path / "s.png", tmp_path / "t.zip",
+    )  # fmt: skip
+    assert not result.clicked and not result.confirmed and not result.captcha
+    assert result.error is not None and result.error.startswith("Stopped before Submit")
+    assert "WhatsApp" in result.error and "Acknowledgement" in result.error
+    assert _Handler.posts == []
+
+
+@needs_browser
+async def test_a_puzzle_stops_before_submit_and_is_never_touched(site: str, tmp_path: Path) -> None:
+    """A picture puzzle on the form: read as a CAPTCHA, and submit stops before Submit with
+    every field filled, so I can finish it myself (JAP-11). One that appears only after
+    Submit holds the form: nothing is sent, and it is the same Finish yourself case."""
+    read = await read_form(f"{site}/ashby_atlan.html?captcha")
+    assert read.captcha is True
+    resume = tmp_path / "cv.pdf"
+    resume.write_bytes(b"%PDF-1.4 cv")
+    files = {"_systemfield_resume": Upload(resume, "cv.pdf", "application/pdf")}
+    _Handler.posts.clear()
+    before = await submit_form(
+        f"{site}/ashby_atlan.html?captcha", read.fields, ATLAN_ANSWERS, files,
+        tmp_path / "s.png", tmp_path / "t.zip",
+    )  # fmt: skip
+    assert before.captcha and not before.clicked and before.error == PUZZLE_FOUND
+    after = await submit_form(
+        f"{site}/ashby_atlan.html?challenge", read.fields, ATLAN_ANSWERS, files,
+        tmp_path / "s2.png", tmp_path / "t2.zip",
+    )  # fmt: skip
+    assert after.captcha and after.clicked and after.rejected and not after.confirmed
+    assert _Handler.posts == []
+
+
+def test_phone_gets_its_country_code() -> None:
+    class P:
+        full_name = "Asha Rao"
+        email = "asha@example.com"
+        phone = "98765 43210"
+        address = None
+        locations = ["Bengaluru, India"]
+        links: list[dict[str, str]] = []
+
+    phone = FormField(key="p", label="Phone", type="tel", required=True)
+    assert rules.contact_value(phone, P(), country_picker=False) == ("phone", "+91 98765 43210")  # type: ignore[arg-type]
+    assert rules.contact_value(phone, P()) == ("phone", "98765 43210")  # type: ignore[arg-type]
+    P.phone = "+44 7700 900123"
+    assert rules.contact_value(phone, P(), country_picker=False) == ("phone", "+44 7700 900123")  # type: ignore[arg-type]
+    P.phone, P.locations = "98765 43210", ["Somewhere"]
+    assert rules.contact_value(phone, P(), country_picker=False) == ("phone", "98765 43210")  # type: ignore[arg-type]
+    picker = FormField(key="c", label="Country", type="select", required=True, widget="combobox")
+    assert rules.has_country_picker([picker, phone])
+    assert not rules.has_country_picker([phone])
+    place = FormField(key="l", label="Location", type="select", required=True, widget="combobox")
+    P.locations = ["Bengaluru, India"]
+    assert rules.contact_value(place, P()) == ("location", "Bengaluru, India")  # type: ignore[arg-type]

@@ -1,0 +1,131 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>AI Native Builder</title></head><body>
+<!-- Like Atlan's Ashby form (JAP-11). No <form> element; every question sits in a field
+     entry whose title marks it required by a class (the * is CSS), with no required
+     attribute on its inputs: SMS and WhatsApp Yes/No radios, a Location typeahead that
+     lists places only after typing, two Yes/No button questions one after the other, a
+     radio list and an acknowledgement checkbox. ?captcha shows a picture puzzle on the form;
+     ?challenge shows one only after Submit. The page posts what it holds when everything
+     required is answered and the puzzle (if any) is not showing. -->
+<div class="ashby-application-form-container" id="c">
+  <div class="banner">Thanks for your interest and we appreciate your understanding!</div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_required_x ashby-application-form-question-title" for="_systemfield_name">Name</label>
+    <input id="_systemfield_name" name="_systemfield_name">
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_required_x ashby-application-form-question-title" for="_systemfield_email">Email</label>
+    <input id="_systemfield_email" name="_systemfield_email" type="email">
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_required_x ashby-application-form-question-title" for="_systemfield_phone">Phone</label>
+    <input id="_systemfield_phone" name="_systemfield_phone" type="tel">
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_required_x ashby-application-form-question-title">Do you agree to receive SMS updates about your application?</label>
+    <div><span><input type="radio" id="sms-0" name="q_sms" value="Yes"><label for="sms-0">Yes</label></span>
+    <span><input type="radio" id="sms-1" name="q_sms" value="No"><label for="sms-1">No</label></span></div>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_required_x ashby-application-form-question-title">Do you agree to receive WhatsApp updates about your application?</label>
+    <div><span><input type="radio" id="wa-0" name="q_whatsapp" value="Yes"><label for="wa-0">Yes</label></span>
+    <span><input type="radio" id="wa-1" name="q_whatsapp" value="No"><label for="wa-1">No</label></span></div>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_required_x ashby-application-form-question-title" for="q_location">Location</label>
+    <div class="loc"><input id="q_location" placeholder="Start typing..." aria-autocomplete="list" autocomplete="off">
+    <input type="hidden" name="q_location" id="q_location_value"><ul role="listbox" id="places"></ul></div>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_required_x ashby-application-form-question-title" for="_systemfield_resume">Resume</label>
+    <input id="_systemfield_resume" name="_systemfield_resume" type="file">
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="ashby-application-form-question-title" for="q_linkedin">LinkedIn Profile</label>
+    <input id="q_linkedin" name="q_linkedin">
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_required_x ashby-application-form-question-title">Are you currently eligible to work in the country you are applying for?</label>
+    <div class="yesno"><button class="opt" aria-pressed="false">Yes</button><button class="opt" aria-pressed="false">No</button><input type="hidden" name="q_eligible"></div>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_required_x ashby-application-form-question-title">Will you require visa sponsorship?</label>
+    <div class="yesno"><button class="opt" aria-pressed="false">Yes</button><button class="opt" aria-pressed="false">No</button><input type="hidden" name="q_visa"></div>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_required_x ashby-application-form-question-title">How did you learn about this opportunity?</label>
+    <div><span><input type="radio" id="src-0" name="q_source" value="LinkedIn"><label for="src-0">LinkedIn</label></span>
+    <span><input type="radio" id="src-1" name="q_source" value="Company website"><label for="src-1">Company website</label></span>
+    <span><input type="radio" id="src-2" name="q_source" value="Referral"><label for="src-2">Referral</label></span></div>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_required_x ashby-application-form-question-title">Acknowledgement</label>
+    <div><input type="checkbox" id="ack" name="q_ack"><label for="ack">I confirm the information I provided is accurate</label></div>
+  </div>
+  <div id="puzzle"></div>
+  <p class="error" id="err" hidden></p>
+  <button type="submit" class="ashby-application-form-submit-button">Submit Application</button>
+</div>
+<script>
+  const PLACES = ['Bengaluru, Karnataka, India', 'Bengaluru Rural, Karnataka, India', 'Bern, Switzerland'];
+  const box = document.getElementById('q_location');
+  const list = document.getElementById('places');
+  let timer = null;
+  box.addEventListener('input', () => {
+    document.getElementById('q_location_value').value = '';
+    clearTimeout(timer);
+    timer = setTimeout(() => {  // the places come from a search, a moment after typing
+      const typed = box.value.toLowerCase();
+      list.innerHTML = '';
+      for (const p of PLACES.filter((p) => typed && p.toLowerCase().includes(typed))) {
+        const li = document.createElement('li');
+        li.setAttribute('role', 'option');
+        li.textContent = p;
+        li.addEventListener('click', () => {
+          box.value = p;
+          document.getElementById('q_location_value').value = p;
+          list.innerHTML = '';
+        });
+        list.appendChild(li);
+      }
+    }, 200);
+  });
+  for (const b of document.querySelectorAll('.yesno .opt')) {
+    b.addEventListener('click', () => {
+      const group = b.parentElement;
+      for (const o of group.querySelectorAll('.opt')) o.setAttribute('aria-pressed', String(o === b));
+      group.querySelector('input').value = b.textContent;
+    });
+  }
+  const puzzle = () => {
+    const f = document.createElement('iframe');
+    f.title = 'Verification challenge';
+    f.style.cssText = 'width:300px;height:200px';
+    document.getElementById('puzzle').appendChild(f);
+  };
+  if (location.search.includes('captcha')) puzzle();
+  document.querySelector('.ashby-application-form-submit-button').addEventListener('click', async () => {
+    if (location.search.includes('challenge') && !document.querySelector('#puzzle iframe')) {
+      puzzle();
+      return;
+    }
+    if (document.querySelector('#puzzle iframe')) return;  // nothing is sent until it is solved
+    const data = new FormData();
+    for (const el of document.querySelectorAll('#c input[name]')) {
+      if (el.type === 'file') { if (el.files[0]) data.append(el.name, el.files[0]); continue; }
+      if ((el.type === 'radio' || el.type === 'checkbox') && !el.checked) continue;
+      data.append(el.name, el.type === 'checkbox' ? 'on' : el.value);
+    }
+    const required = ['_systemfield_name', '_systemfield_email', '_systemfield_phone', 'q_sms',
+      'q_whatsapp', 'q_location', '_systemfield_resume', 'q_eligible', 'q_visa', 'q_source', 'q_ack'];
+    const missing = required.filter((k) => !data.get(k));
+    if (missing.length) {
+      const err = document.getElementById('err');
+      err.textContent = 'This field is required';
+      err.hidden = false;
+      return;
+    }
+    const resp = await fetch('/submit', { method: 'POST', body: data });
+    document.getElementById('c').innerHTML = await resp.text();
+  });
+</script></body></html>
