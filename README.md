@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.19.0 (Daily run prepares in Review mode), 18 Nov 2026.**
+**Version 0.19.0 (Claude writer: Daily run prepares, redacted export and import), 18 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -279,6 +279,23 @@ you. A scheduled Claude session (outside JAP) can then answer what is at Needs y
 resume and answer bank; nothing is sent before you approve. Switching back to Review makes the
 next run prepare without submitting.
 
+## Claude writer
+
+PRD 1.22, W1 to W7. When JAP's own AI key has no credit, jobs it cannot write answers for
+stop at **Needs you**. A scheduled Claude session (a task in the Claude desktop app, about
+10 minutes after the Daily run) can answer them instead, without ever reading the database:
+
+- `make ENV=live writer-export` prints the jobs at Needs you in Review mode as JSON: each
+  job's frozen description and open questions (with their options and length limits), the
+  active resume and the answer bank. Name, email, phone, address and every profile link
+  (also links saved in the answer bank) become `[NAME]`, `[EMAIL]`, `[PHONE]`, `[ADDRESS]`
+  and `[LINK_n]`, and the export is refused if anything personal is left.
+- `make ENV=live writer-import FILE=answers.json` takes `{"<application id>": {"<key>":
+  "<answer>"}}`, fills the placeholders back in locally and answers each job through the
+  same step as the Needs you panel, so it is prepared again and reaches Ready for review.
+  Every open question of a job must be answered at once; drafts are not saved to the
+  answer bank. Nothing is approved or sent.
+
 ## When something fails
 
 - **A job fails** (the form page is gone, the form changed, Submit gave no confirmation): after
@@ -519,7 +536,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
-| 0.19.0 | 18 Nov 2026 | The Daily run prepares the new jobs that fit in Review mode too (PRD 1.22, W1), not only in Automatic mode. They wait at Ready for review, or at Needs you when JAP cannot write an answer itself (no AI key credit), where a scheduled Claude session picks them up. Nothing is sent before Approve; the daily cap still limits how many are prepared |
+| 0.19.0 | 18 Nov 2026 | Claude writer (PRD 1.22, W1 to W7). The Daily run prepares the new jobs that fit in Review mode too, not only in Automatic mode: they wait at Ready for review, or at Needs you when JAP cannot write an answer itself (no AI key credit). `make writer-export` gives a scheduled Claude session the jobs at Needs you (frozen description, open questions, resume, answer bank) with name, email, phone, address and profile links replaced by placeholders, and refuses if anything personal is left; `make writer-import FILE=...` puts its answers back with the real values filled in locally, through the same step as the Needs you panel. Nothing is approved or sent by either; drafted answers are not saved to the answer bank |
 | 0.18.3 | 18 Nov 2026 | Fix two faults found sending the first Supabase (Ashby) applications. A page that already thanked you before Submit counted as a confirmation (JAP-8): Ashby shows "Thanks for your interest" in a banner on every form, so JAP called a job Applied while the Submit button was still spinning. Only words of thanks the page did not show before Submit count now, and JAP waits for them. Ashby's Yes/No questions were not read (JAP-9): their buttons have no type attribute and sit beside a hidden checkbox, so a required question such as "Are you over the age of 18?" went unanswered. They are read now, marked required from the question's title, and clicked like other button questions |
 | 0.18.2 | 18 Nov 2026 | Fix every Ashby application failing with "No application form found on the page" (JAP-7). Ashby's hosted page shows "Fetching application form" and draws the fields a moment after the network goes quiet, so JAP read an empty page; the weekly form test had failed on Ashby for the same reason. The reader now also waits, up to 15 seconds, for a visible form field (not the hidden resume-autofill file input Ashby attaches first) before reading. A page with no form at all still fails, after that wait |
 | 0.18.1 | 13 Nov 2026 | Fix the four settings you type rather than tick saving only when the field lost focus (JAP-6). Settings says changes save straight away, and every radio and switch does, but "Send at most N applications a day", "Only jobs with at least N% of my required skills", the daily search time and the monthly AI limit waited for a click somewhere else: Enter did nothing at all and there was no button, so a typed number looked ignored. Enter saves now, so does a Save button that appears beside the field as soon as the value differs from the saved one, Escape forgets the edit, and leaving the field still saves so nothing typed is lost. What was typed stays on screen until the save comes back, instead of showing the old value again in between |

@@ -37,7 +37,7 @@ TUNNEL_ENV := infra/tunnel/.env.tunnel
 TUNNEL := docker compose --env-file $(TUNNEL_ENV) -f infra/tunnel/compose.yaml
 
 .DEFAULT_GOAL := help
-.PHONY: help env tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check demo demo-clear
+.PHONY: help env tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check writer-export writer-import demo demo-clear
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
@@ -145,6 +145,13 @@ email-test: ## Send one test email from the mailbox in .env: make email-test TO=
 
 code-mail-check: ## Log in to the mailbox over IMAP and count Greenhouse emails (security codes)
 	$(COMPOSE) exec app python -m pipeline.apply.security_code
+
+writer-export: ## Jobs at Needs you for the Claude writer, redacted, as JSON (PRD 1.22)
+	@$(COMPOSE) exec -T app python -m pipeline.claude_writer export
+
+writer-import: ## The Claude writer's answers back in: make writer-import FILE=answers.json
+	@test -f "$(FILE)" || { echo "Usage: make writer-import FILE=answers.json"; exit 1; }
+	@$(COMPOSE) exec -T app python -m pipeline.claude_writer import < "$(FILE)"
 
 llm-check: ## One test call to each OpenRouter model (needs OPENROUTER_API_KEY in .env)
 	$(COMPOSE) exec app python -m llm.check
