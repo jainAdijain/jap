@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>AI Tooling</title></head><body>
+<!-- Ashby's hosted page: "Fetching application form" first, the form a moment later, after
+     the network has already gone quiet (JAP-7). -->
+<p id="wait">Fetching application form</p>
+<template id="later">
+<form class="ashby-application-form" method="post" action="/submit" enctype="multipart/form-data">
+<div><label for="_systemfield_name">Name</label><input id="_systemfield_name" name="_systemfield_name" required></div>
+<div><label for="_systemfield_email">Email</label><input id="_systemfield_email" name="_systemfield_email" type="email" required></div>
+<div><label for="q_why">Why Supabase?</label><textarea id="q_why" name="q_why" required></textarea></div>
+<button type="submit">Submit Application</button></form>
+</template>
+<script>
+setTimeout(() => {
+  document.getElementById("wait").remove();
+  document.body.appendChild(document.getElementById("later").content.cloneNode(true));
+}, 2000);
+</script>
+</body></html>

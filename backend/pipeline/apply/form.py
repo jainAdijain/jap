@@ -26,6 +26,8 @@ from playwright.async_api import Error, FilePayload, Page, async_playwright
 
 NAV_TIMEOUT_MS = 30_000
 SETTLE_TIMEOUT_MS = 15_000
+FORM_WAIT_MS = 15_000  # how long a form drawn after load (Ashby) may take to appear
+FORM_CONTROL = "input:not([type=hidden]):not([type=file]), textarea, select, [role=combobox]"
 RECHECK_MS = 1_000
 CONFIRMATION = re.compile(
     r"thank(s| you)[^.]{0,40}(appl|interest|submitt)|application (has been |was )?"
@@ -175,6 +177,16 @@ async def _open_page(page: Page, url: str) -> Page:
         await page.wait_for_load_state("networkidle", timeout=SETTLE_TIMEOUT_MS)
     except Error:
         pass  # some boards keep a connection open; the form is there by now
+    try:
+        # Ashby's hosted page says "Fetching application form" and draws the fields a
+        # moment after the network goes quiet, so a quiet network is not a loaded form
+        # (JAP-7). A page with no form at all just waits this out and is read as it is.
+        # Visible, and not a file input: Ashby attaches its hidden "autofill from resume"
+        # file input before the form itself.
+        await page.wait_for_selector(FORM_CONTROL, state="visible", timeout=FORM_WAIT_MS)
+        await page.wait_for_timeout(RECHECK_MS)  # the rest of the fields render just after
+    except Error:
+        pass
     return page
 
 
