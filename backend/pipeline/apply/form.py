@@ -71,7 +71,7 @@ ERRORS_JS = """() => [...document.querySelectorAll(
 BUTTONS_JS = """([question, answer]) => {
   const clean = (s) => (s || '').replace(/\\s+/g, ' ').trim().toLowerCase();
   const strip = (s) => clean(s).replace(/\\s*[*✱★]\\s*$/, '');
-  for (const b of document.querySelectorAll('button[type="button"]')) {
+  for (const b of document.querySelectorAll('button[type="button"], button:not([type])')) {
     if (clean(b.innerText) !== clean(answer)) continue;
     let p = b.parentElement;
     for (let i = 0; i < 6 && p; i++, p = p.parentElement) {
@@ -85,6 +85,10 @@ BUTTONS_JS = """([question, answer]) => {
   }
   return false;
 }"""
+# Wait for words of thanks the page did not show before Submit (JAP-8)
+NEW_CONFIRMATION_JS = """([re, before]) =>
+  (document.body.innerText.match(new RegExp(re, 'gi')) || [])
+    .some((m) => !before.includes(m.toLowerCase()))"""
 # Greenhouse's check for automated browsers: after Submit it emails a security code and
 # shows boxes for it. Nothing is sent until the code is typed in.
 SECURITY_CODE = re.compile(r"(security|verification) code|enter the \d+-character code", re.I)
@@ -412,15 +416,26 @@ async def _fill_all(
         raise FormError(f"These fields would not keep their value, so nothing was sent: {labels}")
 
 
-async def _wait_for_answer(page: Page) -> None:
+def _confirmations(text: str) -> set[str]:
+    return {m.group(0).lower() for m in CONFIRMATION.finditer(text)}
+
+
+def confirmed_after(before: str, after: str) -> bool:
+    """The page thanks me for applying in words it did not show before Submit. Ashby
+    shows "Thanks for your interest" in a banner on every form, so text that was already
+    there is no confirmation (JAP-8)."""
+    return bool(_confirmations(after) - _confirmations(before))
+
+
+async def _wait_for_answer(page: Page, before: str) -> None:
     try:
         await page.wait_for_load_state("networkidle", timeout=SETTLE_TIMEOUT_MS)
     except Error:
         pass
     try:
         await page.wait_for_function(
-            "(re) => new RegExp(re, 'i').test(document.body.innerText)",
-            arg=CONFIRMATION.pattern,
+            NEW_CONFIRMATION_JS,
+            arg=[CONFIRMATION.pattern, sorted(_confirmations(before))],
             timeout=SETTLE_TIMEOUT_MS,
         )
     except Error:
@@ -479,16 +494,17 @@ async def submit_form(
                 button = page.get_by_role("button", name=re.compile("submit|apply", re.I))
             if await button.count() == 0:
                 raise FormError("No submit button on the form")
+            before = await page.inner_text("body")
             clicked = True
             pressed_at = datetime.now(UTC)
             await button.first.click()
-            await _wait_for_answer(page)
+            await _wait_for_answer(page, before)
             body = await page.inner_text("body")
             code_error = None
             if (
                 get_code is not None
                 and SECURITY_CODE.search(body)
-                and not CONFIRMATION.search(body)
+                and not confirmed_after(before, body)
             ):
                 length = int(m.group(1)) if (m := CODE_LENGTH.search(body)) else 8
                 code = await get_code(pressed_at, length)
@@ -498,14 +514,14 @@ async def submit_form(
                     code_error = "JAP had the security code but found no boxes to type it in"
                 else:
                     await button.first.click()  # the one second press, only after a code
-                    await _wait_for_answer(page)
+                    await _wait_for_answer(page, before)
                     body = await page.inner_text("body")
                     code_error = "The site did not take the security code"
             anchor = _anchor(fields)
             form_left = anchor is not None and await page.locator(selector(anchor.key)).count() == 0
             await page.screenshot(path=str(screenshot), full_page=True)
             shot = True
-            if CONFIRMATION.search(body) or form_left:
+            if confirmed_after(before, body) or form_left:
                 return SubmitResult(confirmed=True, screenshot=True, clicked=True)
             if SECURITY_CODE.search(body):
                 return SubmitResult(

@@ -22,6 +22,8 @@ commit that fixes them.
 | [JAP-5](#jap-5--bug--a-job-title-wider-than-its-column-showed-as-nothing-but) | Bug | Fixed (v0.17.1) | A job title wider than its column showed as nothing but `...` |
 | [JAP-6](#jap-6--bug--settings-you-type-saved-only-when-the-field-lost-focus) | Bug | Fixed (v0.18.1) | Settings you type saved only when the field lost focus |
 | [JAP-7](#jap-7--bug--every-ashby-form-read-as-no-application-form-found) | Bug | Fixed (v0.18.2) | Every Ashby form read as "No application form found" |
+| [JAP-8](#jap-8--bug--thanks-already-on-the-page-counted-as-a-confirmation) | Bug | Fixed (v0.18.3) | Thanks already on the page counted as a confirmation |
+| [JAP-9](#jap-9--bug--ashby-yesno-questions-were-not-read) | Bug | Fixed (v0.18.3) | Ashby Yes/No questions were not read |
 
 ---
 
@@ -196,4 +198,45 @@ remaining fields. A page with no form still fails as before, after that wait. Te
 `test_reads_a_form_drawn_after_the_network_goes_quiet` with `tests/forms/ashby_late.html`,
 which draws its form two seconds after load. Checked against both live Supabase forms, which
 now read all 11 fields.
+
+---
+
+## JAP-8 — Bug — Thanks already on the page counted as a confirmation
+
+**Status:** Fixed (v0.18.3). Found 18 Nov 2026 on live, sending two Supabase (Ashby) jobs.
+
+Both jobs became **Applied**, and JAP sent its own "Applied: ..." emails, with a screenshot that
+showed the form still on the page and the Submit button spinning. No confirmation came from
+Supabase or Ashby, so the applications most likely never went through: JAP had matched text
+that was there before Submit was pressed.
+
+Cause: `CONFIRMATION` in `backend/pipeline/apply/form.py` was searched in the whole page after
+Submit, and Ashby shows a banner on every form, "Thanks for your interest and we appreciate
+your understanding!", which matches. `_wait_for_answer` therefore returned at once, and
+`submit_form` called it confirmed.
+
+Fixed: `submit_form` reads the page before pressing Submit, and `confirmed_after` counts only
+words of thanks that were not there before. `_wait_for_answer` waits for those new words
+(`NEW_CONFIRMATION_JS`), so the screenshot is also taken after the site answers. A form that
+leaves the page still counts as before. Tests: `test_thanks_already_on_the_page_is_no_confirmation`,
+`test_ashby_yes_no_without_a_type_and_a_banner` (`tests/forms/ashby_yesno.html`).
+
+---
+
+## JAP-9 — Bug — Ashby Yes/No questions were not read
+
+**Status:** Fixed (v0.18.3). Found 18 Nov 2026 on live, on the same two Supabase forms.
+
+Supabase's form asks "Are you over the age of 18?" with Yes and No buttons, required. JAP
+listed eleven fields and not this one, so it was sent unanswered.
+
+Cause: `read_form.js` already reads questions made of buttons (the Linear case), but only
+`button[type="button"]` whose box holds nothing but those buttons. Ashby's buttons here have
+no `type` attribute, and the box also holds a hidden checkbox that keeps the value. The
+required mark is a class on the question's title, with the `*` drawn by CSS.
+
+Fixed: a button with no `type` counts as a plain button for this, hidden inputs beside the
+buttons are allowed, and a title whose class says required makes the question required.
+`BUTTONS_JS` clicks buttons with no `type` too. Checked against the live Supabase form, which
+now reads twelve fields including this one as a required Yes/No.
 
