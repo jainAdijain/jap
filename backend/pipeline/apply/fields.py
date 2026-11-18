@@ -5,6 +5,12 @@ or location by its label and input type. The resume file goes into a file field 
 resume or CV. Questions only I can answer (notice period, salary, start date, work
 authorisation, relocation) are spotted here too, so no model is asked to invent them, and
 so is a cover letter field, which pipeline/cover_letter.py fills.
+
+A phone field on a form with no country code picker of its own (Ashby) gets the number with
+its country code, taken from where I live when the profile's number has none (JAP-11: the
+Atlan form was sent with a bare 10-digit Indian number). A location typeahead (Ashby's
+Location, read as a combobox with no options until something is typed) is filled from My
+profile's first location like a text field.
 """
 
 import re
@@ -60,6 +66,48 @@ RULES: list[tuple[str, re.Pattern[str], Callable[[Profile], str | None]]] = [
 ]  # fmt: skip
 TYPE_RULES = {"email": "email", "tel": "phone"}
 
+# A country code picker beside the phone number (Greenhouse's "Country" with +91).
+COUNTRY_PICKER = re.compile(r"^country$|\b(country|dial(l?ing)?|calling) code\b", re.I)
+# Country calling codes, by the country (or a big city) named in my address or locations.
+DIAL_CODES: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"\b(india|bengaluru|bangalore|mumbai|delhi|gurgaon|gurugram|noida|pune"
+                r"|hyderabad|chennai|kolkata|ahmedabad)\b", re.I), "+91"),
+    (re.compile(r"\b(united states|usa|u\.s\.a?\.?|new york|san francisco|seattle)\b", re.I), "+1"),
+    (re.compile(r"\b(canada|toronto|vancouver)\b", re.I), "+1"),
+    (re.compile(r"\b(united kingdom|uk|england|london)\b", re.I), "+44"),
+    (re.compile(r"\b(germany|berlin|munich)\b", re.I), "+49"),
+    (re.compile(r"\bsingapore\b", re.I), "+65"),
+    (re.compile(r"\b(united arab emirates|uae|dubai)\b", re.I), "+971"),
+    (re.compile(r"\b(australia|sydney|melbourne)\b", re.I), "+61"),
+    (re.compile(r"\b(netherlands|amsterdam)\b", re.I), "+31"),
+    (re.compile(r"\b(ireland|dublin)\b", re.I), "+353"),
+]  # fmt: skip
+
+
+def dial_code(profile: Profile) -> str | None:
+    where = " ".join([profile.address or "", *(profile.locations or [])])
+    return next((code for pattern, code in DIAL_CODES if pattern.search(where)), None)
+
+
+def international(phone: str, profile: Profile) -> str:
+    """The number with its country code: as saved when it has one, else with the code of
+    the country I live in. A number JAP can't place is left as it is."""
+    p = phone.strip()
+    if p.startswith("+") or p.startswith("00"):
+        return p
+    code = dial_code(profile)
+    digits = re.sub(r"\D", "", p)
+    if code is None or len(digits) < 7:
+        return p
+    if digits.startswith(code[1:]) and len(digits) > 10:
+        return f"+{p}"  # saved as 91 98765 43210
+    return f"{code} {p.lstrip('0')}"
+
+
+def has_country_picker(fields: list[FormField]) -> bool:
+    return any(f.type == "select" and COUNTRY_PICKER.search(f.label.strip()) for f in fields)
+
+
 RESUME = re.compile(r"\b(resume|résumé|cv|curriculum)\b", re.I)
 COVER_LETTER = re.compile(r"\bcover ?letter\b", re.I)
 
@@ -73,21 +121,33 @@ MY_FACT = re.compile(
 )
 
 
-def contact_value(f: FormField, profile: Profile) -> tuple[str, str] | None:
+def contact_value(
+    f: FormField, profile: Profile, *, country_picker: bool = True
+) -> tuple[str, str] | None:
     """(source, value) for a contact field, or None when it is not one (or the profile
-    has no value for it)."""
-    if f.type in ("file", "select", "radio", "checkbox", "checkboxes", "textarea"):
+    has no value for it). With no country picker on the form, a phone number gets its
+    country code."""
+    typeahead = f.widget == "combobox" and not f.options
+    if f.type in ("file", "radio", "checkbox", "checkboxes", "textarea") or (
+        f.type == "select" and not typeahead
+    ):
         return None
     label = _norm(f.label)
+    found: tuple[str, str | None] | None = None
     for source, pattern, value in RULES:
         if pattern.search(label):
-            v = value(profile)
-            return (source, v) if v else None
-    by_type = TYPE_RULES.get(f.type)
-    if by_type:
-        v = profile.email if by_type == "email" else profile.phone
-        return (by_type, v) if v else None
-    return None
+            found = (source, value(profile))
+            break
+    if found is None and (by_type := TYPE_RULES.get(f.type)):
+        found = (by_type, profile.email if by_type == "email" else profile.phone)
+    if found is None or not found[1]:
+        return None
+    source, v = found[0], str(found[1])
+    if typeahead and source != "location":
+        return None  # a typeahead is a place; anything else picks from its list
+    if source == "phone" and not country_picker:
+        v = international(v, profile)
+    return source, v
 
 
 def is_resume_field(f: FormField) -> bool:

@@ -18,7 +18,7 @@ import llm.client as client
 from config import get_settings
 from database.session import get_sessionmaker
 from pipeline import notify
-from pipeline.apply import flow
+from pipeline.apply import finish, flow
 from pipeline.apply.form import FormField, FormRead, SubmitResult
 from pipeline.matching import Criteria, refilter
 from tests.test_llm_call import Stub
@@ -322,6 +322,7 @@ async def test_captcha_and_missing_files_block(
     setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
     api: httpx.AsyncClient,
 ) -> None:  # fmt: skip
+    """A file JAP doesn't have is asked for first; the puzzle stays for me to finish."""
     _fake_form(monkeypatch, [*FORM, FormField("t", "Transcript", "file", True)], captcha=True)
     app_id = await _prepare(setup["listing"])
     app = (await api.get(f"/api/applications/{app_id}")).json()
@@ -329,6 +330,62 @@ async def test_captcha_and_missing_files_block(
     assert [(q["key"], q["blocked"]) for q in app["pending"]] == [("captcha", True), ("t", True)]
     resp = await api.post(f"/api/applications/{app_id}/answer", json={"answers": {}})
     assert resp.status_code == 409
+
+
+async def test_a_puzzle_is_finish_yourself(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+    api: httpx.AsyncClient, events: list[tuple[str, dict[str, Any]]],
+) -> None:  # fmt: skip
+    """JAP-11: a form with a picture puzzle is filled in and waits at Finish yourself:
+    puzzle, in Automatic mode too; never skipped and never submitted by JAP. I finish it on
+    the Mac (make finish) or press I sent it, and the job is Applied."""
+    sql.execute("UPDATE profile SET apply_mode = 'automatic'")
+    _fake_form(monkeypatch, FORM, captcha=True)
+    app_id = await _prepare(setup["listing"])
+    app = (await api.get(f"/api/applications/{app_id}")).json()
+    assert app["status"] == "needs_input" and app["review_reason"] == flow.FINISH
+    assert [(q["key"], q["finish"]) for q in app["pending"]] == [("captcha", True)]
+    assert _status(sql, app_id) == ("needs_input", "manual_apply")
+    assert {f["key"]: f["value"] for f in app["fields"]}["email"] == "asha.rao@example.com"
+    async with get_sessionmaker()() as session:
+        assert [j["id"] for j in await finish.waiting(session)] == [app_id]
+        exported = await finish.export(session, app_id)
+    assert exported["url"] == "https://example.com/jobs/1/apply"
+    assert exported["files"]["resume"]["path"] == "resume.pdf"
+    assert exported["answers"]["email"] == "asha.rao@example.com"
+
+    resp = await api.post(f"/api/applications/{app_id}/finished")
+    assert resp.status_code == 200 and resp.json()["status"] == "applied"
+    assert _status(sql, app_id) == ("applied", "applied")
+    assert events[-2:] == [
+        ("application/answered", {"application_id": app_id}),
+        ("application/submitted", {"application_id": app_id}),
+    ]
+    assert (await api.post(f"/api/applications/{app_id}/finished")).status_code == 409
+
+
+async def test_a_puzzle_at_submit_is_finish_yourself(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+    api: httpx.AsyncClient,
+) -> None:  # fmt: skip
+    """A puzzle that shows only once the form is filled in (or after Submit) stops the
+    attempt at Finish yourself, with Submit free to press again."""
+    _fake_form(monkeypatch, FORM)
+    app_id = await _prepare(setup["listing"])
+
+    async def puzzle(*args: Any, **kwargs: Any) -> SubmitResult:
+        return SubmitResult(confirmed=False, screenshot=False, clicked=True, rejected=True,
+                            captcha=True, error="CAPTCHA")  # fmt: skip
+
+    monkeypatch.setattr(flow, "submit_form", puzzle)
+    assert (await api.post(f"/api/applications/{app_id}/approve")).status_code == 200
+    async with get_sessionmaker()() as session:
+        assert await flow.submit(session, app_id) == {"status": "needs_input"}
+    assert _status(sql, app_id) == ("needs_input", "manual_apply")
+    row = sql.execute(
+        "SELECT submit_started_at, review_reason FROM application WHERE id = %s", (app_id,)
+    ).fetchone()
+    assert row == (None, flow.FINISH)
 
 
 async def test_approve_submits_once_and_freezes(

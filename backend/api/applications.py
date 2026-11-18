@@ -19,7 +19,7 @@ from database.session import Session
 from functions.events import send
 from observability import timeline
 from pipeline.apply.answers import save_to_bank
-from pipeline.apply.flow import MAYBE_SENT, letter_fields, set_letter
+from pipeline.apply.flow import MAYBE_SENT, Stop, finished, letter_fields, set_letter
 from schemas.application import (
     AnswerQuestionsIn,
     AnswersIn,
@@ -222,6 +222,20 @@ async def answer(app_id: uuid.UUID, body: AnswerQuestionsIn, session: Session) -
     await _listing_to(session, app.listing_id, "applying")
     await session.commit()
     await send("application/answered", {"application_id": str(app.id)})
+    await session.refresh(app)
+    return await to_out(session, app)
+
+
+@router.post("/applications/{app_id}/finished", response_model=ApplicationOut)
+async def finished_by_me(app_id: uuid.UUID, session: Session) -> ApplicationOut:
+    """Finish yourself: I solved the puzzle and pressed Submit on the employer's form myself
+    (JAP-11). `make finish` calls the same step when it sees the confirmation."""
+    try:
+        app = await finished(session, str(app_id), None)
+    except Stop as exc:
+        raise ApiError(409, "conflict", str(exc)) from exc
+    await send("application/answered", {"application_id": str(app.id)})
+    await send("application/submitted", {"application_id": str(app.id)})
     await session.refresh(app)
     return await to_out(session, app)
 
