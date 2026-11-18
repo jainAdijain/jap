@@ -21,6 +21,7 @@ commit that fixes them.
 | [JAP-4](#jap-4--issue--jap_env-still-says-dev-and-prod-after-the-locallive-rename) | Issue | Open | `JAP_ENV` still says `dev` and `prod` after the local/live rename |
 | [JAP-5](#jap-5--bug--a-job-title-wider-than-its-column-showed-as-nothing-but) | Bug | Fixed (v0.17.1) | A job title wider than its column showed as nothing but `...` |
 | [JAP-6](#jap-6--bug--settings-you-type-saved-only-when-the-field-lost-focus) | Bug | Fixed (v0.18.1) | Settings you type saved only when the field lost focus |
+| [JAP-7](#jap-7--bug--every-ashby-form-read-as-no-application-form-found) | Bug | Fixed (v0.18.2) | Every Ashby form read as "No application form found" |
 
 ---
 
@@ -171,3 +172,28 @@ Escape forgets the edit, and blur still commits so nothing typed is lost. The bu
 mousedown, or the blur would fire first and take the button away before the click landed. What
 was typed stays on screen until the save returns, instead of flicking back to the old value in
 between on a slow connection — the JAP-1 fault in miniature.
+
+---
+
+## JAP-7 — Bug — Every Ashby form read as "No application form found"
+
+**Status:** Fixed (v0.18.2). Found 18 Nov 2026 on live, preparing two Supabase jobs.
+
+Every Ashby application ended **Failed** with "No application form found on the page", and the
+weekly form test had failed on Ashby three times in a row for the same reason. The screenshot
+kept with the failure shows the job page with the Application tab open and only a spinner:
+"Fetching application form".
+
+Cause: Ashby's hosted page is a single-page app. It loads, the network goes quiet, and only
+then does it fetch and draw the form. `_open_page` in `backend/pipeline/apply/form.py` waited
+for `networkidle` and read the page straight away, so it saw no fields. Waiting for any input
+was not enough either: Ashby attaches a hidden "autofill from resume" file input before the
+form, and the rest of the fields render just after the first one.
+
+Fixed in `_open_page`: after `networkidle` it waits up to 15 seconds (`FORM_WAIT_MS`) for a
+*visible* form control that is not a file input (`FORM_CONTROL`), then one more second for the
+remaining fields. A page with no form still fails as before, after that wait. Test:
+`test_reads_a_form_drawn_after_the_network_goes_quiet` with `tests/forms/ashby_late.html`,
+which draws its form two seconds after load. Checked against both live Supabase forms, which
+now read all 11 fields.
+

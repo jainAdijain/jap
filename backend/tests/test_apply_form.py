@@ -142,6 +142,15 @@ async def test_reads_lever_and_ashby_style_forms(site: str) -> None:
 
 
 @needs_browser
+async def test_reads_a_form_drawn_after_the_network_goes_quiet(site: str) -> None:
+    """Ashby's hosted page shows "Fetching application form" first (JAP-7)."""
+    read = await read_form(f"{site}/ashby_late.html")
+    assert [(f.key, f.required) for f in read.fields] == [
+        ("_systemfield_name", True), ("_systemfield_email", True), ("q_why", True),
+    ]  # fmt: skip
+
+
+@needs_browser
 async def test_no_form_is_an_error(site: str, tmp_path: Path) -> None:
     with pytest.raises(FormError):
         await read_form(f"{site}/missing.html")
