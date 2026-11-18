@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.19.2 (Every Ashby field read, Finish yourself: puzzle), 18 Nov 2026.**
+**Version 0.20.0 (Claude reader: job postings read by a scheduled Claude session), 18 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -103,10 +103,12 @@ spend reaches `JAP_MONTHLY_COST_CAP_USD`.
 
 Add companies under **Companies to follow** in Job preferences by pasting their Greenhouse,
 Lever or Ashby board URL (or typing the name), then press **Find new jobs** on Jobs. Each board is one `fetch-board` run
-in Inngest, throttled to one request a second per ATS. Job descriptions are read by the
-extract model once per description: a re-run with unchanged postings costs nothing. The
-first run on a big board (some list 700+ jobs) makes one model call per job, so start with a
-few companies and watch **AI usage** in Settings.
+in Inngest, throttled to one request a second per ATS. Job descriptions are read once per
+description, so a re-run with unchanged postings costs nothing. From 0.20.0 the reading is
+done by the scheduled Claude reader (below) by default; `JAP_READER=openrouter` in `.env`
+brings back the extract model, where the first run on a big board (some list 700+ jobs)
+makes one model call per job, so start with a few companies and watch **AI usage** in
+Settings.
 
 **Stop following** a company (the × on its name) asks first and says how many jobs it hides.
 It closes every open posting of that board with the reason `unfollowed` and closes the jobs
@@ -304,6 +306,41 @@ says "daily cap reached". The Daily run finds and prepares the new jobs that fit
 you. A scheduled Claude session (outside JAP) can then answer what is at Needs you from the
 resume and answer bank; nothing is sent before you approve. Switching back to Review makes the
 next run prepare without submitting.
+
+## Claude reader
+
+PRD 1.25, R1 to R7. With `JAP_READER=claude` (the default) JAP sends no job description to
+OpenRouter. It still copies what the ATS states (work mode, remote regions, Ashby salary) and
+makes the dedup embedding, and the rest (skills, seniority, salary, visa sponsorship, remote
+regions, cover letter asked) waits for a scheduled Claude session on your Claude plan: a task
+in the Claude desktop app 5 minutes after the Daily run, before the Claude writer. Until it
+runs, a new job shows Skills not stated and, unless the ATS says, Work mode unclear, so
+Automatic mode does not send it.
+
+- `make ENV=live reader-export` prints one batch (`LIMIT=50` by default) of unread postings
+  as JSON: open, company followed, description changed since it was last read. Postings
+  whose title is one of your target roles come first, so the jobs that can be listed for you
+  are read in the first minutes of a big backlog. `SHARD=3/8` takes only the third of eight
+  disjoint shares, so eight readers can work at once without overlap. Each has its
+  id, description hash, title, locations, description (cut at 12,000 characters) and the
+  keys still wanted, with the extract prompt's rules and the field schema. Descriptions are
+  redacted like any model call, the export is refused if anything personal is left, and
+  nothing about you (resume, profile, answers) is in it. `run_active` says a search is
+  still running; `unread_total`, `unread_in_my_roles` and `unread_in_shard` how many are
+  left.
+- `make ENV=live reader-import FILE=fields.json` takes `{"<posting id>": {"description_hash":
+  "...", "skills": [...], ...}}` and checks each posting against the extraction schema:
+  every wanted key, nothing else, only allowed values. A posting that fails, or whose
+  description changed since the export, is not saved and stays unread; one that passes is
+  saved as if JAP had read it, and its job's skills, work mode and match are refreshed.
+  The last line says `saved N of M`. Nothing is applied or sent.
+
+The task starts 8 workers, one per shard; each repeats export, read, import until its
+batch is empty or saves nothing. The first read of a large backlog (thousands of postings)
+is a one-off and can reach the Claude plan's usage limit; what is left is read on the next
+run. After that only new or changed postings are read.
+`JAP_READER=openrouter` is the fallback: JAP reads each posting itself again, with a funded
+key.
 
 ## Claude writer
 
@@ -538,6 +575,8 @@ There is no promotion step: live runs whatever this checkout builds.
 | `make health-check` | Run the hourly health watch now: old log rows deleted, alerts that are due emailed |
 | `make errors` | The last 20 warnings and errors from `log_event` |
 | `make email-test TO=...` | Send one test email from the mailbox in `.env` |
+| `make reader-export` / `make reader-import FILE=...` | One batch of unread postings for the Claude reader, redacted; its fields back in, checked (PRD 1.25) |
+| `make writer-export` / `make writer-import FILE=...` | Jobs at Needs you for the Claude writer, redacted; its answers back in (PRD 1.22) |
 | `make llm-check` | One tiny test call to each OpenRouter model (no personal data) |
 | `make ollama-check` | Is Ollama answering with `nomic-embed-text` pulled |
 | `make demo` / `make demo-clear` | Load or remove the demo postings used to check dedup and the filters |
@@ -563,6 +602,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.20.0 | 18 Nov 2026 | Claude reader (PRD 1.25, R1 to R7). Job postings are read for skills, seniority, salary, visa sponsorship, remote regions and whether a cover letter is asked by a scheduled Claude session on your Claude plan instead of OpenRouter, so reading needs no API credit. `JAP_READER=claude` (the default) stops JAP sending descriptions to OpenRouter; what the ATS states is still copied straight away. `make reader-export` gives the session a batch of unread postings (job text only, redacted and guarded; titles in your target roles first, and in disjoint shards so 8 readers can work at once); `make reader-import FILE=...` checks its fields against the extraction schema, saves the postings that pass for the description that was exported, and refreshes their jobs. `JAP_READER=openrouter` brings back JAP's own read as the fallback |
 | 0.19.2 | 18 Nov 2026 | PRD 1.26 (A6). Fix half-filled Ashby applications (JAP-11), found on Atlan's form. Every Ashby field type is read and marked required from the question's title: Yes/No and multiple-choice radios, the location typeahead (typed into, closest place picked) and checkboxes. Each Yes/No button answer is clicked under its own question (the visa question's "No" had landed on "eligible to work"). A phone on a form with no country picker gets its country code. Just before Submit the form is read again, and an empty required field, a choice showing another answer or a CAPTCHA stops it with the reason. A picture puzzle is never solved: JAP fills the form, stops before Submit and the job shows **Finish yourself: puzzle**; `make finish` opens the filled form in a visible browser on the Mac, you solve and submit, and JAP checks the confirmation and marks it Applied (or press I sent it) |
 | 0.19.1 | 18 Nov 2026 | PRD 1.24 (I2). Fix remote jobs failing Location when the model had not read them (JAP-10), as when the OpenRouter key is out of credit. The work mode and a remote job's regions now come from what the ATS states, read from the stored payload on every listing refresh: Ashby and Lever workplace type, Ashby isRemote, or a location entry saying remote ("Remote - India", or "India" beside "Remote"). Migration 0011 fills them once for the stored listings, keeping values set by hand, and filters them again. A job that says remote only in its description still needs the model |
 | 0.19.0 | 18 Nov 2026 | Claude writer (PRD 1.22, W1 to W7). The Daily run prepares the new jobs that fit in Review mode too, not only in Automatic mode: they wait at Ready for review, or at Needs you when JAP cannot write an answer itself (no AI key credit). `make writer-export` gives a scheduled Claude session the jobs at Needs you (frozen description, open questions, resume, answer bank) with name, email, phone, address and profile links replaced by placeholders, and refuses if anything personal is left; `make writer-import FILE=...` puts its answers back with the real values filled in locally, through the same step as the Needs you panel. Nothing is approved or sent by either; drafted answers are not saved to the answer bank |

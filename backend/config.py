@@ -1,6 +1,7 @@
 """Settings read from .env (see .env.example for what each one does)."""
 
 from functools import lru_cache
+from typing import Literal
 
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -25,6 +26,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://host.docker.internal:11434"
 
     jap_monthly_cost_cap_usd: float = 2.0
+    # Who reads postings for skills, work mode and the rest (I3, PRD 1.25 R1): "claude", a
+    # scheduled Claude session through make reader-export / reader-import, or "openrouter",
+    # JAP's own model call as before 1.25 (the fallback, needs a funded key).
+    jap_reader: Literal["claude", "openrouter"] = "claude"
 
     # The mailbox JAP sends from (E4): any SMTP server with a password, GoDaddy Professional
     # Email by default. A local test mailbox can take plain SMTP (SMTP_SSL=false) instead.

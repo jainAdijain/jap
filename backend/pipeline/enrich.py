@@ -4,7 +4,9 @@ Fields the ATS states directly are copied and never sent for extraction: Ashby s
 the work mode and a remote job's regions (sources/workplace.py: Ashby and Lever
 workplaceType, Ashby isRemote, a "Remote" location entry). The rest is extracted once per
 description: a posting whose extracted_hash equals its description_hash is skipped, so an
-unchanged posting costs nothing on the next run. The embedding is cached the same way and
+unchanged posting costs nothing on the next run. Who reads it is JAP_READER (PRD 1.25 R1):
+OpenRouter here, or by default the scheduled Claude reader (pipeline/claude_reader.py),
+which saves through the same save_extracted. The embedding is cached the same way and
 costs nothing anyway (Ollama on the Mac).
 """
 
@@ -44,6 +46,8 @@ class ExtractResult:
     skipped: bool
     fields: list[str]
     sent_to_model: str | None = None
+    # JAP_READER=claude: left unread for the Claude reader (PRD 1.25), nothing sent anywhere.
+    waiting_for_reader: bool = False
 
 
 async def wanted_posting(session: AsyncSession, posting_id: uuid.UUID) -> Posting | None:
@@ -56,6 +60,44 @@ async def wanted_posting(session: AsyncSession, posting_id: uuid.UUID) -> Postin
     return posting if board is not None and board.active else None
 
 
+def wanted_fields(direct: dict[str, Any]) -> list[str]:
+    """The fields still to be read from the description: those the ATS did not state."""
+    return [f for f in FIELDS if f not in direct]
+
+
+async def save_extracted(
+    session: AsyncSession,
+    posting_id: uuid.UUID,
+    description_hash: str,
+    direct: dict[str, Any],
+    read: dict[str, Any],
+) -> bool:
+    """Store what the ATS stated plus what was read (by OpenRouter or the Claude reader),
+    and mark the posting read for this description (I4). Skills are normalised here, so both
+    readers save alike. False, and nothing saved, when the description changed meanwhile."""
+    values: dict[str, Any] = {**direct, **read}
+    if "skills" in values:
+        values["skills"] = normalize_skills(values["skills"], await skill_aliases(session))
+    extracted = Extracted.model_validate({**values, "direct": sorted(direct)})
+    posting = await session.get(Posting, posting_id)
+    if posting is None or posting.description_hash != description_hash:
+        return False
+    posting.extracted = extracted.model_dump(exclude_none=True)
+    posting.extracted_hash = description_hash
+    await session.commit()
+    return True
+
+
+async def keep_direct(session: AsyncSession, posting: Posting, direct: dict[str, Any]) -> None:
+    """Claude reader (PRD 1.25 R1): copy what the ATS states now, so a remote job matches on
+    Location before it is read, but leave the posting unread (extracted_hash untouched) for
+    make reader-export. Fields read from an earlier description stay until it is read again."""
+    old = {k: v for k, v in (posting.extracted or {}).items() if k not in ("direct", *direct)}
+    extracted = Extracted.model_validate({**old, **direct, "direct": sorted(direct)})
+    posting.extracted = extracted.model_dump(exclude_none=True)
+    await session.commit()
+
+
 async def extract_posting(session: AsyncSession, posting_id: uuid.UUID) -> ExtractResult:
     posting = await wanted_posting(session, posting_id)
     if posting is None:
@@ -64,10 +106,13 @@ async def extract_posting(session: AsyncSession, posting_id: uuid.UUID) -> Extra
         return ExtractResult(skipped=True, fields=[])  # cached by description hash (I4)
     description_hash = posting.description_hash
     direct = direct_fields(posting.source, posting.raw_payload, posting.locations)
-    wanted = [f for f in FIELDS if f not in direct]
+    wanted = wanted_fields(direct)
     sent: str | None = None
-    values: dict[str, Any] = dict(direct)
+    read: dict[str, Any] = {}
     if wanted and posting.description_text.strip():
+        if get_settings().jap_reader == "claude":
+            await keep_direct(session, posting, direct)
+            return ExtractResult(skipped=False, fields=[], waiting_for_reader=True)
         profile = await session.scalar(select(Profile))
         result = await call(
             session,
@@ -83,16 +128,8 @@ async def extract_posting(session: AsyncSession, posting_id: uuid.UUID) -> Extra
             generic_redact=frozenset({"description_text"}),
         )
         sent = result.model_input
-        values.update(from_output(result.output))
-        if "skills" in values:
-            values["skills"] = normalize_skills(values["skills"], await skill_aliases(session))
-    extracted = Extracted.model_validate({**values, "direct": sorted(direct)})
-    posting = await session.get(Posting, posting_id)
-    assert posting is not None
-    if posting.description_hash == description_hash:  # not changed under us meanwhile
-        posting.extracted = extracted.model_dump(exclude_none=True)
-        posting.extracted_hash = description_hash
-        await session.commit()
+        read = from_output(result.output)
+    await save_extracted(session, posting_id, description_hash, direct, read)
     return ExtractResult(skipped=False, fields=wanted, sent_to_model=sent)
 
 

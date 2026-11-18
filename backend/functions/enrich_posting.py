@@ -36,6 +36,7 @@ async def extract_step(posting_id: str) -> dict[str, Any]:
     return {
         "skipped": result.skipped,
         "fields": result.fields,
+        "waiting_for_reader": result.waiting_for_reader,
         # Shown in the Inngest UI: what went to the model, after redaction.
         "sent_to_model": result.sent_to_model,
     }
