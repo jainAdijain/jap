@@ -86,15 +86,18 @@
       max_chars: el.maxLength > 0 ? el.maxLength : null,
     });
   }
-  // A choice made of buttons (Ashby's Yes/No questions): two or more short type="button"
-  // buttons side by side, under a question. It has no input of its own to name it, so its
-  // key is its question; form.py clicks the button whose text is the answer.
+  // A choice made of buttons (Ashby's Yes/No questions): two or more short buttons side by
+  // side, under a question. It has no input of its own to name it, so its key is its
+  // question; form.py clicks the button whose text is the answer. Ashby's buttons may carry
+  // no type attribute, and sit beside a hidden checkbox that holds the value (JAP-9).
+  const plain = (c) => c.tagName === 'BUTTON' && (c.getAttribute('type') || 'button') === 'button';
   const groups = new Set();
-  for (const b of form.querySelectorAll('button[type="button"]')) {
+  for (const b of form.querySelectorAll('button')) {
     const box = b.parentElement;
-    if (!box || groups.has(box) || !shown(b)) continue;
-    const buttons = [...box.children].filter((c) => c.tagName === 'BUTTON' && c.type === 'button');
-    if (buttons.length < 2 || buttons.length !== box.children.length) continue;
+    if (!plain(b) || !box || groups.has(box) || !shown(b)) continue;
+    const buttons = [...box.children].filter(plain);
+    const rest = [...box.children].filter((c) => !plain(c));
+    if (buttons.length < 2 || rest.some((c) => c.tagName !== 'INPUT' || shown(c))) continue;
     const options = buttons.map((x) => text(x));
     if (options.some((o) => !o || o.length > 30)) continue;
     groups.add(box);
@@ -103,7 +106,10 @@
     seen.add('buttons:' + label);
     out.push({
       key: 'buttons:' + label, type: 'radio', widget: 'buttons', label,
-      required: !!box.closest('[aria-required="true"]'), options, max_chars: null,
+      // Ashby marks a required question by a class on its title, with the * drawn by CSS
+      required: !!box.closest('[aria-required="true"]')
+        || !!box.parentElement?.querySelector(':scope > label[class*="required" i]'),
+      options, max_chars: null,
     });
   }
   const captcha = [...document.querySelectorAll(

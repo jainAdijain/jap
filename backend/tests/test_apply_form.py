@@ -20,6 +20,7 @@ from pipeline.apply.form import (
     FormError,
     FormField,
     Upload,
+    confirmed_after,
     read_form,
     submit_form,
     to_fields,
@@ -312,6 +313,39 @@ async def test_yes_no_buttons_are_a_question_and_get_clicked(site: str, tmp_path
     )  # fmt: skip
     assert result.clicked and result.rejected and _Handler.posts == []
     assert result.error is not None and "This field is required" in result.error
+
+
+def test_thanks_already_on_the_page_is_no_confirmation() -> None:
+    """JAP-8: Ashby's banner thanks you for your interest before anything is sent."""
+    banner = "Thanks for your interest and we appreciate your understanding!"
+    assert not confirmed_after(banner, banner + " Submitting...")
+    assert confirmed_after(banner, "Application submitted. Thanks for applying!")
+    assert confirmed_after("", "Thank you for applying!")
+
+
+@needs_browser
+async def test_ashby_yes_no_without_a_type_and_a_banner(site: str, tmp_path: Path) -> None:
+    """JAP-8 and JAP-9, as on Supabase's Ashby form: the Yes/No question is read and
+    clicked, and a press that changes nothing is not taken for a confirmation."""
+    read = await read_form(f"{site}/ashby_yesno.html")
+    q = next(f for f in read.fields if f.widget == "buttons")
+    assert (q.label, q.type, q.required, q.options) == (
+        "Are you over the age of 18?", "radio", True, ["Yes", "No"],
+    )  # fmt: skip
+    assert [f.label for f in read.fields] == ["Name", q.label]
+
+    unanswered = await submit_form(
+        f"{site}/ashby_yesno.html", read.fields, {"_systemfield_name": "Asha Rao"}, {},
+        tmp_path / "s1.png", tmp_path / "t1.zip",
+    )  # fmt: skip
+    assert unanswered.clicked and not unanswered.confirmed
+
+    answered = await submit_form(
+        f"{site}/ashby_yesno.html", read.fields,
+        {"_systemfield_name": "Asha Rao", q.key: "Yes"}, {},
+        tmp_path / "s2.png", tmp_path / "t2.zip",
+    )  # fmt: skip
+    assert answered.confirmed, answered.error
 
 
 @needs_browser

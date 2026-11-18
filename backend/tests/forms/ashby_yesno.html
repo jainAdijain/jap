@@ -1,0 +1,36 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><title>AI Tooling</title></head><body>
+<!-- Like Supabase's Ashby form (JAP-8, JAP-9): no <form> element, a banner that thanks you
+     before anything is sent, and a required Yes/No question made of two buttons with no
+     type attribute beside a hidden checkbox. Submit does nothing until it is answered, the
+     spinner just turns; once answered the page says the application was submitted. -->
+<div class="ashby-application-form-container">
+  <div class="banner">Heads up on application limits. Thanks for your interest and we appreciate your understanding!</div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_required_x ashby-application-form-question-title" for="_systemfield_name">Name</label>
+    <div><input id="_systemfield_name" name="_systemfield_name" required></div>
+  </div>
+  <div class="ashby-application-form-field-entry">
+    <label class="_heading _required_f7cvd_91 ashby-application-form-question-title" for="q18">Are you over the age of 18?</label>
+    <div class="ashby-application-form-input-yesno">
+      <button class="ashby-application-form-input-yesno-option" aria-pressed="false" data-option="yes">Yes</button>
+      <button class="ashby-application-form-input-yesno-option" aria-pressed="false" data-option="no">No</button>
+      <input type="checkbox" name="q18" tabindex="-1" style="display: none">
+    </div>
+  </div>
+  <button type="submit" class="ashby-application-form-submit-button">Submit Application</button>
+</div>
+<script>
+  let answered = false;
+  for (const b of document.querySelectorAll('.ashby-application-form-input-yesno-option')) {
+    b.addEventListener('click', () => { answered = true; b.setAttribute('aria-pressed', 'true'); });
+  }
+  document.querySelector('.ashby-application-form-submit-button').addEventListener('click', (e) => {
+    e.target.textContent = 'Submitting...';
+    if (!answered) return;
+    setTimeout(() => {
+      document.querySelector('.ashby-application-form-container').innerHTML =
+        '<h2>Application submitted</h2><p>Thanks for applying! Your application has been received.</p>';
+    }, 500);
+  });
+</script></body></html>
