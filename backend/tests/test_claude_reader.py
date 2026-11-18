@@ -133,13 +133,26 @@ async def test_unread_postings_go_through_export_and_import(
     assert again[0].endswith("not saved (already read)")
 
 
-async def test_export_comes_in_batches(
+async def test_export_comes_in_batches_my_roles_first_and_in_shards(
     db: str, sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    jobs = [b.job(b.GREENHOUSE_JOB, id=8806482000 + i, offices=[]) for i in range(3)]
+    sql.execute("INSERT INTO profile (target_roles) VALUES ('{backend engineer}')")
+    titles = ["Commercial Policy Lead", "Account Executive", "Senior Backend Engineer"]
+    jobs = [
+        b.job(b.GREENHOUSE_JOB, id=8806482000 + i, title=t, offices=[])
+        for i, t in enumerate(titles)
+    ]
     b.fake_boards(monkeypatch, {f"{GH}/discord/jobs": b.greenhouse(*jobs)})
     await fetch_step(await _board())
     async with get_sessionmaker()() as session:
         out = await claude_reader.export(session, limit=2)
-    assert out["unread_total"] == 3 and len(out["postings"]) == 2
+        shards = [await claude_reader.export(session, 50, (i, 3)) for i in (1, 2, 3)]
+    assert out["unread_total"] == 3 and out["unread_in_my_roles"] == 1
+    first, second = (p["title"] for p in out["postings"])
+    assert first == "Senior Backend Engineer" and second != first  # my role first
     assert "work_mode" in out["postings"][0]["keys"]  # the ATS said nothing this time
+    ids = [p["posting_id"] for s in shards for p in s["postings"]]
+    assert sorted(ids) == sorted({*ids}) and len(ids) == 3  # disjoint, and nothing left out
+    assert claude_reader.parse_shard("3/8") == (3, 8)
+    with pytest.raises(SystemExit):
+        claude_reader.parse_shard("9/8")

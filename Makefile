@@ -146,8 +146,8 @@ email-test: ## Send one test email from the mailbox in .env: make email-test TO=
 code-mail-check: ## Log in to the mailbox over IMAP and count Greenhouse emails (security codes)
 	$(COMPOSE) exec app python -m pipeline.apply.security_code
 
-reader-export: ## One batch of unread postings for the Claude reader, redacted, as JSON (PRD 1.25): LIMIT=25
-	@$(COMPOSE) exec -T app python -m pipeline.claude_reader export --limit $(or $(LIMIT),25)
+reader-export: ## One batch of unread postings for the Claude reader, redacted, as JSON (PRD 1.25): LIMIT=50 SHARD=1/8
+	@$(COMPOSE) exec -T app python -m pipeline.claude_reader export --limit $(or $(LIMIT),50) --shard $(or $(SHARD),1/1)
 
 reader-import: ## The Claude reader's fields back in, checked: make reader-import FILE=fields.json
 	@test -f "$(FILE)" || { echo "Usage: make reader-import FILE=fields.json"; exit 1; }

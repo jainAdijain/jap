@@ -2,13 +2,14 @@
 
 With JAP_READER=claude (the default) JAP no longer sends job descriptions to OpenRouter for
 reading (I3). A scheduled Claude session on Aditya's Claude plan reads them instead, a batch
-at a time, 5 minutes after the daily search and before the writer (PRD 1.22). It never reads
-the database. `export` gives it one batch of unread postings: open, company followed, and
-description changed since it was last read (the I4 hash). Each comes with the fields still
-wanted (those the ATS did not state, sources/workplace.py), its title, locations and
-description, redacted as llm.call() redacts the extract prompt, and the rules of that prompt
-(llm/prompts/extract.v1.md) so both readers read alike. guard() refuses the export if
-anything personal is left. Nothing about me is in it: no resume, profile or answers.
+at a time, in parallel shards for a big backlog, 5 minutes after the daily search and before
+the writer (PRD 1.22). It never reads the database. `export` gives it one batch of unread
+postings: open, company followed, and description changed since it was last read (the I4
+hash). Each comes with the fields still wanted (those the ATS did not state,
+sources/workplace.py), its title, locations and description, redacted as llm.call() redacts
+the extract prompt, and the rules of that prompt (llm/prompts/extract.v1.md) so both readers
+read alike. guard() refuses the export if anything personal is left. Nothing about me is in
+it: no resume, profile or answers.
 
 `import` checks each posting's fields against the extraction schema (schemas/extract.py):
 every wanted field, nothing else, only allowed values. A posting that fails, or whose
@@ -16,7 +17,7 @@ description changed since the export, is not saved and stays unread for the next
 that passes is saved through the same step as OpenRouter's reads (enrich.save_extracted),
 and its listing is refreshed and matched again. Nothing here applies or sends.
 
-    python -m pipeline.claude_reader export [--limit 25]   > postings.json
+    python -m pipeline.claude_reader export [--limit 50] [--shard 3/8]  > postings.json
     python -m pipeline.claude_reader import                < fields.json
 
 fields.json: {"<posting id>": {"description_hash": "<from the export>", "skills": [...], ...}}
@@ -46,9 +47,10 @@ from pipeline.enrich import (
 )
 from pipeline.matching import refilter_from_profile
 from pipeline.resume import sensitive_from_profile
+from pipeline.runs import in_scope, role_matcher
 from schemas.extract import FIELDS, from_output, output_model
 
-BATCH = 25
+BATCH = 50
 IDS = ("posting_id", "description_hash")
 
 REPLY = (
@@ -106,27 +108,65 @@ def _unread() -> Any:
     )
 
 
-async def export(session: AsyncSession, limit: int = BATCH) -> dict[str, Any]:
+def in_shard(posting_id: uuid.UUID, shard: tuple[int, int]) -> bool:
+    """Shard i of n (1-based): parallel readers each take a disjoint share of the postings."""
+    i, n = shard
+    return posting_id.int % n == i - 1
+
+
+def parse_shard(text: str) -> tuple[int, int]:
+    i, _, n = text.partition("/")
+    shard = (int(i), int(n))
+    if not 1 <= shard[0] <= shard[1]:
+        raise SystemExit(f"--shard is i/n with 1 <= i <= n, not {text}")
+    return shard
+
+
+async def export(
+    session: AsyncSession, limit: int = BATCH, shard: tuple[int, int] = (1, 1)
+) -> dict[str, Any]:
+    """One batch from this shard. Postings whose title is one of my target roles come
+    first, so the jobs I can be listed for are read in the first minutes of a big backlog
+    (R3); the rest follow, oldest first."""
     profile = await session.scalar(select(Profile))
     values = sensitive_from_profile(profile)
-    unread = int(await session.scalar(select(func.count()).where(*_unread())) or 0)
     run_active = (
         await session.scalar(select(Run.id).where(Run.status.in_(("queued", "running"))).limit(1))
         is not None
     )
-    rows = await session.scalars(
-        select(Posting).where(*_unread()).order_by(Posting.first_seen_at, Posting.id)
-    )
+    matcher = role_matcher(profile.target_roles if profile else None)
+    heads = (
+        await session.execute(
+            select(Posting.id, Posting.title_raw)
+            .where(*_unread())
+            .order_by(Posting.first_seen_at, Posting.id)
+        )
+    ).all()
+    mine = {pid for pid, title in heads if matcher is not None and in_scope(title, matcher)}
+    order = [pid for pid, _ in heads if pid in mine] + [pid for pid, _ in heads if pid not in mine]
+    order = [pid for pid in order if in_shard(pid, shard)]
     batch: list[dict[str, Any]] = []
-    for posting in rows:
-        direct = direct_fields(posting.source, posting.raw_payload, posting.locations)
-        wanted = wanted_fields(direct)
-        if not wanted:
-            continue  # the ATS stated everything: enrich saves it without a reader
-        batch.append(build_posting(posting, wanted, values))
+    for start in range(0, len(order), limit):
+        chunk = order[start : start + limit]
+        rows = {
+            p.id: p for p in await session.scalars(select(Posting).where(Posting.id.in_(chunk)))
+        }
+        for pid in chunk:
+            posting = rows[pid]
+            direct = direct_fields(posting.source, posting.raw_payload, posting.locations)
+            wanted = wanted_fields(direct)
+            if not wanted:
+                continue  # the ATS stated everything: enrich saves it without a reader
+            batch.append(build_posting(posting, wanted, values))
+            if len(batch) >= limit:
+                break
         if len(batch) >= limit:
             break
-    return build_export(batch, unread, run_active, values)
+    out = build_export(batch, len(heads), run_active, values)
+    out["unread_in_my_roles"] = len(mine)
+    out["unread_in_shard"] = len(order)
+    out["shard"] = f"{shard[0]}/{shard[1]}"
+    return out
 
 
 class NotSaved(Exception):
@@ -203,13 +243,18 @@ async def _main(argv: list[str]) -> None:
     command = argv[0] if argv else ""
     async with get_sessionmaker()() as session:
         if command == "export":
-            limit = int(argv[2]) if len(argv) > 2 and argv[1] == "--limit" else BATCH
-            print(json.dumps(await export(session, max(1, limit)), ensure_ascii=False, indent=1))
+            opts = dict(zip(argv[1::2], argv[2::2], strict=False))
+            limit = max(1, int(opts.get("--limit") or BATCH))
+            shard = parse_shard(opts.get("--shard") or "1/1")
+            out = await export(session, limit, shard)
+            print(json.dumps(out, ensure_ascii=False, indent=1))
         elif command == "import":
             for line in await import_fields(session, json.loads(sys.stdin.read())):
                 print(line)
         else:
-            raise SystemExit("usage: python -m pipeline.claude_reader export [--limit N]|import")
+            raise SystemExit(
+                "usage: python -m pipeline.claude_reader export [--limit N] [--shard i/n] | import"
+            )
 
 
 if __name__ == "__main__":

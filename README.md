@@ -294,13 +294,17 @@ in the Claude desktop app 5 minutes after the Daily run, before the Claude write
 runs, a new job shows Skills not stated and, unless the ATS says, Work mode unclear, so
 Automatic mode does not send it.
 
-- `make ENV=live reader-export` prints one batch (`LIMIT=25` by default) of unread postings
-  as JSON: open, company followed, description changed since it was last read. Each has its
+- `make ENV=live reader-export` prints one batch (`LIMIT=50` by default) of unread postings
+  as JSON: open, company followed, description changed since it was last read. Postings
+  whose title is one of your target roles come first, so the jobs that can be listed for you
+  are read in the first minutes of a big backlog. `SHARD=3/8` takes only the third of eight
+  disjoint shares, so eight readers can work at once without overlap. Each has its
   id, description hash, title, locations, description (cut at 12,000 characters) and the
   keys still wanted, with the extract prompt's rules and the field schema. Descriptions are
   redacted like any model call, the export is refused if anything personal is left, and
   nothing about you (resume, profile, answers) is in it. `run_active` says a search is
-  still running; `unread_total` how many are left.
+  still running; `unread_total`, `unread_in_my_roles` and `unread_in_shard` how many are
+  left.
 - `make ENV=live reader-import FILE=fields.json` takes `{"<posting id>": {"description_hash":
   "...", "skills": [...], ...}}` and checks each posting against the extraction schema:
   every wanted key, nothing else, only allowed values. A posting that fails, or whose
@@ -308,7 +312,10 @@ Automatic mode does not send it.
   saved as if JAP had read it, and its job's skills, work mode and match are refreshed.
   The last line says `saved N of M`. Nothing is applied or sent.
 
-The task repeats export, read, import until a batch is empty or saves nothing.
+The task starts 8 workers, one per shard; each repeats export, read, import until its
+batch is empty or saves nothing. The first read of a large backlog (thousands of postings)
+is a one-off and can reach the Claude plan's usage limit; what is left is read on the next
+run. After that only new or changed postings are read.
 `JAP_READER=openrouter` is the fallback: JAP reads each posting itself again, with a funded
 key.
 
@@ -571,7 +578,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
-| 0.20.0 | 18 Nov 2026 | Claude reader (PRD 1.25, R1 to R7). Job postings are read for skills, seniority, salary, visa sponsorship, remote regions and whether a cover letter is asked by a scheduled Claude session on your Claude plan instead of OpenRouter, so reading needs no API credit. `JAP_READER=claude` (the default) stops JAP sending descriptions to OpenRouter; what the ATS states is still copied straight away. `make reader-export` gives the session a batch of unread postings (job text only, redacted and guarded); `make reader-import FILE=...` checks its fields against the extraction schema, saves the postings that pass for the description that was exported, and refreshes their jobs. `JAP_READER=openrouter` brings back JAP's own read as the fallback |
+| 0.20.0 | 18 Nov 2026 | Claude reader (PRD 1.25, R1 to R7). Job postings are read for skills, seniority, salary, visa sponsorship, remote regions and whether a cover letter is asked by a scheduled Claude session on your Claude plan instead of OpenRouter, so reading needs no API credit. `JAP_READER=claude` (the default) stops JAP sending descriptions to OpenRouter; what the ATS states is still copied straight away. `make reader-export` gives the session a batch of unread postings (job text only, redacted and guarded; titles in your target roles first, and in disjoint shards so 8 readers can work at once); `make reader-import FILE=...` checks its fields against the extraction schema, saves the postings that pass for the description that was exported, and refreshes their jobs. `JAP_READER=openrouter` brings back JAP's own read as the fallback |
 | 0.19.1 | 18 Nov 2026 | PRD 1.24 (I2). Fix remote jobs failing Location when the model had not read them (JAP-10), as when the OpenRouter key is out of credit. The work mode and a remote job's regions now come from what the ATS states, read from the stored payload on every listing refresh: Ashby and Lever workplace type, Ashby isRemote, or a location entry saying remote ("Remote - India", or "India" beside "Remote"). Migration 0011 fills them once for the stored listings, keeping values set by hand, and filters them again. A job that says remote only in its description still needs the model |
 | 0.19.0 | 18 Nov 2026 | Claude writer (PRD 1.22, W1 to W7). The Daily run prepares the new jobs that fit in Review mode too, not only in Automatic mode: they wait at Ready for review, or at Needs you when JAP cannot write an answer itself (no AI key credit). `make writer-export` gives a scheduled Claude session the jobs at Needs you (frozen description, open questions, resume, answer bank) with name, email, phone, address and profile links replaced by placeholders, and refuses if anything personal is left; `make writer-import FILE=...` puts its answers back with the real values filled in locally, through the same step as the Needs you panel. Nothing is approved or sent by either; drafted answers are not saved to the answer bank |
 | 0.18.3 | 18 Nov 2026 | Fix two faults found sending the first Supabase (Ashby) applications. A page that already thanked you before Submit counted as a confirmation (JAP-8): Ashby shows "Thanks for your interest" in a banner on every form, so JAP called a job Applied while the Submit button was still spinning. Only words of thanks the page did not show before Submit count now, and JAP waits for them. Ashby's Yes/No questions were not read (JAP-9): their buttons have no type attribute and sit beside a hidden checkbox, so a required question such as "Are you over the age of 18?" went unanswered. They are read now, marked required from the question's title, and clicked like other button questions |
