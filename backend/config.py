@@ -70,6 +70,16 @@ class Settings(BaseSettings):
 
     # Apply (A1): at least this many seconds between two submissions.
     jap_apply_gap_seconds: int = 30
+    # Up to this many seconds more on top of the gap, different for each job (A1, PRD 1.29).
+    jap_apply_jitter_seconds: int = 30
+    # Automatic at volume (V3 to V7, PRD 1.29): at most this many attempts a day at one
+    # company, at most this many submits a day on one ATS (Greenhouse, Lever, Ashby) with at
+    # least this gap between two on the same ATS, and how many jobs past the daily cap a run
+    # picks so held or flagged jobs do not leave the day short.
+    jap_per_company_day: int = 2
+    jap_per_ats_day: int = 8
+    jap_ats_gap_seconds: int = 300
+    jap_auto_extra_picks: int = 5
 
     # Sign-in (PRD S1 to S5). Secure cookies need HTTPS: true on dev, test and prod hosts.
     jap_cookie_secure: bool = False
