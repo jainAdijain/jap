@@ -205,6 +205,7 @@ async def test_edit_skip_and_undo(
     assert undone.json()["status"] == "not_applied" and undone.json()["apply_blocked"] is None
 
 
+@pytest.mark.usefixtures("openrouter_writer")
 async def test_required_free_text_is_drafted_from_the_jd(
     setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
     api: httpx.AsyncClient,
@@ -235,6 +236,7 @@ def test_answer_prompt_asks_for_json() -> None:
         assert "JSON" in path.read_text(), f"{path.name} doesn't ask for JSON"
 
 
+@pytest.mark.usefixtures("openrouter_writer")
 async def test_drafted_answer_in_a_code_fence_still_reaches_review(
     setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
 ) -> None:  # fmt: skip
@@ -249,6 +251,36 @@ async def test_drafted_answer_in_a_code_fence_still_reaches_review(
     assert stub.bodies[0]["model"] == "anthropic/claude-sonnet-4.5"  # the writer slot
 
 
+async def test_claude_writer_answers_free_text_so_no_model_is_asked(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+    api: httpx.AsyncClient,
+) -> None:  # fmt: skip
+    """JAP_WRITER=claude (the default, PRD 1.27 W10): a free-text question never goes to
+    OpenRouter; it waits at Needs input for the Claude writer and is not a failed draft."""
+    _fake_form(monkeypatch, [*FORM, WHY])
+    stub = Stub([])  # any model call would fail the test
+    monkeypatch.setattr(client, "chat", stub)
+    run = sql.execute(
+        "INSERT INTO run (trigger, mode, status, counts) VALUES ('manual', 'find_and_apply',"
+        " 'running', '{}') RETURNING id"
+    ).fetchone()
+    assert run is not None
+    async with get_sessionmaker()() as session:
+        app_id = await flow.create_attempt(session, setup["listing"], str(run[0]))
+        url = await flow.snapshot(session, app_id)
+        await flow.read_and_save(session, app_id, url)
+        await flow.map_fields(session, app_id)
+    assert stub.bodies == []
+    assert _status(sql, app_id)[0] == "needs_input"
+    app = (await api.get(f"/api/applications/{app_id}")).json()
+    (q,) = app["pending"]
+    assert q["key"] == "why" and q["reason"] == "Waiting for the Claude writer"
+    assert not q.get("draft_failed")
+    counts = sql.execute("SELECT counts FROM run WHERE id = %s", (run[0],)).fetchone()
+    assert counts is not None and "draft_failed" not in counts[0]
+
+
+@pytest.mark.usefixtures("openrouter_writer")
 async def test_writer_failure_shows_on_the_question_and_the_run(
     setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
     api: httpx.AsyncClient,
@@ -719,6 +751,7 @@ async def test_confirmation_email_once(
     assert row is not None and row[0] is not None  # E3, and allowed on a frozen row
 
 
+@pytest.mark.usefixtures("openrouter_writer")
 async def test_out_of_credits_asks_the_model_once_per_form(
     setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:

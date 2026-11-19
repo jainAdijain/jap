@@ -30,6 +30,10 @@ class Settings(BaseSettings):
     # scheduled Claude session through make reader-export / reader-import, or "openrouter",
     # JAP's own model call as before 1.25 (the fallback, needs a funded key).
     jap_reader: Literal["claude", "openrouter"] = "claude"
+    # Who drafts free-text form answers (PRD 1.27 W10): "claude", the scheduled Claude writer
+    # through make writer-export / writer-import, so such a question waits at Needs you, or
+    # "openrouter", JAP's own model call as before 1.27 (the fallback, needs a funded key).
+    jap_writer: Literal["claude", "openrouter"] = "claude"
 
     # The mailbox JAP sends from (E4): any SMTP server with a password, GoDaddy Professional
     # Email by default. A local test mailbox can take plain SMTP (SMTP_SSL=false) instead.

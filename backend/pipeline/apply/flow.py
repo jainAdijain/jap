@@ -304,6 +304,10 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
         elif f.type in CHOICE:
             pending.append({"key": f.key, "label": f.label, "options": f.options,
                             "reason": "A required choice with no saved answer"})  # fmt: skip
+        elif rules.is_free_text(f) and get_settings().jap_writer == "claude":
+            # W10: never sent to OpenRouter; the Claude writer answers it at Needs you.
+            pending.append({"key": f.key, "label": f.label,
+                            "reason": "Waiting for the Claude writer"})  # fmt: skip
         elif rules.is_free_text(f) and no_credits is not None:
             # Out of credits earlier in this form: don't ask again for every question.
             pending.append({"key": f.key, "label": f.label, "draft_failed": True,
