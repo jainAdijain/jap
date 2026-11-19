@@ -3,6 +3,7 @@
 import hashlib
 import io
 import re
+import uuid
 from pathlib import Path
 from typing import Any
 
@@ -11,8 +12,9 @@ from pypdf import PdfReader
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import Profile, SkillAlias
-from llm.redact import Sensitive, strip_placeholders
+from database.models import Profile, ResumeVersion, SkillAlias
+from llm.redact import Sensitive, find_links, strip_placeholders
+from schemas.resume import ParsedResume
 
 PDF = "application/pdf"
 DOCX = "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
@@ -111,3 +113,21 @@ def normalize_skills(skills: list[str], aliases: dict[str, str]) -> list[str]:
         if skill and skill not in out:
             out.append(skill)
     return out
+
+
+async def save_parsed(
+    session: AsyncSession, version_id: uuid.UUID, parsed: ParsedResume, resume_text: str
+) -> list[str]:
+    """Keep what a reader found in a resume as suggestions for me (T1), whoever read it:
+    JAP's own model call or the Claude writer (W12). Returns the skills; commits."""
+    skills = normalize_skills(parsed.skills, await skill_aliases(session))
+    version = await session.get(ResumeVersion, version_id)
+    assert version is not None
+    version.parsed = {
+        "skills": skills,
+        "titles": [t for t in parsed.titles if "[" not in t],
+        "years_experience": parsed.years_experience,
+        "links": find_links(resume_text),
+    }
+    await session.commit()
+    return skills

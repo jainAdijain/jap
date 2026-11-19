@@ -23,6 +23,7 @@ from sqlalchemy import delete, func, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import get_settings
 from database.models import (
     Company,
     CompanyAlias,
@@ -424,19 +425,16 @@ async def settle_duplicates(session: AsyncSession) -> Settled:
     the AI limit, a broken reply) stays open and is two jobs until the next run tries again.
     """
     out = Settled()
-    pairs = list(
-        await session.scalars(
-            select(PossibleDuplicate).where(
-                PossibleDuplicate.decision == "open", PossibleDuplicate.kind == "listing"
-            )
-        )
-    )
+    pairs = await open_pairs(session)
+    if get_settings().jap_reader == "claude":
+        # R8 (PRD 1.28): the Claude reader settles them (reader-export / reader-import).
+        out.undecided = len(pairs)
+        return out
     for dup in pairs:
-        a, b = await session.get(Listing, dup.a_id), await session.get(Listing, dup.b_id)
-        pa = await session.get(Posting, a.primary_posting_id) if a else None
-        pb = await session.get(Posting, b.primary_posting_id) if b else None
-        if pa is None or pb is None:
+        both = await pair_postings(session, dup)
+        if both is None:
             continue
+        pa, pb = both
         try:
             result = await call(
                 session,
@@ -457,19 +455,43 @@ async def settle_duplicates(session: AsyncSession) -> Settled:
             log.warning("possible duplicate %s left open: %s", dup.id, exc)
             out.undecided += 1
             continue
-        dup.scores = {**dup.scores, "same": result.output.same, "reason": result.output.reason}
-        await session.flush()
-        try:
-            decision = "merged" if result.output.same else "kept_apart"
-            await decide_duplicate(session, dup.id, decision)
-        except DedupConflict as exc:  # both have applications: never merged away
-            log.warning("possible duplicate %s kept apart: %s", dup.id, exc)
-            dup.decision = "kept_apart"
-            await session.commit()
-            out.kept_apart += 1
-            continue
-        if result.output.same:
+        if await apply_same(session, dup, result.output) == "merged":
             out.merged += 1
         else:
             out.kept_apart += 1
     return out
+
+
+async def open_pairs(session: AsyncSession) -> list[PossibleDuplicate]:
+    return list(
+        await session.scalars(
+            select(PossibleDuplicate)
+            .where(PossibleDuplicate.decision == "open", PossibleDuplicate.kind == "listing")
+            .order_by(PossibleDuplicate.id)
+        )
+    )
+
+
+async def pair_postings(
+    session: AsyncSession, dup: PossibleDuplicate
+) -> tuple[Posting, Posting] | None:
+    """The two listings' primary postings, which the decision is made on."""
+    a, b = await session.get(Listing, dup.a_id), await session.get(Listing, dup.b_id)
+    pa = await session.get(Posting, a.primary_posting_id) if a else None
+    pb = await session.get(Posting, b.primary_posting_id) if b else None
+    return None if pa is None or pb is None else (pa, pb)
+
+
+async def apply_same(session: AsyncSession, dup: PossibleDuplicate, answer: SameJob) -> str:
+    """Merge into the older listing when same, else keep apart, with the reason in scores.
+    A pair with an application on both sides is never merged away. Returns the decision."""
+    dup.scores = {**dup.scores, "same": answer.same, "reason": answer.reason}
+    await session.flush()
+    try:
+        await decide_duplicate(session, dup.id, "merged" if answer.same else "kept_apart")
+    except DedupConflict as exc:  # both have applications: never merged away
+        log.warning("possible duplicate %s kept apart: %s", dup.id, exc)
+        dup.decision = "kept_apart"
+        await session.commit()
+        return "kept_apart"
+    return "merged" if answer.same else "kept_apart"

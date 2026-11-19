@@ -499,6 +499,14 @@ async def write_cover_letter(session: AsyncSession, app_id: str) -> dict[str, An
     if not fields or app.cover_letter_text:
         await settle(session, app, pending)
         return {"status": app.status, "letter": "not needed"}
+    if get_settings().jap_writer == "claude":
+        # W11 (PRD 1.28): the Claude writer writes it at Needs input, never OpenRouter.
+        f = fields[0]
+        waiting = "Waiting for the Claude writer"
+        pending.append({"key": f["key"], "label": f["label"], "reason": waiting,
+                        "cover_letter": True})  # fmt: skip
+        await settle(session, app, pending)
+        return {"status": app.status, "letter": "waiting for the Claude writer"}
     profile = await session.scalar(select(Profile))
     listing = await session.get(Listing, app.listing_id)
     resume = await session.get(ResumeVersion, app.resume_version_id)

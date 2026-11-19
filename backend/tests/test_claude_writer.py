@@ -101,3 +101,89 @@ async def test_export_and_import_through_needs_input(
 
 async def _no_credit(*args: Any, **kwargs: Any) -> Any:
     raise client.OutOfCredits("OpenRouter 402: out of credits")
+
+
+async def test_the_claude_writer_writes_the_required_cover_letter(
+    db: str, sql: psycopg.Connection[Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    events: list[tuple[str, dict[str, Any]]],
+) -> None:  # fmt: skip
+    """JAP_WRITER=claude (PRD 1.28 W11): no model writes the letter; it waits at Needs input,
+    goes out marked cover_letter with JAP's letter rules, and comes back as the letter."""
+    from pipeline.apply import flow
+    from tests.test_apply import _listing, _profile, _resume
+    from tests.test_cover_letter import LETTER_TEXT
+    from tests.test_llm_call import Stub
+
+    _profile(sql)
+    _resume(sql, tmp_path)
+    listing = _listing(sql)
+    stub = Stub([])  # any model call would fail the test
+    monkeypatch.setattr(client, "chat", stub)
+    _fake_form(monkeypatch, [*FORM, LETTER_TEXT])
+    async with get_sessionmaker()() as session:
+        app_id = await flow.create_attempt(session, listing, None)
+        url = await flow.snapshot(session, app_id)
+        await flow.read_and_save(session, app_id, url)
+        assert (await flow.map_fields(session, app_id)).status == "cover_letter"
+        written = await flow.write_cover_letter(session, app_id)
+    assert written["letter"] == "waiting for the Claude writer" and stub.bodies == []
+    assert _status(sql, app_id)[0] == "needs_input"
+
+    async with get_sessionmaker()() as session:
+        out = await claude_writer.export(session)
+    [q] = out["jobs"][0]["questions"]
+    assert q["key"] == "cover" and q["cover_letter"] is True
+    assert q["why_open"] == "Waiting for the Claude writer"
+    assert "Use only facts in <resume>" in out["cover_letter_rules"]
+    assert "Return JSON" not in out["cover_letter_rules"]
+
+    async def fake_pdf(path: Path, text: str, **kwargs: Any) -> Path:
+        return path  # the PDF itself is tested in test_cover_letter.py
+
+    monkeypatch.setattr(flow, "write_pdf", fake_pdf)
+    letter = "Acme's payment work fits what I build.\n\nRegards,\n[NAME]"
+    async with get_sessionmaker()() as session:
+        lines = await claude_writer.import_answers(session, {app_id: {"cover": letter}})
+    assert lines == [f"{app_id}: preparing"]
+    row = sql.execute(
+        "SELECT cover_letter_text, cover_letter_path FROM application WHERE id = %s", (app_id,)
+    ).fetchone()
+    assert row is not None and row[0].endswith("Regards,\nAsha Rao") and row[1]
+
+
+async def test_the_claude_writer_reads_a_new_resume(
+    api: httpx.AsyncClient, sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    """JAP_WRITER=claude (PRD 1.28 W12): no model reads the resume; it shows Reading until
+    the writer's skills come back through writer-import, then the suggestions wait for me."""
+    from functions.parse_resume import extract_step, parse_step
+    from tests.fixtures import RESUME, pdf_bytes
+    from tests.test_llm_call import Stub
+
+    sql.execute("INSERT INTO skill_alias VALUES ('postgresql', 'postgres')")
+    await api.put("/api/profile", json={"full_name": "Asha Rao", "email": "asha.rao@example.com"})
+    stub = Stub([])
+    monkeypatch.setattr(client, "chat", stub)
+    files = {"file": ("resume.pdf", pdf_bytes(RESUME), "application/octet-stream")}
+    version = (await api.post("/api/resumes", files=files)).json()
+    await extract_step(version["id"])
+    assert (await parse_step(version["id"]))["waiting_for_writer"] is True
+    assert stub.bodies == []
+    assert (await api.get("/api/resumes")).json()[0]["status"] == "parsing"
+
+    async with get_sessionmaker()() as session:
+        out = await claude_writer.export(session)
+    [resume] = out["resumes"]
+    assert resume["resume_id"] == version["id"] and "FastAPI" in resume["text"]
+    assert "Asha" not in json.dumps(out) and "years_experience" in out["resume_rules"]
+    key = f"resume:{version['id']}"
+    reply = {"skills": ["Python", "PostgreSQL"], "titles": ["Backend Engineer"],
+             "years_experience": 9}  # fmt: skip
+    async with get_sessionmaker()() as session:
+        lines = await claude_writer.import_answers(session, {key: reply})
+        again = await claude_writer.import_answers(session, {key: reply})
+        assert (await claude_writer.export(session))["resumes"] == []
+    assert lines == [f"{key}: read (2 skills)"]
+    assert again == [f"{key}: not read (already read, or gone)"]
+    parsed = (await api.get("/api/resumes")).json()[0]
+    assert parsed["status"] == "parsed" and parsed["suggested_skills"] == ["python", "postgres"]

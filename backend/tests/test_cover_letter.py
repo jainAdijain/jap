@@ -49,6 +49,10 @@ CLAIMS_BAD = {
     ]
 }
 
+# JAP writes the letter itself (JAP_WRITER=openrouter); the Claude writer is in
+# test_claude_writer.py.
+pytestmark = pytest.mark.usefixtures("openrouter_writer")
+
 
 def _letter(text: str = GOOD) -> str:
     return json.dumps({"letter": text, "claims": [{"text": "x", "resume_evidence": "x"}]})

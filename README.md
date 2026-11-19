@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.21.0 (Claude writer only: JAP no longer asks OpenRouter to draft form answers), 19 Nov 2026.**
+**Version 0.22.0 (everything on Claude: duplicates, cover letters and resumes too), 19 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -334,6 +334,11 @@ Automatic mode does not send it.
   description changed since the export, is not saved and stays unread; one that passes is
   saved as if JAP had read it, and its job's skills, work mode and match are refreshed.
   The last line says `saved N of M`. Nothing is applied or sent.
+- Possible duplicates (PRD 1.28, R8): with `JAP_READER=claude` JAP sends no pair to
+  OpenRouter. Shard 1's export also carries `pairs` (both jobs' title, locations and
+  redacted description) with `pair_instructions`, the rules of JAP's same-job prompt;
+  answer each under `"pair:<pair id>": {"same": true or false, "reason": "..."}` in the same
+  import. Same merges into the older job, not same keeps them apart, as before.
 
 The task starts 8 workers, one per shard; each repeats export, read, import until its
 batch is empty or saves nothing. The first read of a large backlog (thousands of postings)
@@ -349,7 +354,11 @@ never asks OpenRouter to draft a form answer: a free-text question with no saved
 the job at **Needs you** ("Waiting for the Claude writer"), and a scheduled Claude session (a
 task in the Claude desktop app, about 10 minutes after the Daily run) answers it, without ever
 reading the database. `JAP_WRITER=openrouter` brings back JAP's own drafting as the fallback.
-Cover letters and the duplicate check still use OpenRouter.
+From 0.22.0 (PRD 1.28, W11 and W12) it also writes a required cover letter (the question is
+marked `cover_letter` and follows `cover_letter_rules`; JAP builds the PDF and fills the field)
+and reads a new resume (each entry in `resumes`, answered under `"resume:<id>": {"skills":
+[...], "titles": [...], "years_experience": 9}` following `resume_rules`; the resume shows
+Reading until then). With both settings on `claude`, JAP makes no OpenRouter call.
 
 - `make ENV=live writer-export` prints the jobs at Needs you in Review mode as JSON: each
   job's frozen description and open questions (with their options and length limits), the
@@ -605,6 +614,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.22.0 | 19 Nov 2026 | Everything on Claude (PRD 1.28). `JAP_READER=claude` also hands Possible duplicates to the Claude reader: `reader-export` (shard 1) carries the open pairs as job text with the same-job rules, and `reader-import` takes `pair:<id>` decisions and merges or keeps apart through the same step. `JAP_WRITER=claude` also leaves a required cover letter at Needs you for the Claude writer (marked `cover_letter`, with `cover_letter_rules`; JAP builds the PDF from its text) and leaves a new resume at Reading for it (`resumes` in `writer-export`, `resume:<id>` in `writer-import`). With both on claude, JAP makes no OpenRouter call |
 | 0.21.0 | 19 Nov 2026 | Claude writer only (PRD 1.27, W10). `JAP_WRITER=claude` (the default) stops JAP sending form questions to OpenRouter: a required free-text question with no saved answer waits at Needs you as "Waiting for the Claude writer" for the scheduled writer (`make writer-export` / `writer-import`), and is not counted as a failed draft. `JAP_WRITER=openrouter` brings back JAP's own drafting. Cover letters and the duplicate check still use OpenRouter |
 | 0.20.0 | 18 Nov 2026 | Claude reader (PRD 1.25, R1 to R7). Job postings are read for skills, seniority, salary, visa sponsorship, remote regions and whether a cover letter is asked by a scheduled Claude session on your Claude plan instead of OpenRouter, so reading needs no API credit. `JAP_READER=claude` (the default) stops JAP sending descriptions to OpenRouter; what the ATS states is still copied straight away. `make reader-export` gives the session a batch of unread postings (job text only, redacted and guarded; titles in your target roles first, and in disjoint shards so 8 readers can work at once); `make reader-import FILE=...` checks its fields against the extraction schema, saves the postings that pass for the description that was exported, and refreshes their jobs. `JAP_READER=openrouter` brings back JAP's own read as the fallback |
 | 0.19.2 | 18 Nov 2026 | PRD 1.26 (A6). Fix half-filled Ashby applications (JAP-11), found on Atlan's form. Every Ashby field type is read and marked required from the question's title: Yes/No and multiple-choice radios, the location typeahead (typed into, closest place picked) and checkboxes. Each Yes/No button answer is clicked under its own question (the visa question's "No" had landed on "eligible to work"). A phone on a form with no country picker gets its country code. Just before Submit the form is read again, and an empty required field, a choice showing another answer or a CAPTCHA stops it with the reason. A picture puzzle is never solved: JAP fills the form, stops before Submit and the job shows **Finish yourself: puzzle**; `make finish` opens the filled form in a visible browser on the Mac, you solve and submit, and JAP checks the confirmation and marks it Applied (or press I sent it) |
