@@ -17,10 +17,16 @@ description changed since the export, is not saved and stays unread for the next
 that passes is saved through the same step as OpenRouter's reads (enrich.save_extracted),
 and its listing is refreshed and matched again. Nothing here applies or sends.
 
+It also settles Possible duplicates (R8, PRD 1.28): shard 1's export carries the open pairs
+(both postings' title, locations and redacted description, and the rules of JAP's same-job
+prompt), and an import entry keyed "pair:<id>" with {"same": bool, "reason": "..."} merges
+the pair or keeps it apart through the same step as before (dedup.apply_same).
+
     python -m pipeline.claude_reader export [--limit 50] [--shard 3/8]  > postings.json
     python -m pipeline.claude_reader import                < fields.json
 
-fields.json: {"<posting id>": {"description_hash": "<from the export>", "skills": [...], ...}}
+fields.json: {"<posting id>": {"description_hash": "<from the export>", "skills": [...], ...},
+              "pair:<pair id>": {"same": false, "reason": "..."}}
 """
 
 import asyncio
@@ -33,11 +39,11 @@ from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from database.models import Posting, Profile, Run, WatchedBoard
+from database.models import PossibleDuplicate, Posting, Profile, Run, WatchedBoard
 from database.session import get_sessionmaker
 from llm.call import load_prompt
 from llm.redact import Sensitive, guard, redact
-from pipeline.dedup import refresh_listings
+from pipeline.dedup import SameJob, apply_same, open_pairs, pair_postings, refresh_listings
 from pipeline.enrich import (
     MAX_JD_CHARS,
     direct_fields,
@@ -52,12 +58,15 @@ from schemas.extract import FIELDS, from_output, output_model
 
 BATCH = 50
 IDS = ("posting_id", "description_hash")
+PAIR = "pair:"
 
 REPLY = (
     "Reply with one JSON object, keyed by posting_id. Each value is an object holding the "
     "posting's description_hash exactly as given and every key in its keys list, with the "
     "types and values in field_schema, and nothing else. Leave out a posting you cannot read; "
-    "it stays unread for the next batch."
+    'it stays unread for the next batch. For each entry in pairs, add a key "pair:<pair_id>" '
+    'holding {"same": true or false, "reason": one short sentence}, following '
+    "pair_instructions; leave out a pair you cannot decide."
 )
 
 
@@ -79,22 +88,43 @@ def build_posting(posting: Posting, wanted: list[str], values: Sensitive) -> dic
     }
 
 
+def build_pair(dup: PossibleDuplicate, a: Posting, b: Posting, values: Sensitive) -> dict[str, Any]:
+    def side(p: Posting) -> dict[str, Any]:
+        return {
+            "title": redact(p.title_raw, values).text,
+            "locations": [redact(loc, values).text for loc in p.locations] or ["not stated"],
+            "description_text": redact(
+                p.description_text[:MAX_JD_CHARS], values, generic=True
+            ).text,
+        }
+
+    return {"pair_id": str(dup.id), "job_a": side(a), "job_b": side(b)}
+
+
 def build_export(
-    postings: list[dict[str, Any]], unread: int, run_active: bool, values: Sensitive
+    postings: list[dict[str, Any]],
+    unread: int,
+    run_active: bool,
+    values: Sensitive,
+    pairs: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """The payload; raises PersonalDataBlocked if any personal value survives redaction."""
-    out = {
+    pairs = pairs or []
+    out: dict[str, Any] = {
         "instructions": load_prompt("extract").system,
         "reply_format": REPLY,
         "field_schema": output_model(FIELDS).model_json_schema(),
         "run_active": run_active,
         "unread_total": unread,
         "postings": postings,
+        "pair_instructions": load_prompt("same_job").system,
+        "pairs": pairs,
     }
     # Ids and hashes are left out of the check: their digits run together could look like a
     # phone number to guard(), and they are JAP's own, never personal.
     text = [{k: v for k, v in p.items() if k not in IDS} for p in postings]
-    guard(json.dumps([out["instructions"], text], ensure_ascii=False), values)
+    sides = [[p["job_a"], p["job_b"]] for p in pairs]
+    guard(json.dumps([out["instructions"], text, sides], ensure_ascii=False), values)
     return out
 
 
@@ -162,7 +192,13 @@ async def export(
                 break
         if len(batch) >= limit:
             break
-    out = build_export(batch, len(heads), run_active, values)
+    pairs: list[dict[str, Any]] = []
+    if shard[0] == 1:  # one shard carries the pairs, so parallel readers don't repeat them
+        for dup in (await open_pairs(session))[:limit]:
+            both = await pair_postings(session, dup)
+            if both is not None:
+                pairs.append(build_pair(dup, *both, values))
+    out = build_export(batch, len(heads), run_active, values, pairs)
     out["unread_in_my_roles"] = len(mine)
     out["unread_in_shard"] = len(order)
     out["shard"] = f"{shard[0]}/{shard[1]}"
@@ -214,6 +250,21 @@ async def import_one(session: AsyncSession, posting_id: str, given: dict[str, An
     return posting
 
 
+async def import_pair(session: AsyncSession, key: str, given: Any) -> str:
+    """One Possible duplicate decided by the reader (R8): merged, kept apart, or not saved."""
+    try:
+        dup_id = uuid.UUID(key.removeprefix(PAIR))
+        answer = SameJob.model_validate(given)
+    except (ValueError, ValidationError):
+        return f"{key}: not saved (needs a pair id and {{same: true or false, reason}})"
+    dup = await session.get(PossibleDuplicate, dup_id)
+    if dup is None or dup.decision != "open" or await pair_postings(session, dup) is None:
+        await session.rollback()
+        return f"{key}: not saved (pair already decided or gone)"
+    decision = await apply_same(session, dup, answer)
+    return f"{key}: {decision.replace('_', ' ')}"
+
+
 async def import_fields(session: AsyncSession, replies: dict[str, Any]) -> list[str]:
     """Save each posting that passes; one line per posting, then a total."""
     if not isinstance(replies, dict):
@@ -221,6 +272,9 @@ async def import_fields(session: AsyncSession, replies: dict[str, Any]) -> list[
     out: list[str] = []
     listings: set[uuid.UUID] = set()
     for posting_id, given in replies.items():
+        if posting_id.startswith(PAIR):
+            out.append(await import_pair(session, posting_id, given))
+            continue
         try:
             posting = await import_one(session, posting_id, given)
         except NotSaved as exc:
@@ -234,7 +288,7 @@ async def import_fields(session: AsyncSession, replies: dict[str, Any]) -> list[
         await refresh_listings(session, listings)
         await refilter_from_profile(session, list(listings))  # new skills, work mode
         await session.commit()
-    saved = sum(line.endswith(": saved") for line in out)
+    saved = sum(line.endswith((": saved", ": merged", ": kept apart")) for line in out)
     out.append(f"saved {saved} of {len(replies)}")
     return out
 

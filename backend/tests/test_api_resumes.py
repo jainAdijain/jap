@@ -41,6 +41,7 @@ async def test_rejects_other_files(api: httpx.AsyncClient) -> None:
     assert resp.status_code == 422
 
 
+@pytest.mark.usefixtures("openrouter_writer")
 async def test_parse_then_accept(
     api: httpx.AsyncClient,
     sql: psycopg.Connection[Any],

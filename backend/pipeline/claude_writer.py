@@ -9,10 +9,16 @@ redaction every model call uses, and guard() refuses the export if anything pers
 the same answer step as the Needs input panel, so the job is prepared again and reaches Ready
 for review. Nothing here approves or submits.
 
+With JAP_WRITER=claude (PRD 1.28) it also writes required cover letters (W11: a question
+marked cover_letter, answered with the letter under cover_letter_rules; JAP builds the PDF)
+and reads new resumes (W12: each entry in resumes, answered under "resume:<id>" with its
+skills, titles and years_experience, saved as suggestions as JAP's own parse saves them).
+
     python -m pipeline.claude_writer export            > jobs.json
     python -m pipeline.claude_writer import            < answers.json
 
-answers.json: {"<application id>": {"<question key>": "<answer>", ...}, ...}
+answers.json: {"<application id>": {"<question key>": "<answer>", ...}, ...,
+               "resume:<resume id>": {"skills": [...], "titles": [...], "years_experience": 8}}
 """
 
 import asyncio
@@ -22,13 +28,26 @@ import sys
 import uuid
 from typing import Any
 
+from pydantic import ValidationError
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from database.models import AnswerBank, Application, Company, Listing, Profile, ResumeVersion
 from database.session import get_sessionmaker
+from llm.call import load_prompt
 from llm.redact import Sensitive, find_links, from_resume_text, guard, redact, restore
-from pipeline.resume import sensitive_from_profile
+from pipeline.apply.flow import letter_fields
+from pipeline.resume import save_parsed, sensitive_from_profile
+from schemas.resume import ParsedResume
+
+RESUME = "resume:"
+
+
+def _rules(purpose: str) -> str:
+    """The rule lines of JAP's own prompt, so both writers write alike (not its JSON format)."""
+    lines = load_prompt(purpose).system.splitlines()
+    return "\n".join(line for line in lines if line.startswith("- "))
+
 
 # Saved answers about who I am or where my profiles are: JAP fills these by code, the writer
 # never needs them, and a bare handle ("jdoe" for GitHub) is not something redaction can spot.
@@ -59,10 +78,19 @@ def _clean(text: str, values: Sensitive) -> str:
 
 
 def build_export(
-    jobs: list[dict[str, Any]], resume: str, bank: list[tuple[str, str]], values: Sensitive
+    jobs: list[dict[str, Any]],
+    resume: str,
+    bank: list[tuple[str, str]],
+    values: Sensitive,
+    resumes: list[tuple[str, str]] | None = None,
 ) -> dict[str, Any]:
     """The redacted payload; raises PersonalDataBlocked if any personal value survives."""
     out = {
+        "cover_letter_rules": _rules("cover_letter"),
+        "resume_rules": _rules("resume_parse"),
+        "resumes": [
+            {"resume_id": rid, "text": _clean(text, values)} for rid, text in resumes or []
+        ],
         "resume": _clean(resume, values),
         "answer_bank": [
             {"question": _clean(q, values), "answer": _clean(a, values)} for q, a in bank
@@ -80,6 +108,7 @@ def build_export(
                         "options": list(q.get("options") or []),
                         "max_chars": q.get("max_chars"),
                         "why_open": str(q.get("reason") or ""),
+                        "cover_letter": bool(q.get("cover_letter")),
                     }
                     for q in j["questions"]
                 ],
@@ -109,8 +138,13 @@ async def export(session: AsyncSession) -> dict[str, Any]:
     jobs = []
     for app, listing, company in rows.all():
         limits = {f["key"]: f.get("max_chars") for f in app.form_fields or []}
+        letters = {f["key"] for f in letter_fields(app)}
         open_ = [
-            {**q, "max_chars": limits.get(q["key"])}
+            {
+                **q,
+                "max_chars": limits.get(q["key"]),
+                "cover_letter": q.get("cover_letter") or q["key"] in letters,
+            }  # fmt: skip
             for q in app.pending_questions or []
             if not q.get("blocked")
         ]
@@ -126,7 +160,22 @@ async def export(session: AsyncSession) -> dict[str, Any]:
                 "questions": open_,
             }
         )
-    return build_export(jobs, resume or "", bank, values)
+    # W12: resumes whose text is out but not read yet (no suggestions, no error).
+    unread = await session.execute(
+        select(ResumeVersion.id, ResumeVersion.text, ResumeVersion.uploaded_at)
+        .where(
+            ResumeVersion.text.is_not(None),
+            ResumeVersion.parsed.is_(None),
+            ResumeVersion.parse_error.is_(None),
+        )
+        .order_by(ResumeVersion.uploaded_at)
+    )
+    resumes = []
+    for rid, text, _ in unread.all():
+        if text:
+            values = values.merge(from_resume_text(text))
+            resumes.append((str(rid), text))
+    return build_export(jobs, resume or "", bank, values, resumes)
 
 
 def restore_answers(given: dict[str, str], values: Sensitive) -> dict[str, str]:
@@ -135,7 +184,20 @@ def restore_answers(given: dict[str, str], values: Sensitive) -> dict[str, str]:
     return {k: restore(str(v), values, links).strip() for k, v in given.items()}
 
 
-async def import_answers(session: AsyncSession, answers: dict[str, dict[str, str]]) -> list[str]:
+async def import_resume(session: AsyncSession, key: str, given: Any) -> str:
+    """W12: one resume read by the writer, saved as suggestions; or why it was not."""
+    try:
+        version = await session.get(ResumeVersion, uuid.UUID(key.removeprefix(RESUME)))
+        parsed = ParsedResume.model_validate(given)
+    except (ValueError, ValidationError):
+        return f"{key}: not read (needs a resume id and skills, titles, years_experience)"
+    if version is None or not version.text or version.parsed is not None:
+        return f"{key}: not read (already read, or gone)"
+    skills = await save_parsed(session, version.id, parsed, version.text)
+    return f"{key}: read ({len(skills)} skills)"
+
+
+async def import_answers(session: AsyncSession, answers: dict[str, Any]) -> list[str]:
     """Answer each job through the Needs input step; one line per job saying what happened."""
     from api.applications import answer  # the same step as the Needs input panel
     from api.errors import ApiError
@@ -144,6 +206,9 @@ async def import_answers(session: AsyncSession, answers: dict[str, dict[str, str
     values = await sensitive(session)
     out = []
     for app_id, given in answers.items():
+        if app_id.startswith(RESUME):
+            out.append(await import_resume(session, app_id, given))
+            continue
         try:
             body = AnswerQuestionsIn(answers=restore_answers(given, values), save_to_bank=False)
             done = await answer(uuid.UUID(app_id), body, session)

@@ -120,10 +120,23 @@ OWNER_PASSWORD = "correct horse battery"
 @pytest.fixture
 def openrouter_writer(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """JAP drafts form answers itself (JAP_WRITER=openrouter, the fallback); the default,
-    the Claude writer, leaves them at Needs input (PRD 1.27 W10)."""
+    the Claude writer, leaves answers and cover letters at Needs input and new resumes unread
+    for make writer-export / import (PRD 1.27 W10, 1.28 W11 and W12)."""
     from config import get_settings
 
     monkeypatch.setenv("JAP_WRITER", "openrouter")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture
+def openrouter_reader(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """JAP reads postings and settles possible duplicates itself (JAP_READER=openrouter, the
+    fallback); the default, the Claude reader, leaves both to make reader-export / import."""
+    from config import get_settings
+
+    monkeypatch.setenv("JAP_READER", "openrouter")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

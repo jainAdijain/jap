@@ -9,6 +9,7 @@ import llm.client as client
 from database import demo
 from database.session import get_sessionmaker
 from functions.fetch_board import fetch_step
+from pipeline import claude_reader
 from pipeline.dedup import Settled, dedup, settle_duplicates
 from tests import boards as b
 from tests.test_ingest import _board
@@ -187,6 +188,7 @@ async def _settle(stub: Stub, monkeypatch: pytest.MonkeyPatch) -> Settled:
         return await settle_duplicates(session)
 
 
+@pytest.mark.usefixtures("openrouter_reader")
 async def test_the_model_merges_a_possible_duplicate(
     db: str, sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -202,6 +204,7 @@ async def test_the_model_merges_a_possible_duplicate(
     assert await _settle(Stub([]), monkeypatch) == Settled()  # nothing left to ask
 
 
+@pytest.mark.usefixtures("openrouter_reader")
 async def test_the_model_keeps_two_jobs_apart(
     db: str, sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -213,6 +216,36 @@ async def test_the_model_keeps_two_jobs_apart(
         "Streaming is a different team",
     )
     assert len([t for t, _ in _listings(sql) if t.startswith("Senior Data Platform")]) == 2
+
+
+async def test_the_claude_reader_settles_possible_duplicates(
+    db: str, sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """JAP_READER=claude (the default, PRD 1.28 R8): no model call; reader-export (shard 1)
+    carries the open pair as job text, and reader-import merges it through the same step."""
+    await demo.load()
+    assert await _settle(Stub([]), monkeypatch) == Settled(undecided=1)  # left to the reader
+    async with get_sessionmaker()() as session:
+        out = await claude_reader.export(session)
+        other = await claude_reader.export(session, 50, (2, 2))
+    assert other["pairs"] == []  # one shard carries the pairs
+    [pair] = out["pairs"]
+    assert "When unsure, answer false" in out["pair_instructions"]
+    titles = {pair["job_a"]["title"], pair["job_b"]["title"]}
+    assert all(t.startswith("Senior Data Platform") for t in titles)
+    key = f"pair:{pair['pair_id']}"
+    async with get_sessionmaker()() as session:
+        bad = await claude_reader.import_fields(session, {key: {"same": "maybe"}})
+        assert bad[0].startswith(f"{key}: not saved")
+        lines = await claude_reader.import_fields(
+            session, {key: {"same": True, "reason": "Same team and duties"}}
+        )
+        again = await claude_reader.import_fields(
+            session, {key: {"same": True, "reason": "Same team and duties"}}
+        )
+    assert lines == [f"{key}: merged", "saved 1 of 1"]
+    assert again[0] == f"{key}: not saved (pair already decided or gone)"
+    assert len([t for t, _ in _listings(sql) if t.startswith("Senior Data Platform")]) == 1
 
 
 async def test_a_pair_the_model_cannot_answer_stays_open(

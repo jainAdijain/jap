@@ -11,13 +11,14 @@ from typing import Any
 import inngest
 from sqlalchemy import select
 
+from config import get_settings
 from database.models import Profile, ResumeVersion
 from database.session import get_sessionmaker
 from functions.client import inngest_client
 from llm import PersonalDataBlocked, SpendCapReached, call
 from llm.client import MissingApiKey, OutOfCredits
-from llm.redact import find_links, from_resume_text
-from pipeline.resume import extract_text, normalize_skills, sensitive_from_profile, skill_aliases
+from llm.redact import from_resume_text
+from pipeline.resume import extract_text, save_parsed, sensitive_from_profile
 from schemas.resume import ParsedResume
 
 
@@ -61,6 +62,10 @@ async def parse_step(version_id: str) -> dict[str, Any]:
         if version is None or not version.text:
             raise inngest.NonRetriableError("resume text missing")
         resume_text = version.text
+        if get_settings().jap_writer == "claude":
+            # W12 (PRD 1.28): the Claude writer reads it (writer-export / writer-import); it
+            # shows Reading until then.
+            return {"resume_version_id": version_id, "waiting_for_writer": True}
         profile = await session.scalar(select(Profile))
         # Profile contact details first; on a first upload, what the resume shows.
         sensitive = sensitive_from_profile(profile).merge(from_resume_text(resume_text))
@@ -76,17 +81,7 @@ async def parse_step(version_id: str) -> dict[str, Any]:
         except (PersonalDataBlocked, SpendCapReached, MissingApiKey, OutOfCredits) as exc:
             await _set_error(version_id, str(exc))
             raise inngest.NonRetriableError(str(exc)) from exc
-        parsed = result.output
-        skills = normalize_skills(parsed.skills, await skill_aliases(session))
-        version = await session.get(ResumeVersion, uuid.UUID(version_id))
-        assert version is not None
-        version.parsed = {
-            "skills": skills,
-            "titles": [t for t in parsed.titles if "[" not in t],
-            "years_experience": parsed.years_experience,
-            "links": find_links(resume_text),
-        }
-        await session.commit()
+        skills = await save_parsed(session, uuid.UUID(version_id), result.output, resume_text)
         return {
             "resume_version_id": version_id,
             "skills_found": len(skills),
