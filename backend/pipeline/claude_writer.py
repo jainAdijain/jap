@@ -47,14 +47,14 @@ from pipeline.resume import save_parsed, sensitive_from_profile
 from schemas.resume import ParsedResume
 
 RESUME = "resume:"
-REVIEW = "_review"  # V6: the checker's reason a job must wait for Aditya, in its answers
+REVIEW = "_review"  # V6: the checker's reason a job must wait for review, in its answers
 
 # Said in every export, so the session knows how to hold a job back (V6, PRD 1.29).
 REVIEW_RULE = (
     "If your checker finds anything in a job's answers or letter (a claim not in the resume "
     "or answer bank, a required field left empty or invalid), or the form or job description "
     'bans AI-written answers, still return its answers but add "_review": "<the reason, one '
-    'sentence>" to that job. JAP then holds it for Aditya to review and never sends it on its '
+    'sentence>" to that job. JAP then holds it for review and never sends it on its '
     "own. Leave a job out entirely only when you cannot answer it."
 )
 

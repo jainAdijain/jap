@@ -187,3 +187,11 @@ async def test_the_claude_writer_reads_a_new_resume(
     assert again == [f"{key}: not read (already read, or gone)"]
     parsed = (await api.get("/api/resumes")).json()[0]
     assert parsed["status"] == "parsed" and parsed["suggested_skills"] == ["python", "postgres"]
+
+
+def test_the_fixed_rules_carry_no_owner_name() -> None:
+    """The rule texts JAP adds to every export pass the guard whoever the owner is (v0.23.1:
+    REVIEW_RULE named the owner, so every live export was refused)."""
+    owner = Sensitive(name="Aditya Jain", emails=["aditya@example.com"])
+    out = claude_writer.build_export([], "", [], owner)
+    assert "_review" in out["review_rule"]
