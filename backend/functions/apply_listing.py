@@ -30,6 +30,7 @@ FIRST_WAIT = timedelta(minutes=2)
 NEXT_WAIT = timedelta(days=1)
 WAIT_ROUNDS = 15  # about 14 days in all
 MAX_PASSES = 5  # Needs input answered, mapped again, at most this often
+BOARD_ROUNDS = 4  # a board on hold (V5): wait and read again at most this often
 
 
 async def create_step(listing_id: str, run_id: str | None) -> dict[str, Any]:
@@ -45,10 +46,28 @@ async def snapshot_step(app_id: str) -> str:
         return await flow.snapshot(session, app_id)
 
 
-async def read_step(app_id: str, url: str) -> int:
-    """A FormError (site change, timeout) is retried by Inngest, then fails the attempt."""
+async def read_step(app_id: str, url: str) -> dict[str, Any]:
+    """A FormError (site change, timeout) is retried by Inngest, then fails the attempt. A
+    429 or 403 from the board is not a form problem: the board goes on hold (V5) and the
+    step answers when to read again."""
     async with get_sessionmaker()() as session:
-        return await flow.read_and_save(session, app_id, url)
+        try:
+            return {"fields": await flow.read_and_save(session, app_id, url)}
+        except flow.BoardBlocked as exc:
+            return {"wait_until": await flow.board_hold(session, app_id, str(exc))}
+
+
+async def refused_step(app_id: str) -> None:
+    async with get_sessionmaker()() as session:
+        await flow.fail_by_id(
+            session, app_id, "The job board kept refusing JAP (429 or 403): Retry later"
+        )
+
+
+async def hold_step(app_id: str) -> str | None:
+    """When the hold on this job's board ends (V5), or None when it is free."""
+    async with get_sessionmaker()() as session:
+        return await flow.board_hold(session, app_id)
 
 
 async def map_step(app_id: str) -> dict[str, Any]:
@@ -156,7 +175,18 @@ async def apply_listing(ctx: inngest.Context) -> dict[str, Any]:
         return created
     app_id = str(created["application_id"])
     url = await ctx.step.run("snapshot", snapshot_step, app_id)
-    await ctx.step.run("read-form", read_step, app_id, url)
+    for i in range(BOARD_ROUNDS):  # V5: never open a form on a board that is on hold
+        held = await ctx.step.run(f"board-hold-{i}", hold_step, app_id)
+        if held:
+            await ctx.step.sleep_until(f"board-wait-{i}", datetime.fromisoformat(str(held)))
+            continue
+        read = await ctx.step.run(f"read-form-{i}" if i else "read-form", read_step, app_id, url)
+        if "wait_until" not in read:
+            break
+    else:
+        await ctx.step.run("board-refused", refused_step, app_id)
+        await _alert(ctx, app_id)
+        return {"application_id": app_id, "status": "failed"}
 
     status = "preparing"
     for p in range(MAX_PASSES):

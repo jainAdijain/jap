@@ -660,9 +660,10 @@ async def test_automatic_mode_picks_only_at_or_above_the_skills_bar(
     skills by default). A job below it, or with Skills not stated, stays Not applied on the
     list; Review mode, and a profile with no required skills, are not held back."""
     at_bar = setup["listing"]  # 3 of 5 = 60%
-    below = _listing(sql, "Platform Engineer", ext="2")  # 2 of 5 = 40%
-    unknown = _listing(sql, "Data Engineer", ext="3")  # Skills not stated
-    full = _listing(sql, "Site Reliability Engineer", ext="4")
+    # Four companies, so the two-a-company limit of Automatic mode (V3) holds nothing back.
+    below = _listing(sql, "Platform Engineer", ext="2", company="Beta")  # 2 of 5 = 40%
+    unknown = _listing(sql, "Data Engineer", ext="3", company="Gamma")  # Skills not stated
+    full = _listing(sql, "Site Reliability Engineer", ext="4", company="Delta")
     sql.execute("UPDATE profile SET must_have_skills = '{a,b,c,d,e}'")
     for listing, skills in ((at_bar, "{a,b,c}"), (below, "{a,b,x}"), (full, "{a,b,c,d,e,f}")):
         sql.execute("UPDATE listing SET skills = %s WHERE id = %s", (skills, listing))

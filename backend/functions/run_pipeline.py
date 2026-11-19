@@ -24,6 +24,7 @@ from functions.client import inngest_client
 from functions.fetch_board import fetch_board
 from llm.ollama import ping_ollama
 from llm.spend import month_spend
+from pipeline.apply import pacing
 from pipeline.apply.flow import applied_today, pick
 from pipeline.dedup import dedup, settle_duplicates
 from pipeline.matching import refilter_from_profile
@@ -81,13 +82,17 @@ async def pick_step(run_id: str) -> list[str]:
 async def limits_step() -> dict[str, Any]:
     """The caps that held this run back, for the Runs card: spend_cap_reached when this
     month's model spend is at the cap (model steps stop), daily_cap_reached when today's
-    applications are at the daily cap (A1; nothing more is submitted until midnight)."""
+    applications are at the daily cap (A1; nothing more is submitted until midnight), and
+    boards_on_hold for a job board that answered 429 or 403 (V5)."""
     async with get_sessionmaker()() as session:
         spend = await month_spend(session)
         profile = await session.scalar(select(Profile))
         cap = profile.daily_cap if profile else 20
         today = await applied_today(session, datetime.now(UTC))
+        held = await pacing.held_boards(session, datetime.now(UTC))
     out: dict[str, Any] = {}
+    if held:  # V5: a board that answered 429 or 403 gets nothing until its hold ends
+        out["boards_on_hold"] = [ats.capitalize() for ats in sorted(held)]
     if spend.reached:
         out["spend_cap_reached"] = True
     if today >= cap:
