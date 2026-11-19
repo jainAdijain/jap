@@ -1,0 +1,43 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jap/writer-import/1",
+  "title": "JAP writer import, contract 1 (make writer-import FILE=...)",
+  "description": "One object keyed by application_id, each holding an answer for every open question of that job (all at once), plus resume:<resume_id> for each resume read. Placeholders are filled back in by JAP. PRD 1.22 W6, 1.28 W12.",
+  "type": "object",
+  "patternProperties": {
+    "^resume:": {
+      "type": "object",
+      "required": [
+        "skills",
+        "titles",
+        "years_experience"
+      ],
+      "properties": {
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "titles": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "years_experience": {
+          "type": [
+            "number",
+            "null"
+          ]
+        }
+      }
+    }
+  },
+  "additionalProperties": {
+    "type": "object",
+    "additionalProperties": {
+      "type": "string"
+    }
+  }
+}

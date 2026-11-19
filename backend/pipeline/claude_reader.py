@@ -1,8 +1,9 @@
-"""The Claude reader's only door into JAP (PRD 1.25, R1 to R7): export and import.
+"""The AI reader's only door into JAP (PRD 1.25, R1 to R7; 1.30 AH1): export and import.
 
-With JAP_READER=claude (the default) JAP no longer sends job descriptions to OpenRouter for
-reading (I3). A scheduled Claude session on Aditya's Claude plan reads them instead, a batch
-at a time, in parallel shards for a big backlog, 5 minutes after the daily search and before
+With JAP_READER=agent (the default; named claude before 1.30) JAP no longer sends job
+descriptions to OpenRouter for reading (I3). An outside AI harness on Aditya's plan reads them
+instead (agent/run.sh starts it, PRD 1.30), a batch at a time, in parallel shards for a big
+backlog, 5 minutes after the daily search and before
 the writer (PRD 1.22). It never reads the database. `export` gives it one batch of unread
 postings: open, company followed, and description changed since it was last read (the I4
 hash). Each comes with the fields still wanted (those the ATS did not state,
@@ -24,6 +25,7 @@ the pair or keeps it apart through the same step as before (dedup.apply_same).
 
     python -m pipeline.claude_reader export [--limit 50] [--shard 3/8]  > postings.json
     python -m pipeline.claude_reader import                < fields.json
+    python -m pipeline.claude_reader status                (one line for agent/run.sh)
 
 fields.json: {"<posting id>": {"description_hash": "<from the export>", "skills": [...], ...},
               "pair:<pair id>": {"same": false, "reason": "..."}}
@@ -43,6 +45,7 @@ from database.models import PossibleDuplicate, Posting, Profile, Run, WatchedBoa
 from database.session import get_sessionmaker
 from llm.call import load_prompt
 from llm.redact import Sensitive, guard, redact
+from pipeline.agent_contract import CONTRACT_VERSION
 from pipeline.dedup import SameJob, apply_same, open_pairs, pair_postings, refresh_listings
 from pipeline.enrich import (
     MAX_JD_CHARS,
@@ -111,6 +114,7 @@ def build_export(
     """The payload; raises PersonalDataBlocked if any personal value survives redaction."""
     pairs = pairs or []
     out: dict[str, Any] = {
+        "contract_version": CONTRACT_VERSION,
         "instructions": load_prompt("extract").system,
         "reply_format": REPLY,
         "field_schema": output_model(FIELDS).model_json_schema(),
@@ -293,6 +297,15 @@ async def import_fields(session: AsyncSession, replies: dict[str, Any]) -> list[
     return out
 
 
+async def status(session: AsyncSession) -> str:
+    """One line for the runner (AH4), so a shell script needs no JSON parser: whether a
+    search is still running, how many postings are unread and how many pairs are open."""
+    out = await export(session, limit=1)
+    pairs = len(await open_pairs(session))
+    run_active = int(bool(out["run_active"]))
+    return f"run_active={run_active} unread={out['unread_total']} pairs={pairs}"
+
+
 async def _main(argv: list[str]) -> None:
     command = argv[0] if argv else ""
     async with get_sessionmaker()() as session:
@@ -305,9 +318,12 @@ async def _main(argv: list[str]) -> None:
         elif command == "import":
             for line in await import_fields(session, json.loads(sys.stdin.read())):
                 print(line)
+        elif command == "status":
+            print(await status(session))
         else:
             raise SystemExit(
-                "usage: python -m pipeline.claude_reader export [--limit N] [--shard i/n] | import"
+                "usage: python -m pipeline.claude_reader "
+                "export [--limit N] [--shard i/n] | import | status"
             )
 
 

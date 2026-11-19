@@ -59,6 +59,13 @@ jobs:
       - run: npm run lint
       - run: npm run build
 
+  agent:
+    name: agent runner (stand-in JAP and harness)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: agent/tests/run_test.sh
+
   compose:
     name: compose file is valid
     runs-on: ubuntu-latest

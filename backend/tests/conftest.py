@@ -124,7 +124,7 @@ def openrouter_writer(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     for make writer-export / import (PRD 1.27 W10, 1.28 W11 and W12)."""
     from config import get_settings
 
-    monkeypatch.setenv("JAP_WRITER", "openrouter")
+    monkeypatch.setenv("JAP_WRITER", "api")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()
@@ -136,7 +136,7 @@ def openrouter_reader(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     fallback); the default, the Claude reader, leaves both to make reader-export / import."""
     from config import get_settings
 
-    monkeypatch.setenv("JAP_READER", "openrouter")
+    monkeypatch.setenv("JAP_READER", "api")
     get_settings.cache_clear()
     yield
     get_settings.cache_clear()

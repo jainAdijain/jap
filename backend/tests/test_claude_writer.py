@@ -126,14 +126,14 @@ async def test_the_claude_writer_writes_the_required_cover_letter(
         await flow.read_and_save(session, app_id, url)
         assert (await flow.map_fields(session, app_id)).status == "cover_letter"
         written = await flow.write_cover_letter(session, app_id)
-    assert written["letter"] == "waiting for the Claude writer" and stub.bodies == []
+    assert written["letter"] == "waiting for the AI writer" and stub.bodies == []
     assert _status(sql, app_id)[0] == "needs_input"
 
     async with get_sessionmaker()() as session:
         out = await claude_writer.export(session)
     [q] = out["jobs"][0]["questions"]
     assert q["key"] == "cover" and q["cover_letter"] is True
-    assert q["why_open"] == "Waiting for the Claude writer"
+    assert q["why_open"] == "Waiting for the AI writer"
     assert "Use only facts in <resume>" in out["cover_letter_rules"]
     assert "Return JSON" not in out["cover_letter_rules"]
 

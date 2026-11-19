@@ -3,7 +3,13 @@
 from functools import lru_cache
 from typing import Literal
 
+from pydantic import field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+# PRD 1.30 AH1: who does the AI work. "agent" is any outside harness working through the
+# export and import commands (agent/ in the repo); "api" is JAP calling a model itself.
+Mode = Literal["agent", "api"]
+OLD_MODE_NAMES = {"claude": "agent", "openrouter": "api"}
 
 
 class Settings(BaseSettings):
@@ -26,14 +32,23 @@ class Settings(BaseSettings):
     ollama_base_url: str = "http://host.docker.internal:11434"
 
     jap_monthly_cost_cap_usd: float = 2.0
-    # Who reads postings for skills, work mode and the rest (I3, PRD 1.25 R1): "claude", a
-    # scheduled Claude session through make reader-export / reader-import, or "openrouter",
-    # JAP's own model call as before 1.25 (the fallback, needs a funded key).
-    jap_reader: Literal["claude", "openrouter"] = "claude"
-    # Who drafts free-text form answers (PRD 1.27 W10): "claude", the scheduled Claude writer
-    # through make writer-export / writer-import, so such a question waits at Needs you, or
-    # "openrouter", JAP's own model call as before 1.27 (the fallback, needs a funded key).
-    jap_writer: Literal["claude", "openrouter"] = "claude"
+    # Who reads postings for skills, work mode and the rest (I3, PRD 1.25 R1, 1.30 AH1):
+    # "agent", an outside AI harness through make reader-export / reader-import (the runner in
+    # agent/ starts it), or "api", JAP's own model call through OpenRouter as before 1.25 (the
+    # fallback, needs a funded key). The older names "claude" and "openrouter" still work.
+    jap_reader: Mode = "agent"
+    # Who drafts free-text form answers, cover letters and resume reads (PRD 1.27 W10, 1.30
+    # AH1): "agent", the outside AI writer through make writer-export / writer-import, so such a
+    # question waits at Needs you, or "api", JAP's own model call (the fallback).
+    jap_writer: Mode = "agent"
+
+    @field_validator("jap_reader", "jap_writer", mode="before")
+    @classmethod
+    def _old_mode_names(cls, value: object) -> object:
+        """AH1: claude and openrouter, the names before 1.30, mean agent and api."""
+        if isinstance(value, str):
+            return OLD_MODE_NAMES.get(value.strip().lower(), value.strip().lower())
+        return value
 
     # The mailbox JAP sends from (E4): any SMTP server with a password, GoDaddy Professional
     # Email by default. A local test mailbox can take plain SMTP (SMTP_SSL=false) instead.

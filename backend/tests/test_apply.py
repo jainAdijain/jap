@@ -274,7 +274,7 @@ async def test_claude_writer_answers_free_text_so_no_model_is_asked(
     assert _status(sql, app_id)[0] == "needs_input"
     app = (await api.get(f"/api/applications/{app_id}")).json()
     (q,) = app["pending"]
-    assert q["key"] == "why" and q["reason"] == "Waiting for the Claude writer"
+    assert q["key"] == "why" and q["reason"] == "Waiting for the AI writer"
     assert not q.get("draft_failed")
     counts = sql.execute("SELECT counts FROM run WHERE id = %s", (run[0],)).fetchone()
     assert counts is not None and "draft_failed" not in counts[0]

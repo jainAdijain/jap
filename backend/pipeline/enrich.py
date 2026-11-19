@@ -110,7 +110,7 @@ async def extract_posting(session: AsyncSession, posting_id: uuid.UUID) -> Extra
     sent: str | None = None
     read: dict[str, Any] = {}
     if wanted and posting.description_text.strip():
-        if get_settings().jap_reader == "claude":
+        if get_settings().jap_reader == "agent":
             await keep_direct(session, posting, direct)
             return ExtractResult(skipped=False, fields=[], waiting_for_reader=True)
         profile = await session.scalar(select(Profile))

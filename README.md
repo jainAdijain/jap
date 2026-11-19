@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.22.0 (everything on Claude: duplicates, cover letters and resumes too), 19 Nov 2026.**
+**Version 0.24.0 (swappable AI harness: Claude, Codex, Gemini CLI or opencode), 19 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -105,7 +105,7 @@ Add companies under **Companies to follow** in Job preferences by pasting their 
 Lever or Ashby board URL (or typing the name), then press **Find new jobs** on Jobs. Each board is one `fetch-board` run
 in Inngest, throttled to one request a second per ATS. Job descriptions are read once per
 description, so a re-run with unchanged postings costs nothing. From 0.20.0 the reading is
-done by the scheduled Claude reader (below) by default; `JAP_READER=openrouter` in `.env`
+done by the scheduled AI reader (below) by default; `JAP_READER=api` in `.env`
 brings back the extract model, where the first run on a big board (some list 700+ jobs)
 makes one model call per job, so start with a few companies and watch **AI usage** in
 Settings.
@@ -303,17 +303,18 @@ Submissions are at most the **Daily cap** a day (next to the switch, 20 by defau
 to try Automatic mode) and at least 30 seconds apart. A run at the cap prepares nothing and
 says "daily cap reached". The Daily run finds and prepares the new jobs that fit in both modes
 (PRD 1.22, W1): Automatic mode sends them, Review mode leaves them at Ready for review or Needs
-you. A scheduled Claude session (outside JAP) can then answer what is at Needs you from the
+you. The scheduled AI writer (outside JAP) can then answer what is at Needs you from the
 resume and answer bank; nothing is sent before you approve. Switching back to Review makes the
 next run prepare without submitting.
 
-## Claude reader
+## AI reader
 
-PRD 1.25, R1 to R7. With `JAP_READER=claude` (the default) JAP sends no job description to
-OpenRouter. It still copies what the ATS states (work mode, remote regions, Ashby salary) and
-makes the dedup embedding, and the rest (skills, seniority, salary, visa sponsorship, remote
-regions, cover letter asked) waits for a scheduled Claude session on your Claude plan: a task
-in the Claude desktop app 5 minutes after the Daily run, before the Claude writer. Until it
+PRD 1.25, R1 to R7 (the Claude reader until 1.30). With `JAP_READER=agent` (the default;
+`claude` still works) JAP sends no job description to OpenRouter. It still copies what the ATS
+states (work mode, remote regions, Ashby salary) and makes the dedup embedding, and the rest
+(skills, seniority, salary, visa sponsorship, remote regions, cover letter asked) waits for the
+AI reader on your own AI plan, started by the Mac's schedule after the Daily run and before the
+AI writer (see [AI harness](#ai-harness)). Until it
 runs, a new job shows Skills not stated and, unless the ATS says, Work mode unclear, so
 Automatic mode does not send it.
 
@@ -334,31 +335,33 @@ Automatic mode does not send it.
   description changed since the export, is not saved and stays unread; one that passes is
   saved as if JAP had read it, and its job's skills, work mode and match are refreshed.
   The last line says `saved N of M`. Nothing is applied or sent.
-- Possible duplicates (PRD 1.28, R8): with `JAP_READER=claude` JAP sends no pair to
+- Possible duplicates (PRD 1.28, R8): with `JAP_READER=agent` JAP sends no pair to
   OpenRouter. Shard 1's export also carries `pairs` (both jobs' title, locations and
   redacted description) with `pair_instructions`, the rules of JAP's same-job prompt;
   answer each under `"pair:<pair id>": {"same": true or false, "reason": "..."}` in the same
   import. Same merges into the older job, not same keeps them apart, as before.
 
-The task starts 8 workers, one per shard; each repeats export, read, import until its
+The runner starts 8 workers, one per shard; each repeats export, read, import until its
 batch is empty or saves nothing. The first read of a large backlog (thousands of postings)
-is a one-off and can reach the Claude plan's usage limit; what is left is read on the next
-run. After that only new or changed postings are read.
-`JAP_READER=openrouter` is the fallback: JAP reads each posting itself again, with a funded
-key.
+is a one-off and can reach your plan's usage limit; what is left is read on the next run.
+After that only new or changed postings are read. `make reader-status` prints one line
+(`run_active=0 unread=12 pairs=1`) for the runner.
+`JAP_READER=api` (was `openrouter`) is the fallback: JAP reads each posting itself again,
+with a funded key.
 
-## Claude writer
+## AI writer
 
-PRD 1.22, W1 to W7, and 1.27, W10. With `JAP_WRITER=claude` (the default from 0.21.0) JAP
-never asks OpenRouter to draft a form answer: a free-text question with no saved answer stops
-the job at **Needs you** ("Waiting for the Claude writer"), and a scheduled Claude session (a
-task in the Claude desktop app, about 10 minutes after the Daily run) answers it, without ever
-reading the database. `JAP_WRITER=openrouter` brings back JAP's own drafting as the fallback.
+PRD 1.22, W1 to W7, and 1.27, W10 (the Claude writer until 1.30). With `JAP_WRITER=agent` (the
+default; `claude` still works) JAP never asks OpenRouter to draft a form answer: a free-text
+question with no saved answer stops the job at **Needs you** ("Waiting for the AI writer"),
+and the AI writer, started by the Mac's schedule after the reader, answers it without ever
+reading the database, and a second session checks every answer before it goes back (W8).
+`JAP_WRITER=api` (was `openrouter`) brings back JAP's own drafting as the fallback.
 From 0.22.0 (PRD 1.28, W11 and W12) it also writes a required cover letter (the question is
 marked `cover_letter` and follows `cover_letter_rules`; JAP builds the PDF and fills the field)
 and reads a new resume (each entry in `resumes`, answered under `"resume:<id>": {"skills":
 [...], "titles": [...], "years_experience": 9}` following `resume_rules`; the resume shows
-Reading until then). With both settings on `claude`, JAP makes no OpenRouter call.
+Reading until then). With both settings on `agent`, JAP makes no OpenRouter call.
 
 - `make ENV=live writer-export` prints the jobs at Needs you in Review mode as JSON: each
   job's frozen description and open questions (with their options and length limits), the
@@ -370,6 +373,47 @@ Reading until then). With both settings on `claude`, JAP makes no OpenRouter cal
   same step as the Needs you panel, so it is prepared again and reaches Ready for review.
   Every open question of a job must be answered at once; drafts are not saved to the
   answer bank. Nothing is approved or sent.
+- `make writer-status` prints one line (`jobs=3 resumes=0`) for the runner.
+
+## AI harness
+
+PRD 1.30, AH1 to AH8. The AI reader and writer run on whichever agent harness you pay for:
+Claude Code, OpenAI Codex CLI, Gemini CLI or opencode, each on its own subscription and
+models. Switching is one line and one command. Everything is in `agent/`:
+
+| Part | What it is |
+| --- | --- |
+| `agent/run.sh` | The runner (`make agent-run JOB=reader|writer`). It exports each batch, starts the harness once per batch, imports what comes back, runs the reader's 8 shards in parallel plus a leftover pass, runs the writer and then a checker session before anything is imported, and stops when the plan's usage limit is reached (exit 75; the rest waits for the next run). One reader and one writer run at a time. |
+| `agent/jobs/` | The job prompts, one per job (`reader.md`, `writer.md`, `checker.md`), written for any harness. The harness sees only one batch folder: `in.json` from the export, the prompt, and the file it writes (`out.json`, `draft.json`, `findings.txt`). It runs no command, reads no database, needs no shell or web. |
+| `agent/harnesses/` | One small adapter per harness: how to run a prompt without a chat window, and how its usage-limit message reads. Add a harness by copying one and following `common.sh`. |
+| `agent/contract/` | JSON Schemas of the reader and writer exports and imports, at `contract_version` 1 (in every export). |
+| `agent/schedule.sh` | The Mac's schedule (launchd), replacing the Claude app's scheduled tasks. |
+
+Settings, in `.env.live` (see `.env.example`): `JAP_HARNESS` (`claude`, `codex`, `gemini` or
+`opencode`), `JAP_HARNESS_MODEL` (empty = the harness's default), `JAP_CHECKER_HARNESS` and
+`JAP_CHECKER_MODEL` (the checker pass; empty = the same, `none` = no check),
+`JAP_AGENT_SHARDS` (8), `JAP_AGENT_BATCH` (10), `JAP_AGENT_TIMEOUT_MIN` (20) and
+`JAP_AGENT_READER_AT` / `JAP_AGENT_WRITER_AT` (07:05 and 07:30, the Mac's time).
+
+**First time, moving off the Claude app's tasks.** Run `make ENV=live agent-schedule`, then
+pause the two JAP tasks under Scheduled in the Claude app so nothing runs twice. `make
+ENV=live agent-status` shows both jobs and their last runs. Each run's log stays in
+`data-live/agent/runs/` for 30 days; its batch folders sit in the temp folder, outside the
+repo, for 3 days (`JAP_AGENT_WORK_DIR` moves them).
+
+**Switching harness** (AH7):
+
+1. Install the new tool and sign in with your subscription (`codex`, `gemini`, `opencode`).
+2. `make agent-check HARNESS=codex` runs one small reader batch and the writer on the local
+   stack, never live. Look at its output and at `data/agent/last-reader.log`.
+3. Set `JAP_HARNESS=codex` (and `JAP_HARNESS_MODEL` if you want one) in `.env.live`.
+
+The schedule reads the setting at each run, so nothing else changes; `make ENV=live
+agent-run JOB=reader HARNESS=gemini` tries one run on live by hand. Only the Claude adapter
+has run against real plans so far; the others follow each tool's documented non-interactive
+mode and must pass `agent-check` before use. Answer quality depends on the model you pick;
+the import checks, the checker pass and Review mode stay the same whatever the harness.
+Some subscriptions do not allow unattended use: check your plan's terms.
 
 ## When something fails
 
@@ -587,8 +631,12 @@ There is no promotion step: live runs whatever this checkout builds.
 | `make health-check` | Run the hourly health watch now: old log rows deleted, alerts that are due emailed |
 | `make errors` | The last 20 warnings and errors from `log_event` |
 | `make email-test TO=...` | Send one test email from the mailbox in `.env` |
-| `make reader-export` / `make reader-import FILE=...` | One batch of unread postings for the Claude reader, redacted; its fields back in, checked (PRD 1.25) |
-| `make writer-export` / `make writer-import FILE=...` | Jobs at Needs you for the Claude writer, redacted; its answers back in (PRD 1.22) |
+| `make agent-run JOB=reader\|writer [HARNESS=...]` | Run the AI reader or writer now on `JAP_HARNESS` (PRD 1.30) |
+| `make agent-check HARNESS=...` | Try a harness on the local stack (one small reader batch and the writer), never live |
+| `make ENV=live agent-schedule` / `agent-unschedule` / `agent-status` | The Mac's daily schedule for the AI reader and writer (launchd) |
+| `make test-agent` | The runner against a stand-in JAP and harness (no model, no Docker; part of `make test`) |
+| `make reader-export` / `make reader-import FILE=...` / `reader-status` | One batch of unread postings for the AI reader, redacted; its fields back in, checked (PRD 1.25) |
+| `make writer-export` / `make writer-import FILE=...` / `writer-status` | Jobs at Needs you for the AI writer, redacted; its answers back in (PRD 1.22) |
 | `make llm-check` | One tiny test call to each OpenRouter model (no personal data) |
 | `make ollama-check` | Is Ollama answering with `nomic-embed-text` pulled |
 | `make demo` / `make demo-clear` | Load or remove the demo postings used to check dedup and the filters |
@@ -613,6 +661,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 ## Version history
 
 | Version | Date | Changes |
+| 0.24.0 | 19 Nov 2026 | Swappable AI harness (PRD 1.30, AH1 to AH8). The AI reader and writer run on any agent harness and subscription: `JAP_HARNESS` picks Claude Code, Codex, Gemini CLI or opencode. A runner (`agent/run.sh`, `make agent-run`) does the exports, imports, 8 parallel reader shards, leftover pass and usage-limit stop itself, and adds a checker session before writer answers go back; the harness only reads `in.json` and writes one file. Harness-neutral job prompts and JSON Schemas live in `agent/`, exports carry `contract_version` 1, and `make ENV=live agent-schedule` puts the daily reader and writer on the Mac's launchd instead of the Claude app. `make agent-check HARNESS=...` tries a harness on the local stack. Modes renamed `agent` and `api` (`claude` and `openrouter` still work); Needs you says "Waiting for the AI writer" |
 | --- | --- | --- |
 | 0.22.0 | 19 Nov 2026 | Everything on Claude (PRD 1.28). `JAP_READER=claude` also hands Possible duplicates to the Claude reader: `reader-export` (shard 1) carries the open pairs as job text with the same-job rules, and `reader-import` takes `pair:<id>` decisions and merges or keeps apart through the same step. `JAP_WRITER=claude` also leaves a required cover letter at Needs you for the Claude writer (marked `cover_letter`, with `cover_letter_rules`; JAP builds the PDF from its text) and leaves a new resume at Reading for it (`resumes` in `writer-export`, `resume:<id>` in `writer-import`). With both on claude, JAP makes no OpenRouter call |
 | 0.21.0 | 19 Nov 2026 | Claude writer only (PRD 1.27, W10). `JAP_WRITER=claude` (the default) stops JAP sending form questions to OpenRouter: a required free-text question with no saved answer waits at Needs you as "Waiting for the Claude writer" for the scheduled writer (`make writer-export` / `writer-import`), and is not counted as a failed draft. `JAP_WRITER=openrouter` brings back JAP's own drafting. Cover letters and the duplicate check still use OpenRouter |

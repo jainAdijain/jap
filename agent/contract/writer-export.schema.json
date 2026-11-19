@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jap/writer-export/1",
+  "title": "JAP writer export, contract 1 (make writer-export)",
+  "description": "Jobs waiting at Needs you, the active resume, the answer bank and new resumes to read. Name, email, phone, address and profile links are placeholders ([NAME], [EMAIL], [PHONE], [ADDRESS], [LINK_n]). PRD 1.22 W6, 1.28 W11 and W12, 1.30 AH2.",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "cover_letter_rules",
+    "resume_rules",
+    "resumes",
+    "resume",
+    "answer_bank",
+    "jobs"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": 1
+    },
+    "cover_letter_rules": {
+      "type": "string"
+    },
+    "resume_rules": {
+      "type": "string"
+    },
+    "resumes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "resume_id",
+          "text"
+        ],
+        "properties": {
+          "resume_id": {
+            "type": "string"
+          },
+          "text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "resume": {
+      "type": "string"
+    },
+    "answer_bank": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "question": {
+            "type": "string"
+          },
+          "answer": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "jobs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "application_id",
+          "company",
+          "title",
+          "job_description",
+          "questions"
+        ],
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "company": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          },
+          "job_description": {
+            "type": "string"
+          },
+          "questions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "key",
+                "label",
+                "options",
+                "max_chars",
+                "why_open",
+                "cover_letter"
+              ],
+              "properties": {
+                "key": {
+                  "type": "string"
+                },
+                "label": {
+                  "type": "string"
+                },
+                "options": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "max_chars": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "why_open": {
+                  "type": "string"
+                },
+                "cover_letter": {
+                  "type": "boolean",
+                  "description": "A required cover letter: answer with the letter, under cover_letter_rules."
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

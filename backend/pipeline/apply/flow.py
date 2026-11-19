@@ -304,10 +304,10 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
         elif f.type in CHOICE:
             pending.append({"key": f.key, "label": f.label, "options": f.options,
                             "reason": "A required choice with no saved answer"})  # fmt: skip
-        elif rules.is_free_text(f) and get_settings().jap_writer == "claude":
+        elif rules.is_free_text(f) and get_settings().jap_writer == "agent":
             # W10: never sent to OpenRouter; the Claude writer answers it at Needs you.
             pending.append({"key": f.key, "label": f.label,
-                            "reason": "Waiting for the Claude writer"})  # fmt: skip
+                            "reason": "Waiting for the AI writer"})  # fmt: skip
         elif rules.is_free_text(f) and no_credits is not None:
             # Out of credits earlier in this form: don't ask again for every question.
             pending.append({"key": f.key, "label": f.label, "draft_failed": True,
@@ -499,14 +499,14 @@ async def write_cover_letter(session: AsyncSession, app_id: str) -> dict[str, An
     if not fields or app.cover_letter_text:
         await settle(session, app, pending)
         return {"status": app.status, "letter": "not needed"}
-    if get_settings().jap_writer == "claude":
+    if get_settings().jap_writer == "agent":
         # W11 (PRD 1.28): the Claude writer writes it at Needs input, never OpenRouter.
         f = fields[0]
-        waiting = "Waiting for the Claude writer"
+        waiting = "Waiting for the AI writer"
         pending.append({"key": f["key"], "label": f["label"], "reason": waiting,
                         "cover_letter": True})  # fmt: skip
         await settle(session, app, pending)
-        return {"status": app.status, "letter": "waiting for the Claude writer"}
+        return {"status": app.status, "letter": "waiting for the AI writer"}
     profile = await session.scalar(select(Profile))
     listing = await session.get(Listing, app.listing_id)
     resume = await session.get(ResumeVersion, app.resume_version_id)
