@@ -120,6 +120,7 @@ async def test_daily_cap_and_gap(
     assert gap is not None and gap - now == timedelta(seconds=20)  # 30 s after the last one
 
 
+@pytest.mark.usefixtures("openrouter_writer")
 async def test_spend_cap_from_profile_stops_letters(
     setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
     api: httpx.AsyncClient,

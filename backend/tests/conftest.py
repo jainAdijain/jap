@@ -117,6 +117,18 @@ OWNER_EMAIL = "owner@example.com"
 OWNER_PASSWORD = "correct horse battery"
 
 
+@pytest.fixture
+def openrouter_writer(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """JAP drafts form answers itself (JAP_WRITER=openrouter, the fallback); the default,
+    the Claude writer, leaves them at Needs input (PRD 1.27 W10)."""
+    from config import get_settings
+
+    monkeypatch.setenv("JAP_WRITER", "openrouter")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
 @pytest.fixture(autouse=True)
 def fast_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
     """A cheap scrypt cost in tests; the real cost is checked in test_auth.py."""
