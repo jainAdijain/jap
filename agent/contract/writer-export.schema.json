@@ -6,6 +6,7 @@
   "type": "object",
   "required": [
     "contract_version",
+    "review_rule",
     "cover_letter_rules",
     "resume_rules",
     "resumes",
@@ -16,6 +17,10 @@
   "properties": {
     "contract_version": {
       "const": 1
+    },
+    "review_rule": {
+      "type": "string",
+      "description": "When to return a job's answers with \"_review\": \"<reason>\" so JAP holds it for review (PRD 1.29, V6)."
     },
     "cover_letter_rules": {
       "type": "string"

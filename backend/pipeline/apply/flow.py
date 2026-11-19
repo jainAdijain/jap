@@ -7,6 +7,8 @@ row when it wakes, so a press that lands before the function starts waiting is n
 """
 
 import logging
+import random
+import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -34,7 +36,7 @@ from llm.client import ModelCallError, OutOfCredits
 from observability import context
 from observability.logs import event
 from pipeline.apply import fields as rules
-from pipeline.apply import security_code
+from pipeline.apply import pacing, security_code
 from pipeline.apply.answers import bank_answer, draft_answer, pick_option
 from pipeline.apply.form import (
     PUZZLE_FOUND,
@@ -370,9 +372,35 @@ async def map_fields(session: AsyncSession, app_id: str) -> Mapped:
     return Mapped(status=app.status, drafted=drafted, pending=len(pending))
 
 
+# Forms and job descriptions that ban AI-written applications (V6, W4), as Canonical's do.
+# A match holds the job for my review in Automatic mode; it never blocks Review mode.
+AI_BAN = re.compile(
+    r"\b(do not|don't|must not|may not|should not|cannot|can't|never|refrain from|"
+    r"not (be )?(permitted|allowed)|prohibit(ed|s)?|forbid(den)?|ban(ned|s)?)\b"
+    r"[^.?!\n]{0,60}\b(AI|A\.I\.|artificial intelligence|ChatGPT|GPT|LLMs?|"
+    r"large language models?|generative)\b"
+    r"|\b(AI|A\.I\.|ChatGPT|GPT|LLMs?)\b[^.?!\n]{0,60}"
+    r"\b(not (be )?(accepted|considered|allowed|permitted)|rejected|disqualif\w*|"
+    r"prohibited|forbidden|banned)\b",
+    re.IGNORECASE,
+)
+
+
+def bans_ai(app: Application) -> bool:
+    """Whether the form's questions or the frozen description forbid AI-written answers."""
+    labels = " \n".join(str(f.get("label") or "") for f in app.form_fields or [])
+    jd = str((app.jd_snapshot or {}).get("text") or "")
+    return bool(AI_BAN.search(labels) or AI_BAN.search(jd))
+
+
 async def unclear(session: AsyncSession, app: Application) -> str | None:
-    """Why Automatic mode must not submit this job on its own (A3), or None. A job whose
-    work mode the posting doesn't state (Work mode unclear) waits for me."""
+    """Why Automatic mode must not submit this job on its own (A3, V6), or None: the Claude
+    writer's checker flagged it (hold_reason), the form or description bans AI-written
+    answers, or the posting doesn't state its work mode (Work mode unclear)."""
+    if app.hold_reason:
+        return app.hold_reason
+    if bans_ai(app):
+        return "The form or job description bans AI-written answers: review it yourself"
     listing = await session.get(Listing, app.listing_id)
     if listing is not None and listing.work_mode is None:
         return "Work mode unclear: the posting doesn't say remote, hybrid or onsite"
@@ -384,7 +412,7 @@ async def settle(session: AsyncSession, app: Application, pending: list[dict[str
     Automatic mode when nothing about the job is unclear (A3). When only the picture puzzle
     is left, the job is Finish yourself (the listing shows manual_apply), in either mode."""
     app.pending_questions = pending or None
-    app.review_reason = await unclear(session, app) if app.mode == "automatic" else None
+    app.review_reason = await unclear(session, app) if app.mode == "automatic" else app.hold_reason
     if finish_only(pending):
         await to_finish(session, app)
         return
@@ -586,15 +614,26 @@ async def applied_today(session: AsyncSession, now: datetime) -> int:
     return int(n or 0)
 
 
-async def wait_before_submit(session: AsyncSession, now: datetime) -> datetime | None:
-    """cap-check and the gap (A1): when submitting must wait until, or None to go now."""
+async def wait_before_submit(
+    session: AsyncSession, now: datetime, app: Application | None = None
+) -> datetime | None:
+    """cap-check and the gaps (A1, V4, V5): when submitting must wait until, or None to go
+    now. The daily cap, then the job's board (on hold, at its daily limit, or submitted to
+    less than JAP_ATS_GAP_SECONDS ago), then the gap since any submit plus this job's
+    jitter."""
     settings = get_settings()
     profile = await session.scalar(select(Profile))
     cap = profile.daily_cap if profile else 20
     if await applied_today(session, now) >= cap:
         return local_midnight(now, settings.jap_tz) + timedelta(days=1, minutes=1)
+    if app is not None:
+        board = await pacing.ats_wait(session, await pacing.ats_of(session, app), now)
+        if board is not None:
+            return board
     last: datetime | None = await session.scalar(select(func.max(Application.submitted_at)))
     gap = timedelta(seconds=settings.jap_apply_gap_seconds)
+    if app is not None:
+        gap += pacing.jitter(app.id)
     if last is not None and now - last < gap:
         return last + gap
     return None
@@ -602,6 +641,23 @@ async def wait_before_submit(session: AsyncSession, now: datetime) -> datetime |
 
 def _file_letters(app: Application) -> list[str]:
     return [f["key"] for f in letter_fields(app) if f["type"] == "file"]
+
+
+class BoardBlocked(Exception):
+    """The board answered 429 or 403 while the form was read (V5): hold it and wait."""
+
+
+async def board_hold(session: AsyncSession, app_id: str, reason: str | None = None) -> str | None:
+    """The end of the hold on this job's board as an ISO time, or None when it is free.
+    With a reason, the board has just refused us: start (or extend) its hold first."""
+    app = await _app(session, app_id)
+    ats = await pacing.ats_of(session, app)
+    if reason is not None:
+        until = await pacing.record_block(session, ats, reason)
+        await session.commit()
+        return until.isoformat()
+    held = await pacing.hold_until(session, ats, datetime.now(UTC))
+    return held.isoformat() if held else None
 
 
 class SubmitRetry(Exception):
@@ -622,7 +678,7 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     app = await _app(session, app_id, lock=True)
     if app.status != "applying":
         raise Stop(f"application is {app.status}")
-    until = await wait_before_submit(session, now)
+    until = await wait_before_submit(session, now, app)
     if until is not None:
         await session.rollback()
         return {"wait_until": until.isoformat()}
@@ -659,6 +715,15 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
         app.trace_path = str(trace) if trace.exists() else None
         await to_finish(session, app)
         return {"status": "needs_input"}
+    if pacing.is_blocked(result.error) and (not result.clicked or result.rejected):
+        # V5: the board throttled or refused us before anything was sent. Hold the board and
+        # try this job again when the hold ends, instead of failing it.
+        until = await pacing.record_block(session, await pacing.ats_of(session, app),
+                                          str(result.error))  # fmt: skip
+        app.submit_started_at = None
+        app.screenshot_path = str(shot) if result.screenshot else app.screenshot_path
+        await session.commit()
+        return {"wait_until": until.isoformat()}
     if not result.clicked:
         event(log, "apply.submit_retry", f"Submit not pressed: {result.error}",
               level=logging.WARNING, keep=True)  # fmt: skip
@@ -686,6 +751,7 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     )
     if app.run_id:
         await bump(session, app.run_id, "applied")
+    await pacing.clear_strikes(session, await pacing.ats_of(session, app))
     await session.commit()
     event(log, "apply.submitted", "Submitted and confirmed", keep=True)
     return {"status": "applied"}
@@ -721,7 +787,9 @@ async def read_and_save(session: AsyncSession, app_id: str, url: str) -> int:
     shot = data_path("screenshots", f"{app_id}.png")
     try:
         read = await read_form(url, shot)
-    except FormError:
+    except FormError as exc:
+        if pacing.is_blocked(str(exc)):
+            raise BoardBlocked(str(exc)) from exc
         if shot.exists():
             app = await _app(session, app_id)
             app.screenshot_path = str(shot)
@@ -742,24 +810,37 @@ def skills_bar(profile: Profile | None) -> int:
 
 
 async def pick(session: AsyncSession, run_id: str) -> list[str]:
-    """pick (Find and apply): listed, Not applied listings with an open primary posting,
-    newest first, up to what is left of today's cap. A run scoped to some roles picks
-    only the listings counted under those roles.
+    """pick (Find and apply): listed, Not applied listings with an open primary posting, up
+    to what is left of today's cap. A run scoped to some roles picks only the listings
+    counted under those roles.
 
     In Automatic mode JAP sends on its own, so it picks only jobs at or above the auto-apply
     bar (F6): at least auto_apply_min_skills % of my required skills. A job below the bar,
     or with Skills not stated, stays Not applied on the list for me to apply by hand. With
     no required skills, or a bar of 0, there is nothing to measure and every job is picked.
-    Review mode prepares for me to read first, so the bar does not apply there."""
+    Review mode prepares for me to read first, so the bar does not apply there.
+
+    Automatic at volume (V2 to V7, PRD 1.29): the jobs come in random order, not newest
+    first, at most JAP_PER_COMPANY_DAY a day at one company and JAP_PER_ATS_DAY a day on one
+    ATS, none on an ATS that is on hold, and up to JAP_AUTO_EXTRA_PICKS past the cap (less
+    what is still in flight) so jobs held for review or a puzzle do not leave the day short;
+    submit still stops at the cap. Review mode keeps newest first and the plain cap."""
     run = await session.get(Run, uuid.UUID(run_id))
     profile = await session.scalar(select(Profile))
     if run is None or run.mode != "find_and_apply":
         return []
     if await session.scalar(select(ResumeVersion.id).where(ResumeVersion.is_active)) is None:
         return []
-    left = (profile.daily_cap if profile else 20) - await applied_today(session, datetime.now(UTC))
+    settings = get_settings()
+    now = datetime.now(UTC)
+    automatic = profile is not None and profile.apply_mode == "automatic"
+    left = (profile.daily_cap if profile else 20) - await applied_today(session, now)
     if left <= 0:
         return []
+    if automatic:
+        left += settings.jap_auto_extra_picks - await pacing.in_flight(session, now)
+        if left <= 0:
+            return []
     watched = (
         select(Posting.listing_id)
         .join(WatchedBoard, WatchedBoard.id == Posting.watched_board_id)
@@ -774,18 +855,38 @@ async def pick(session: AsyncSession, run_id: str) -> list[str]:
     bar = skills_bar(profile)
     if bar:
         where.append(Listing.required_pct >= bar)
-    rows = await session.scalars(
-        select(Listing)
-        .join(Posting, Posting.id == Listing.primary_posting_id)
-        .where(*where)
-        .order_by(Listing.last_posted_at.desc().nulls_last())
+    rows = list(
+        (
+            await session.execute(
+                select(Listing, Posting.source)
+                .join(Posting, Posting.id == Listing.primary_posting_id)
+                .where(*where)
+                .order_by(Listing.last_posted_at.desc().nulls_last())
+            )
+        ).all()
     )
+    today: dict[str, dict[str, int]] = {"companies": {}, "boards": {}}
+    held: dict[str, datetime] = {}
+    if automatic:
+        random.shuffle(rows)  # V2: spread the day across companies
+        today = await pacing.started_today(session, now)
+        held = await pacing.held_boards(session, now)
+    companies, boards = today["companies"], today["boards"]
     matcher = role_matcher((run.scope or {}).get("roles"))
     out: list[str] = []
-    for listing in rows:
+    for listing, ats in rows:
         if len(out) >= left:
             break
+        company = str(listing.company_id)
+        if automatic and (
+            str(ats) in held
+            or companies.get(company, 0) >= settings.jap_per_company_day
+            or boards.get(str(ats), 0) >= settings.jap_per_ats_day
+        ):
+            continue
         if not in_scope(listing.title_display, matcher) or await why_not(session, listing.id):
             continue
         out.append(str(listing.id))
+        companies[company] = companies.get(company, 0) + 1
+        boards[str(ats)] = boards.get(str(ats), 0) + 1
     return out

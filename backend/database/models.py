@@ -276,6 +276,9 @@ class Application(Timestamps, Base):
     submitted_at: Mapped[datetime | None]
     email_sent_at: Mapped[datetime | None]
     review_reason: Mapped[str | None] = mapped_column(Text)  # why Automatic mode still waits
+    # Why it waits for my review in any mode (V6): the writer's checker flagged it, or the
+    # form bans AI-written answers. Automatic mode never sends it on its own.
+    hold_reason: Mapped[str | None] = mapped_column(Text)
     alert_sent_at: Mapped[datetime | None]
     inngest_run_id: Mapped[str | None] = mapped_column(Text)
 
@@ -424,3 +427,16 @@ class AlertState(Base):
     key: Mapped[str] = mapped_column(Text, primary_key=True)
     last_sent_at: Mapped[datetime]
     detail: Mapped[str | None] = mapped_column(Text)
+
+
+class AtsHold(Base):
+    """An ATS that answered 429 or 403 (V5, PRD 1.29): nothing is read or submitted there
+    until `until`; `strikes` in a row make the next hold longer."""
+
+    __tablename__ = "ats_hold"
+
+    ats: Mapped[str] = mapped_column(ATS, primary_key=True)
+    until: Mapped[datetime]
+    strikes: Mapped[int] = mapped_column(Integer, server_default="0")
+    reason: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now())

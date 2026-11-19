@@ -1,9 +1,10 @@
 # agent/: JAP's AI work on any harness
 
-Version 1.0, 19 Nov 2026 · follows PRD 1.30 (AH1 to AH8) · code v0.24.0
+Version 1.1, 19 Nov 2026 · follows PRD 1.30 (AH1 to AH8) · code v0.24.0
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.1 | 19 Nov 2026 | Writer and checker follow `review_rule` (PRD 1.29 V6): a flagged job comes back with `_review` instead of being left out |
 | 1.0 | 19 Nov 2026 | First version: runner, job prompts, adapters for Claude Code, Codex, Gemini CLI and opencode, launchd schedule, contract 1 |
 
 JAP never calls an AI harness itself. It hands out redacted batches (`make reader-export`,

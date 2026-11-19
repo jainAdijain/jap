@@ -285,6 +285,8 @@ unclear (A3):
 
 - a job whose posting doesn't say remote, hybrid or onsite (**Work mode unclear**) stops at
   Ready for review, with "Automatic mode left this one for you" and the reason;
+- so does a job the AI writer's checker flagged ("Checker: ..."), and a form or job
+  description that bans AI-written answers (V6, PRD 1.29);
 - a question only you can answer, a required choice with no saved answer or a failed cover
   letter still stops at **Needs input**;
 - a form with a picture puzzle stops at **Finish yourself: puzzle**, filled in, for you to
@@ -306,6 +308,32 @@ says "daily cap reached". The Daily run finds and prepares the new jobs that fit
 you. The scheduled AI writer (outside JAP) can then answer what is at Needs you from the
 resume and answer bank; nothing is sent before you approve. Switching back to Review makes the
 next run prepare without submitting.
+
+### Automatic at volume (PRD 1.29, V1 to V8)
+
+Automatic mode is meant to send 10 or more applications a day without you, so it paces itself
+so that no job board rate-limits or flags you:
+
+- **Random picks.** A run takes the matching jobs in random order, not newest first, so the day
+  spreads across companies. Review mode keeps newest first.
+- **Per company.** At most 2 attempts a day at one company (`JAP_PER_COMPANY_DAY`), counting
+  every attempt started that day, sent or not.
+- **Per job board.** At most 8 submits a day on one ATS (Greenhouse, Lever or Ashby,
+  `JAP_PER_ATS_DAY`), at least 5 minutes apart on the same ATS (`JAP_ATS_GAP_SECONDS`), on top
+  of the 30 seconds between any two submits plus 0 to 30 seconds that differ per job
+  (`JAP_APPLY_JITTER_SECONDS`).
+- **Backoff.** A 429 or 403 from an ATS, or a page saying too many requests, puts that ATS on
+  hold for 1 hour, then 4, then 24 on repeats (table `ats_hold`). Nothing is read or submitted
+  there until the hold ends; the job waits instead of failing, and the Runs history says
+  "On hold after a rate limit". A confirmed submit there clears the strikes.
+- **The AI writer answers Automatic jobs too.** `writer-export` now includes Automatic jobs
+  at Needs you, with a `review_rule`: a job its checker flags comes back with
+  `"_review": "<reason>"`, which is kept as the application's `hold_reason`, so it stops at
+  Ready for review and is never sent on its own. A writer that leaves a job out also leaves it
+  unsent.
+- **Extra picks.** A run picks up to the daily cap plus 5 (`JAP_AUTO_EXTRA_PICKS`), less the
+  Automatic attempts still in flight, so jobs held for review or a puzzle don't leave the day
+  short. Submits still stop at the cap; the rest wait for the next day's cap.
 
 ## AI reader
 
@@ -663,6 +691,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 | Version | Date | Changes |
 | 0.24.0 | 19 Nov 2026 | Swappable AI harness (PRD 1.30, AH1 to AH8). The AI reader and writer run on any agent harness and subscription: `JAP_HARNESS` picks Claude Code, Codex, Gemini CLI or opencode. A runner (`agent/run.sh`, `make agent-run`) does the exports, imports, 8 parallel reader shards, leftover pass and usage-limit stop itself, and adds a checker session before writer answers go back; the harness only reads `in.json` and writes one file. Harness-neutral job prompts and JSON Schemas live in `agent/`, exports carry `contract_version` 1, and `make ENV=live agent-schedule` puts the daily reader and writer on the Mac's launchd instead of the Claude app. `make agent-check HARNESS=...` tries a harness on the local stack. Modes renamed `agent` and `api` (`claude` and `openrouter` still work); Needs you says "Waiting for the AI writer" |
 | --- | --- | --- |
+| 0.23.0 | 19 Nov 2026 | Automatic at volume (PRD 1.29, V1 to V8). Automatic runs pick matching jobs in random order, at most 2 attempts a day per company and 8 submits a day per ATS, 5 minutes apart per ATS plus a per-job jitter on the 30 second gap. A 429 or 403 (or "too many requests") puts the ATS on hold for 1, 4, then 24 hours (migration `0012_board_pacing`: `ats_hold`); the job waits instead of failing and the Runs history shows the hold. The Claude writer now answers Automatic jobs at Needs you too, and a job it flags (`"_review"` in `writer-import`, kept as `application.hold_reason`) or a form that bans AI-written answers stops at Ready for review, never sent on its own. A run picks the cap plus 5 extra, less what is in flight |
 | 0.22.0 | 19 Nov 2026 | Everything on Claude (PRD 1.28). `JAP_READER=claude` also hands Possible duplicates to the Claude reader: `reader-export` (shard 1) carries the open pairs as job text with the same-job rules, and `reader-import` takes `pair:<id>` decisions and merges or keeps apart through the same step. `JAP_WRITER=claude` also leaves a required cover letter at Needs you for the Claude writer (marked `cover_letter`, with `cover_letter_rules`; JAP builds the PDF from its text) and leaves a new resume at Reading for it (`resumes` in `writer-export`, `resume:<id>` in `writer-import`). With both on claude, JAP makes no OpenRouter call |
 | 0.21.0 | 19 Nov 2026 | Claude writer only (PRD 1.27, W10). `JAP_WRITER=claude` (the default) stops JAP sending form questions to OpenRouter: a required free-text question with no saved answer waits at Needs you as "Waiting for the Claude writer" for the scheduled writer (`make writer-export` / `writer-import`), and is not counted as a failed draft. `JAP_WRITER=openrouter` brings back JAP's own drafting. Cover letters and the duplicate check still use OpenRouter |
 | 0.20.0 | 18 Nov 2026 | Claude reader (PRD 1.25, R1 to R7). Job postings are read for skills, seniority, salary, visa sponsorship, remote regions and whether a cover letter is asked by a scheduled Claude session on your Claude plan instead of OpenRouter, so reading needs no API credit. `JAP_READER=claude` (the default) stops JAP sending descriptions to OpenRouter; what the ATS states is still copied straight away. `make reader-export` gives the session a batch of unread postings (job text only, redacted and guarded; titles in your target roles first, and in disjoint shards so 8 readers can work at once); `make reader-import FILE=...` checks its fields against the extraction schema, saves the postings that pass for the description that was exported, and refreshes their jobs. `JAP_READER=openrouter` brings back JAP's own read as the fallback |

@@ -130,6 +130,7 @@ export type RunCounts = {
   draft_failed?: number
   spend_cap_reached?: boolean
   daily_cap_reached?: boolean
+  boards_on_hold?: string[]
 }
 export type Run = {
   id: string

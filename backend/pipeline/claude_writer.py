@@ -1,13 +1,16 @@
 """The AI writer's only door into JAP (PRD 1.22, W2 to W6; 1.30 AH1): export and import.
 
 An outside AI harness (agent/run.sh starts it, PRD 1.30) answers the jobs waiting at Needs
-input in Review mode. It never reads the database. `export` gives it what writing needs (each
-job's frozen description and open questions, the active resume, the answer bank), with my name,
-email, phone, address and profile links swapped for [NAME], [EMAIL], [PHONE], [ADDRESS] and
-[LINK_n] by the same redaction every model call uses, and guard() refuses the export if
-anything personal is left. `import` takes its answers back, puts the real values in locally
-(restore), and hands them to the same answer step as the Needs input panel, so the job is
-prepared again and reaches Ready for review. Nothing here approves or submits.
+input, in Review and (from PRD 1.29, V6) Automatic mode. A job its checker flags comes back
+with "_review": "<reason>"; that reason is kept as the application's hold_reason, so the job
+stops at Ready for review and Automatic mode never sends it. It never reads the database.
+`export` gives it what writing needs (each job's frozen description and open questions, the
+active resume, the answer bank), with my name, email, phone, address and profile links
+swapped for [NAME], [EMAIL], [PHONE], [ADDRESS] and [LINK_n] by the same redaction every model
+call uses, and guard() refuses the export if anything personal is left. `import` takes its
+answers back, puts the real values in locally (restore), and hands them to the same answer
+step as the Needs input panel, so the job is prepared again and reaches Ready for review.
+Nothing here approves or submits.
 
 With JAP_WRITER=agent (PRD 1.28; named claude before 1.30) it also writes required cover
 letters (W11: a question marked cover_letter, answered with the letter under
@@ -44,6 +47,16 @@ from pipeline.resume import save_parsed, sensitive_from_profile
 from schemas.resume import ParsedResume
 
 RESUME = "resume:"
+REVIEW = "_review"  # V6: the checker's reason a job must wait for Aditya, in its answers
+
+# Said in every export, so the session knows how to hold a job back (V6, PRD 1.29).
+REVIEW_RULE = (
+    "If your checker finds anything in a job's answers or letter (a claim not in the resume "
+    "or answer bank, a required field left empty or invalid), or the form or job description "
+    'bans AI-written answers, still return its answers but add "_review": "<the reason, one '
+    'sentence>" to that job. JAP then holds it for Aditya to review and never sends it on its '
+    "own. Leave a job out entirely only when you cannot answer it."
+)
 
 
 def _rules(purpose: str) -> str:
@@ -90,6 +103,7 @@ def build_export(
     """The redacted payload; raises PersonalDataBlocked if any personal value survives."""
     out = {
         "contract_version": CONTRACT_VERSION,
+        "review_rule": REVIEW_RULE,
         "cover_letter_rules": _rules("cover_letter"),
         "resume_rules": _rules("resume_parse"),
         "resumes": [
@@ -136,7 +150,7 @@ async def export(session: AsyncSession) -> dict[str, Any]:
         select(Application, Listing, Company)
         .join(Listing, Listing.id == Application.listing_id)
         .join(Company, Company.id == Listing.company_id)
-        .where(Application.status == "needs_input", Application.mode == "review")
+        .where(Application.status == "needs_input")  # both modes (V6, PRD 1.29)
         .order_by(Application.created_at)
     )
     jobs = []
@@ -214,6 +228,13 @@ async def import_answers(session: AsyncSession, answers: dict[str, Any]) -> list
             out.append(await import_resume(session, app_id, given))
             continue
         try:
+            given = dict(given)
+            held = str(given.pop(REVIEW, "") or "").strip()
+            if held:  # V6: set before answering, so the job settles at Ready for review
+                app = await session.get(Application, uuid.UUID(app_id), with_for_update=True)
+                if app is not None:
+                    app.hold_reason = f"Checker: {held}"[:500]
+                    await session.commit()
             body = AnswerQuestionsIn(answers=restore_answers(given, values), save_to_bank=False)
             done = await answer(uuid.UUID(app_id), body, session)
             out.append(f"{app_id}: {done.status}")

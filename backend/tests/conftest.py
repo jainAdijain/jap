@@ -23,7 +23,7 @@ from database import session as db_session
 BACKEND = Path(__file__).resolve().parent.parent
 TABLES = (
     "auth_session, password_reset, app_user, "
-    "log_event, route_stat, alert_state, "
+    "log_event, route_stat, alert_state, ats_hold, "
     "form_check, llm_call, possible_duplicate, dedup_override, skill_alias, company_alias, "
     "answer_bank, "
     "application, run, posting, listing, watched_board, company, resume_version, profile"
