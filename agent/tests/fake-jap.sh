@@ -2,8 +2,11 @@
 # A stand-in for `make ENV=... <target>` in agent/tests/run_test.sh (PRD 1.30): JAP's
 # reader and writer commands over a small JSON state file (FAKE_STATE), no Docker, no database.
 exec python3 - "$@" <<'PY'
-import json, os, sys
+import fcntl, json, os, sys
 state_file = os.environ["FAKE_STATE"]
+# The runner's shards call this in parallel: one at a time, as JAP's database would be.
+lock = open(state_file + ".lock", "w")
+fcntl.flock(lock, fcntl.LOCK_EX)
 state = json.load(open(state_file))
 target, args = sys.argv[1], dict(a.split("=", 1) for a in sys.argv[2:])
 
