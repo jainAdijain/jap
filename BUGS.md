@@ -26,6 +26,7 @@ commit that fixes them.
 | [JAP-9](#jap-9--bug--ashby-yesno-questions-were-not-read) | Bug | Fixed (v0.18.3) | Ashby Yes/No questions were not read |
 | [JAP-10](#jap-10--bug--remote-jobs-failed-location-when-the-model-had-not-read-them) | Bug | Fixed (v0.19.1) | Remote jobs failed Location when the model had not read them |
 | [JAP-11](#jap-11--bug--ashby-applications-were-sent-half-filled) | Bug | Fixed (v0.19.2) | Ashby applications were sent half filled |
+| [JAP-12](#jap-12--bug--applications-waiting-across-the-v0230-deploy-failed-with-int-is-not-iterable) | Bug | Fixed (v0.24.1) | Applications waiting across the v0.23.0 deploy failed with "'int' is not iterable" |
 
 ---
 
@@ -352,3 +353,24 @@ it; run `make form-check ENV=live` after merging to read a live Ashby form. Requ
 questions JAP has no saved answer for (SMS and WhatsApp opt-in, how you heard about the job,
 the acknowledgement) now stop at Needs input once; the answers go to the answer bank and fill
 every later Ashby form.
+
+## JAP-12 — Bug — Applications waiting across the v0.23.0 deploy failed with "'int' is not iterable"
+
+**Status:** Fixed (v0.24.1). Reported 19 Nov 2026 by Aditya ("a lot more applications are
+failing to submit"). Three Supabase applications (SWE Storage, Turso, Spark) failed at 14:58 to
+15:00 IST with `argument of type 'int' is not iterable`.
+
+Cause: Inngest replays a function's finished steps from their stored results. These attempts
+had passed `read-form` under v0.22.0, when `read_step` returned the field count as an int, and
+then waited at Ready for review or Needs you. v0.23.0 (deployed 12:42 IST) made `read_step`
+return a dict and added a board-hold loop that checks `"wait_until" not in read`
+(`backend/functions/apply_listing.py`). When the waiting attempts resumed, the replayed int hit
+that check, the TypeError failed the function three times, and the attempt became Failed. New
+attempts were not affected.
+
+Fixed: `form_was_read()` treats a result that is not a dict as "the form was read", so a run
+that started on older code goes on as before. Retry each of the three on Jobs to apply again.
+
+Lesson: a step's return type is part of the stored state of every run in flight. When a deploy
+changes it, the new code must still accept the old shape, and a deploy should check for
+waiting apply runs first.

@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.24.0 (swappable AI harness: Claude, Codex, Gemini CLI or opencode), 19 Nov 2026.**
+**Version 0.24.1 (applications waiting across a deploy no longer fail, JAP-12), 19 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -690,6 +690,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.24.1 | 19 Nov 2026 | Fix JAP-12: an application that passed read-form before v0.23.0 and was waiting when v0.23.0 was deployed failed with "'int' is not iterable" when it resumed, because the stored read-form result was the old field count. apply-listing now accepts both shapes |
 | 0.24.0 | 19 Nov 2026 | Swappable AI harness (PRD 1.30, AH1 to AH8). The AI reader and writer run on any agent harness and subscription: `JAP_HARNESS` picks Claude Code, Codex, Gemini CLI or opencode. A runner (`agent/run.sh`, `make agent-run`) does the exports, imports, 8 parallel reader shards, leftover pass and usage-limit stop itself, and adds a checker session before writer answers go back; the harness only reads `in.json` and writes one file. Harness-neutral job prompts and JSON Schemas live in `agent/`, exports carry `contract_version` 1, and `make ENV=live agent-schedule` puts the daily reader and writer on the Mac's launchd instead of the Claude app. `make agent-check HARNESS=...` tries a harness on the local stack. Modes renamed `agent` and `api` (`claude` and `openrouter` still work); Needs you says "Waiting for the AI writer" |
 | 0.23.1 | 19 Nov 2026 | Fix: `writer-export` was refused on live ("personal detail in model input (name)") because the new `review_rule` text named the owner. It now names no one, and a test exports with an owner name set |
 | 0.23.0 | 19 Nov 2026 | Automatic at volume (PRD 1.29, V1 to V8). Automatic runs pick matching jobs in random order, at most 2 attempts a day per company and 8 submits a day per ATS, 5 minutes apart per ATS plus a per-job jitter on the 30 second gap. A 429 or 403 (or "too many requests") puts the ATS on hold for 1, 4, then 24 hours (migration `0012_board_pacing`: `ats_hold`); the job waits instead of failing and the Runs history shows the hold. The Claude writer now answers Automatic jobs at Needs you too, and a job it flags (`"_review"` in `writer-import`, kept as `application.hold_reason`) or a form that bans AI-written answers stops at Ready for review, never sent on its own. A run picks the cap plus 5 extra, less what is in flight |
