@@ -15,7 +15,7 @@ from database.models import AtsHold
 from database.session import get_sessionmaker
 from pipeline import claude_writer
 from pipeline.apply import flow, pacing
-from pipeline.apply.form import FormError, FormField, FormRead, SubmitResult
+from pipeline.apply.form import FormError, FormField, FormRead, SubmitResult, apply_limit
 from tests.test_apply import (
     FORM,
     WHY,
@@ -284,3 +284,98 @@ def test_a_read_form_result_from_older_code_still_counts_as_read() -> None:
     assert form_was_read(7)  # v0.22.0 returned the field count
     assert form_was_read({"fields": 7})
     assert not form_was_read({"wait_until": "2026-11-19T10:00:00+00:00"})
+
+
+@pytest.mark.parametrize(
+    ("text", "limit"),
+    [
+        (
+            "This job has application limits. You can submit up to 3 applications within a "
+            "60-day period.",
+            (3, 60),
+        ),  # fmt: skip
+        ("You may apply for up to 2 roles in any 30 days", (2, 30)),
+        ("Apply for this job", None),
+        ("We review applications within 5 days", None),
+    ],
+)
+def test_a_company_limit_on_the_form(text: str, limit: tuple[int, int] | None) -> None:
+    assert apply_limit(text) == limit
+
+
+def _sent(sql: psycopg.Connection[Any], resume: str, listing: str, at: datetime) -> None:
+    """An attempt whose Submit was pressed then, with no confirmation."""
+    sql.execute(
+        "INSERT INTO application (listing_id, posting_id, status, mode, resume_version_id,"
+        " submit_started_at, created_at) SELECT id, primary_posting_id, 'failed', 'automatic',"
+        " %s, %s, %s FROM listing WHERE id = %s",
+        (resume, at, at, listing),
+    )
+    sql.execute("UPDATE listing SET status = 'failed' WHERE id = %s", (listing,))
+
+
+async def test_a_company_at_its_own_limit_gets_no_submit_and_no_pick(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], api: httpx.AsyncClient,
+    events: list[tuple[str, dict[str, Any]]], monkeypatch: pytest.MonkeyPatch,
+) -> None:  # fmt: skip
+    now = datetime.now(UTC)
+    for i in range(2):
+        done = _listing(sql, f"Old {i}", ext=f"o{i}")
+        _sent(sql, setup["resume"], done, now - timedelta(days=10 + i))
+    other = _listing(sql, "Engineer", ext="b1", company="Beta")
+
+    async def limited(url: str, screenshot: Path | None = None) -> FormRead:
+        return FormRead(fields=list(FORM), captcha=False, limit=(2, 60))
+
+    monkeypatch.setattr(flow, "read_form", limited)
+    async with get_sessionmaker()() as session:
+        app_id = await flow.create_attempt(session, setup["listing"], None)
+        url = await flow.snapshot(session, app_id)
+        with pytest.raises(flow.CompanyLimit, match="Acme takes up to 2 applications in 60"):
+            await flow.read_and_save(session, app_id, url)
+    assert _status(sql, app_id) == ("failed", "failed")
+    row = sql.execute("SELECT apply_limit, apply_limit_days FROM company WHERE name = 'Acme'")
+    assert row.fetchone() == (2, 60)
+    _listing(sql, "Engineer 2", ext="2")
+    _automatic(sql)
+    assert await _pick(api) == [other]  # Acme is passed over until the window has room
+    sql.execute(  # the window moves on; today's failed attempt at Acme was never sent
+        "UPDATE application SET submit_started_at = now() - interval '61 days',"
+        " created_at = now() - interval '61 days'"
+    )
+    assert len(await _pick(api)) == 2
+
+
+async def test_an_unconfirmed_submit_counts_for_the_board_gap(
+    setup: dict[str, Any], sql: psycopg.Connection[Any]
+) -> None:
+    now = datetime.now(UTC)
+    other = _listing(sql, "Engineer", ext="2", company="Beta")
+    _sent(sql, setup["resume"], other, now - timedelta(seconds=30))
+    async with get_sessionmaker()() as session:
+        until = await pacing.ats_wait(session, "greenhouse", now)
+    assert until is not None and abs((until - now).total_seconds() - 270) < 1
+
+
+async def test_submit_checks_the_company_limit_again(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Two jobs at one company read their forms together; the first submit uses up the cap,
+    so the second must not go (Turso and Spark at Supabase, JAP-13)."""
+    _fake_form(monkeypatch, FORM)
+    app_id = await _prepare(setup["listing"])
+    sql.execute("UPDATE application SET status = 'applying' WHERE id = %s", (app_id,))
+    sql.execute("UPDATE company SET apply_limit = 1, apply_limit_days = 60")
+    _sent(sql, setup["resume"], _listing(sql, "Engineer 2", ext="2"), datetime.now(UTC))
+    monkeypatch.setattr(get_settings(), "jap_ats_gap_seconds", 0)
+    monkeypatch.setattr(get_settings(), "jap_apply_gap_seconds", 0)
+    monkeypatch.setattr(get_settings(), "jap_apply_jitter_seconds", 0)
+
+    async def must_not_run(*args: Any) -> SubmitResult:
+        raise AssertionError("submitted past the company's limit")
+
+    monkeypatch.setattr(flow, "submit_form", must_not_run)
+    async with get_sessionmaker()() as session:
+        assert await flow.submit(session, app_id) == {"status": "failed"}
+    row = sql.execute("SELECT error FROM application WHERE id = %s", (app_id,)).fetchone()
+    assert row is not None and str(row[0]).startswith("Company limit: Acme")

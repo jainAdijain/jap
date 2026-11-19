@@ -130,6 +130,10 @@ class Company(Timestamps, Base):
     name: Mapped[str] = mapped_column(Text)
     canonical_name: Mapped[str] = mapped_column(Text, unique=True)
     careers_domain: Mapped[str | None] = mapped_column(Text, unique=True)
+    # The company's own cap on applications from one person, read off its form (JAP-13):
+    # at most apply_limit in any apply_limit_days. Null = none seen.
+    apply_limit: Mapped[int | None]
+    apply_limit_days: Mapped[int | None]
 
 
 class CompanyAlias(Timestamps, Base):

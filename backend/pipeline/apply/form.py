@@ -151,6 +151,26 @@ class FormField:
 class FormRead:
     fields: list[FormField]
     captcha: bool
+    # The employer's own cap on applications from one person, as (how many, in how many
+    # days), when the form states one (JAP-13). None when it does not.
+    limit: tuple[int, int] | None = None
+
+
+# Supabase on Ashby: "You can submit up to 3 applications within a 60-day period".
+APPLY_LIMIT = re.compile(
+    r"(?:submit|send|apply)(?: for)? up to (\d+) (?:applications?|jobs?|roles?|positions?)"
+    r"(?: in total)? (?:with)?in (?:a |an |any |the )?(?:(?:rolling|last|past) )?"
+    r"(\d+)[- ]?(?:days?|-day period)",
+    re.IGNORECASE,
+)
+
+
+def apply_limit(text: str) -> tuple[int, int] | None:
+    """The (applications, days) cap a form states, or None."""
+    m = APPLY_LIMIT.search(" ".join(text.split()))
+    if m is None or int(m.group(1)) < 1 or int(m.group(2)) < 1:
+        return None
+    return int(m.group(1)), int(m.group(2))
 
 
 @dataclass
@@ -230,6 +250,7 @@ async def read_form(url: str, screenshot: Path | None = None) -> FormRead:
             try:
                 page = await _open_page(page, url)
                 data = await page.evaluate(READ_JS)
+                limit = apply_limit(await page.inner_text("body"))
                 for r in data["fields"]:
                     if r.get("widget") == "combobox":
                         r["options"] = await _combo_options(page, str(r["key"]))
@@ -244,7 +265,7 @@ async def read_form(url: str, screenshot: Path | None = None) -> FormRead:
             raise
         finally:
             await browser.close()
-    return FormRead(fields=fields, captcha=bool(data["captcha"]))
+    return FormRead(fields=fields, captcha=bool(data["captcha"]), limit=limit)
 
 
 async def _shot(page: Page, path: Path) -> bool:

@@ -627,10 +627,13 @@ async def wait_before_submit(
     if await applied_today(session, now) >= cap:
         return local_midnight(now, settings.jap_tz) + timedelta(days=1, minutes=1)
     if app is not None:
-        board = await pacing.ats_wait(session, await pacing.ats_of(session, app), now)
+        board = await pacing.ats_wait(session, await pacing.ats_of(session, app), now, but=app.id)
         if board is not None:
             return board
-    last: datetime | None = await session.scalar(select(func.max(Application.submitted_at)))
+    others = select(func.max(pacing.SENT_AT))
+    if app is not None:  # its own earlier press is not a submit before it
+        others = others.where(Application.id != app.id)
+    last: datetime | None = await session.scalar(others)
     gap = timedelta(seconds=settings.jap_apply_gap_seconds)
     if app is not None:
         gap += pacing.jitter(app.id)
@@ -660,6 +663,24 @@ async def board_hold(session: AsyncSession, app_id: str, reason: str | None = No
     return held.isoformat() if held else None
 
 
+class CompanyLimit(Exception):
+    """The company's form caps applications from one person and the cap is used up (JAP-13):
+    the attempt has failed with the reason, and nothing was sent."""
+
+
+async def at_company_limit(session: AsyncSession, app: Application, read: FormRead) -> str | None:
+    """Keep a cap the form states on the company, then say whether this attempt is past it."""
+    listing = await session.get(Listing, app.listing_id)
+    if listing is None:
+        return None
+    if read.limit is not None:
+        company = await session.get(Company, listing.company_id)
+        if company is not None:
+            company.apply_limit, company.apply_limit_days = read.limit
+            await session.commit()
+    return await pacing.company_limit(session, listing.company_id, datetime.now(UTC), but=app.id)
+
+
 class SubmitRetry(Exception):
     """Submit failed before the button was pressed: safe to try again."""
 
@@ -684,6 +705,12 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
         return {"wait_until": until.isoformat()}
     if app.submit_started_at is not None:
         await fail(session, app, "Submit outcome unknown: check the employer's site by hand")
+        return {"status": "failed"}
+    listing = await session.get(Listing, app.listing_id)
+    if listing is not None and (
+        full := await pacing.company_limit(session, listing.company_id, now, but=app.id)
+    ):  # another job at this company used up its cap since this form was read (JAP-13)
+        await fail(session, app, full)
         return {"status": "failed"}
     settings = get_settings()
     if not settings.jap_submit_enabled:  # H4: only prod sends
@@ -796,6 +823,11 @@ async def read_and_save(session: AsyncSession, app_id: str, url: str) -> int:
             await session.commit()
         raise
     await save_form(session, app_id, read)
+    app = await _app(session, app_id, lock=True)
+    reason = await at_company_limit(session, app, read)
+    if reason is not None:
+        await fail(session, app, reason)
+        raise CompanyLimit(reason)
     event(log, "apply.form_read", f"Read the form: {len(read.fields)} fields", keep=True,
           fields=len(read.fields))  # fmt: skip
     return len(read.fields)
@@ -867,6 +899,7 @@ async def pick(session: AsyncSession, run_id: str) -> list[str]:
     )
     today: dict[str, dict[str, int]] = {"companies": {}, "boards": {}}
     held: dict[str, datetime] = {}
+    full = await pacing.companies_at_limit(session, now)  # JAP-13, in either mode
     if automatic:
         random.shuffle(rows)  # V2: spread the day across companies
         today = await pacing.started_today(session, now)
@@ -878,6 +911,8 @@ async def pick(session: AsyncSession, run_id: str) -> list[str]:
         if len(out) >= left:
             break
         company = str(listing.company_id)
+        if company in full:
+            continue
         if automatic and (
             str(ats) in held
             or companies.get(company, 0) >= settings.jap_per_company_day
