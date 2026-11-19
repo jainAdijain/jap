@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.23.0 (Automatic at volume: random picks, paced per job board), 19 Nov 2026.**
+**Version 0.23.1 (Claude writer export works again), 19 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -642,6 +642,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.23.1 | 19 Nov 2026 | Fix: `writer-export` was refused on live ("personal detail in model input (name)") because the new `review_rule` text named the owner. It now names no one, and a test exports with an owner name set |
 | 0.23.0 | 19 Nov 2026 | Automatic at volume (PRD 1.29, V1 to V8). Automatic runs pick matching jobs in random order, at most 2 attempts a day per company and 8 submits a day per ATS, 5 minutes apart per ATS plus a per-job jitter on the 30 second gap. A 429 or 403 (or "too many requests") puts the ATS on hold for 1, 4, then 24 hours (migration `0012_board_pacing`: `ats_hold`); the job waits instead of failing and the Runs history shows the hold. The Claude writer now answers Automatic jobs at Needs you too, and a job it flags (`"_review"` in `writer-import`, kept as `application.hold_reason`) or a form that bans AI-written answers stops at Ready for review, never sent on its own. A run picks the cap plus 5 extra, less what is in flight |
 | 0.22.0 | 19 Nov 2026 | Everything on Claude (PRD 1.28). `JAP_READER=claude` also hands Possible duplicates to the Claude reader: `reader-export` (shard 1) carries the open pairs as job text with the same-job rules, and `reader-import` takes `pair:<id>` decisions and merges or keeps apart through the same step. `JAP_WRITER=claude` also leaves a required cover letter at Needs you for the Claude writer (marked `cover_letter`, with `cover_letter_rules`; JAP builds the PDF from its text) and leaves a new resume at Reading for it (`resumes` in `writer-export`, `resume:<id>` in `writer-import`). With both on claude, JAP makes no OpenRouter call |
 | 0.21.0 | 19 Nov 2026 | Claude writer only (PRD 1.27, W10). `JAP_WRITER=claude` (the default) stops JAP sending form questions to OpenRouter: a required free-text question with no saved answer waits at Needs you as "Waiting for the Claude writer" for the scheduled writer (`make writer-export` / `writer-import`), and is not counted as a failed draft. `JAP_WRITER=openrouter` brings back JAP's own drafting. Cover letters and the duplicate check still use OpenRouter |
