@@ -275,3 +275,12 @@ async def test_the_writer_answers_automatic_jobs_and_a_flag_holds_one(
         (app_id,),
     ).fetchone()
     assert row == ("ready_for_review", "Checker: Claims Kafka", False)
+
+
+def test_a_read_form_result_from_older_code_still_counts_as_read() -> None:
+    """JAP-12: a run that passed read-form before v0.23.0 replays the old int result."""
+    from functions.apply_listing import form_was_read
+
+    assert form_was_read(7)  # v0.22.0 returned the field count
+    assert form_was_read({"fields": 7})
+    assert not form_was_read({"wait_until": "2026-11-19T10:00:00+00:00"})

@@ -64,6 +64,13 @@ async def refused_step(app_id: str) -> None:
         )
 
 
+def form_was_read(read: Any) -> bool:
+    """Whether read-form got the form, rather than a board hold to wait out (V5). A run that
+    started before v0.23.0 replays its stored read-form result, the field count as a bare int
+    from the old read_step; that also means the form was read (JAP-12)."""
+    return not isinstance(read, dict) or "wait_until" not in read
+
+
 async def hold_step(app_id: str) -> str | None:
     """When the hold on this job's board ends (V5), or None when it is free."""
     async with get_sessionmaker()() as session:
@@ -181,7 +188,7 @@ async def apply_listing(ctx: inngest.Context) -> dict[str, Any]:
             await ctx.step.sleep_until(f"board-wait-{i}", datetime.fromisoformat(str(held)))
             continue
         read = await ctx.step.run(f"read-form-{i}" if i else "read-form", read_step, app_id, url)
-        if "wait_until" not in read:
+        if form_was_read(read):
             break
     else:
         await ctx.step.run("board-refused", refused_step, app_id)
