@@ -104,6 +104,16 @@ export type Detected = {
   already_watched: boolean
 }
 
+/** A company's own cap on applications from one person, read off its form (V9, V10). */
+export type CompanyLimit = {
+  company: string
+  limit: number
+  days: number
+  sent: { title: string; sent_at: string; status: string }[]
+  opens_at: string | null
+  opens_on: string | null
+}
+
 /** What stopping following a company does, counted in jobs as Jobs shows them. */
 export type UnfollowEffect = { display_name: string; hidden: number; kept: number; unread: number }
 
@@ -435,6 +445,7 @@ export const api = {
     ),
   resumeFileUrl: (id: string) => `${API_URL}/api/resumes/${id}/file`,
   boards: () => request<Board[]>('/api/boards'),
+  companyLimits: () => request<CompanyLimit[]>('/api/boards/limits'),
   addBoard: (b: Pick<Board, 'ats' | 'board_token' | 'display_name'>) =>
     request<Board>('/api/boards', json('POST', b)),
   detectBoard: (text: string) => request<Detected>('/api/boards/detect', json('POST', { text })),

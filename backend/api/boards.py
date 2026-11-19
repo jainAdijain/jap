@@ -9,15 +9,25 @@ the same board back on; nothing is fetched until the next search (I16).
 """
 
 import uuid
+from datetime import UTC, datetime
 
 from fastapi import APIRouter
 from sqlalchemy import select
 
 from api.errors import ApiError
-from database.models import WatchedBoard
+from database.models import Application, Company, Listing, WatchedBoard
 from database.session import Session
+from pipeline.apply import pacing
 from pipeline.unfollow import effect, unfollow
-from schemas.board import BoardIn, BoardOut, DetectIn, DetectOut, UnfollowEffect
+from schemas.board import (
+    BoardIn,
+    BoardOut,
+    CompanyLimitOut,
+    DetectIn,
+    DetectOut,
+    LimitSend,
+    UnfollowEffect,
+)
 from schemas.job import ATS
 from sources import base
 from sources.detect import NotABoard, detect
@@ -44,6 +54,38 @@ async def boards(session: Session) -> list[BoardOut]:
         select(WatchedBoard).where(WatchedBoard.active).order_by(WatchedBoard.display_name)
     )
     return [to_out(b) for b in rows]
+
+
+@router.get("/limits", response_model=list[CompanyLimitOut])
+async def limits(session: Session) -> list[CompanyLimitOut]:
+    """Every company with a known cap of its own (V10): what was sent inside its window and
+    the exact time it opens again. Unfollowed companies too, since the cap still holds."""
+    now = datetime.now(UTC)
+    out: list[CompanyLimitOut] = []
+    rows = await session.scalars(
+        select(Company).where(Company.apply_limit.is_not(None)).order_by(Company.name)
+    )
+    for company in rows:
+        window = await pacing.company_window(session, company, now)
+        if window is None:
+            continue
+        sent: list[LimitSend] = []
+        for at, app_id in window.sent:
+            app = await session.get(Application, app_id)
+            listing = await session.get(Listing, app.listing_id) if app else None
+            title = listing.title_display if listing else "A job"
+            sent.append(LimitSend(title=title, sent_at=at, status=app.status if app else ""))
+        out.append(
+            CompanyLimitOut(
+                company=window.name,
+                limit=window.limit,
+                days=window.days,
+                sent=sent,
+                opens_at=window.opens_at,
+                opens_on=pacing.local_date(window.opens_at) if window.opens_at else None,
+            )
+        )
+    return out
 
 
 @router.post("/detect", response_model=DetectOut)
