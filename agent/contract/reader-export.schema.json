@@ -1,0 +1,156 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jap/reader-export/1",
+  "title": "JAP reader export, contract 1 (make reader-export)",
+  "description": "One batch of unread postings and, in shard 1, open possible-duplicate pairs. Redacted: no personal details. PRD 1.25 R4, 1.28 R8, 1.30 AH2.",
+  "type": "object",
+  "required": [
+    "contract_version",
+    "instructions",
+    "reply_format",
+    "field_schema",
+    "run_active",
+    "unread_total",
+    "postings",
+    "pair_instructions",
+    "pairs"
+  ],
+  "properties": {
+    "contract_version": {
+      "const": 1
+    },
+    "instructions": {
+      "type": "string",
+      "description": "The rules for reading a posting (JAP's extract prompt)."
+    },
+    "reply_format": {
+      "type": "string"
+    },
+    "field_schema": {
+      "type": "object",
+      "description": "JSON Schema of every field a posting can ask for."
+    },
+    "run_active": {
+      "type": "boolean",
+      "description": "A search is still running."
+    },
+    "unread_total": {
+      "type": "integer"
+    },
+    "unread_in_my_roles": {
+      "type": "integer"
+    },
+    "unread_in_shard": {
+      "type": "integer"
+    },
+    "shard": {
+      "type": "string",
+      "pattern": "^[0-9]+/[0-9]+$"
+    },
+    "postings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "posting_id",
+          "description_hash",
+          "keys",
+          "title",
+          "locations",
+          "description_text"
+        ],
+        "properties": {
+          "posting_id": {
+            "type": "string"
+          },
+          "description_hash": {
+            "type": "string"
+          },
+          "keys": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "The fields to fill, named as in field_schema."
+          },
+          "title": {
+            "type": "string"
+          },
+          "locations": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "description_text": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "pair_instructions": {
+      "type": "string",
+      "description": "The rules for deciding two jobs are the same (JAP's same-job prompt)."
+    },
+    "pairs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "pair_id",
+          "job_a",
+          "job_b"
+        ],
+        "properties": {
+          "pair_id": {
+            "type": "string"
+          },
+          "job_a": {
+            "type": "object",
+            "required": [
+              "title",
+              "locations",
+              "description_text"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "locations": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description_text": {
+                "type": "string"
+              }
+            }
+          },
+          "job_b": {
+            "type": "object",
+            "required": [
+              "title",
+              "locations",
+              "description_text"
+            ],
+            "properties": {
+              "title": {
+                "type": "string"
+              },
+              "locations": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "description_text": {
+                "type": "string"
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

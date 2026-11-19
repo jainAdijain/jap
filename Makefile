@@ -37,7 +37,7 @@ TUNNEL_ENV := infra/tunnel/.env.tunnel
 TUNNEL := docker compose --env-file $(TUNNEL_ENV) -f infra/tunnel/compose.yaml
 
 .DEFAULT_GOAL := help
-.PHONY: help env tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check reader-export reader-import writer-export writer-import finish demo demo-clear
+.PHONY: help env tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check reader-export reader-import reader-status writer-export writer-import writer-status agent-run agent-check agent-schedule agent-unschedule agent-status test-agent finish demo demo-clear
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
@@ -95,7 +95,7 @@ demo: ## Load made-up postings for checking dedup and filters by hand (never fet
 demo-clear: ## Remove the demo postings, listings and boards
 	$(COMPOSE) exec app python -m database.demo clear
 
-test: test-app test-ui ## ruff, mypy and pytest for app; lint and build for ui
+test: test-app test-ui test-agent ## ruff, mypy and pytest for app; lint and build for ui; the runner
 
 test-app:
 	$(COMPOSE) exec app sh -c 'ruff check . && ruff format --check . && mypy . && pytest -q'
@@ -146,19 +146,56 @@ email-test: ## Send one test email from the mailbox in .env: make email-test TO=
 code-mail-check: ## Log in to the mailbox over IMAP and count Greenhouse emails (security codes)
 	$(COMPOSE) exec app python -m pipeline.apply.security_code
 
-reader-export: ## One batch of unread postings for the Claude reader, redacted, as JSON (PRD 1.25): LIMIT=50 SHARD=1/8
+reader-export: ## One batch of unread postings for the AI reader, redacted, as JSON (PRD 1.25): LIMIT=50 SHARD=1/8
 	@$(COMPOSE) exec -T app python -m pipeline.claude_reader export --limit $(or $(LIMIT),50) --shard $(or $(SHARD),1/1)
 
-reader-import: ## The Claude reader's fields back in, checked: make reader-import FILE=fields.json
+reader-import: ## The AI reader's fields back in, checked: make reader-import FILE=fields.json
 	@test -f "$(FILE)" || { echo "Usage: make reader-import FILE=fields.json"; exit 1; }
 	@$(COMPOSE) exec -T app python -m pipeline.claude_reader import < "$(FILE)"
 
-writer-export: ## Jobs at Needs you for the Claude writer, redacted, as JSON (PRD 1.22)
+writer-export: ## Jobs at Needs you for the AI writer, redacted, as JSON (PRD 1.22)
 	@$(COMPOSE) exec -T app python -m pipeline.claude_writer export
 
-writer-import: ## The Claude writer's answers back in: make writer-import FILE=answers.json
+writer-import: ## The AI writer's answers back in: make writer-import FILE=answers.json
 	@test -f "$(FILE)" || { echo "Usage: make writer-import FILE=answers.json"; exit 1; }
 	@$(COMPOSE) exec -T app python -m pipeline.claude_writer import < "$(FILE)"
+
+reader-status: ## One line for the runner: run_active, unread postings, open pairs (PRD 1.30)
+	@$(COMPOSE) exec -T app python -m pipeline.claude_reader status
+
+writer-status: ## One line for the runner: jobs and resumes waiting for the AI writer (PRD 1.30)
+	@$(COMPOSE) exec -T app python -m pipeline.claude_writer status
+
+# The AI harness (PRD 1.30, AH4 to AH7): JAP_HARNESS and the rest come from the env file;
+# HARNESS=<name> on the command line overrides it for one run.
+AGENT_ENV = ENV=$(ENV) JAP_DATA_HOST_DIR='$(JAP_DATA_HOST_DIR)' \
+	JAP_HARNESS='$(or $(HARNESS),$(JAP_HARNESS),claude)' JAP_HARNESS_MODEL='$(or $(MODEL),$(JAP_HARNESS_MODEL))' \
+	JAP_CHECKER_HARNESS='$(or $(CHECKER),$(JAP_CHECKER_HARNESS))' JAP_CHECKER_MODEL='$(JAP_CHECKER_MODEL)' \
+	JAP_AGENT_SHARDS='$(JAP_AGENT_SHARDS)' JAP_AGENT_BATCH='$(JAP_AGENT_BATCH)' \
+	JAP_AGENT_TIMEOUT_MIN='$(JAP_AGENT_TIMEOUT_MIN)' \
+	JAP_AGENT_READER_AT='$(JAP_AGENT_READER_AT)' JAP_AGENT_WRITER_AT='$(JAP_AGENT_WRITER_AT)'
+
+agent-run: ## Run the AI reader or writer now on JAP_HARNESS: JOB=reader|writer [HARNESS=codex]
+	@test "$(JOB)" = reader -o "$(JOB)" = writer || { echo "Usage: make agent-run JOB=reader|writer"; exit 1; }
+	@$(AGENT_ENV) agent/run.sh $(JOB)
+
+agent-check: ## Try a harness on the local stack, never live: HARNESS=codex (one small batch each)
+	@test "$(ENV)" = local || { echo "agent-check runs on the local stack only (leave ENV off)"; exit 1; }
+	@$(AGENT_ENV) JAP_AGENT_SHARDS=1 JAP_AGENT_BATCH=3 MAX_BATCHES=1 agent/run.sh reader; \
+	 $(AGENT_ENV) agent/run.sh writer
+
+agent-schedule: ## Schedule the AI reader and writer on this Mac (launchd): make ENV=live agent-schedule
+	@test "$(ENV)" = live || { echo "Schedule the live stack: make ENV=live agent-schedule"; exit 1; }
+	@$(AGENT_ENV) agent/schedule.sh install
+
+agent-unschedule: ## Remove the AI reader and writer from this Mac's schedule
+	@$(AGENT_ENV) agent/schedule.sh remove
+
+agent-status: ## Whether the AI reader and writer are scheduled, and how their last runs went
+	@$(AGENT_ENV) agent/schedule.sh status
+
+test-agent: ## The runner against a stand-in JAP and a stand-in harness (no model, no Docker)
+	@agent/tests/run_test.sh
 
 finish: ## Finish a job with a picture puzzle: the filled form opens on this Mac (APP=<id>)
 	@command -v uv >/dev/null || { echo "make finish needs uv on the Mac: brew install uv"; exit 1; }

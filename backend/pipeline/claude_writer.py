@@ -1,24 +1,26 @@
-"""The Claude writer's only door into JAP (PRD 1.22, W2 to W6): export and import.
+"""The AI writer's only door into JAP (PRD 1.22, W2 to W6; 1.30 AH1): export and import.
 
-A scheduled Claude session answers the jobs waiting at Needs input, in Review and (from
-PRD 1.29, V6) Automatic mode. A job its checker flags comes back with "_review": "<reason>";
-that reason is kept as the application's hold_reason, so the job stops at Ready for review
-and Automatic mode never sends it. It never
-reads the database. `export` gives it what writing needs (each job's frozen description and
-open questions, the active resume, the answer bank), with my name, email, phone, address and
-profile links swapped for [NAME], [EMAIL], [PHONE], [ADDRESS] and [LINK_n] by the same
-redaction every model call uses, and guard() refuses the export if anything personal is left.
-`import` takes its answers back, puts the real values in locally (restore), and hands them to
-the same answer step as the Needs input panel, so the job is prepared again and reaches Ready
-for review. Nothing here approves or submits.
+An outside AI harness (agent/run.sh starts it, PRD 1.30) answers the jobs waiting at Needs
+input, in Review and (from PRD 1.29, V6) Automatic mode. A job its checker flags comes back
+with "_review": "<reason>"; that reason is kept as the application's hold_reason, so the job
+stops at Ready for review and Automatic mode never sends it. It never reads the database.
+`export` gives it what writing needs (each job's frozen description and open questions, the
+active resume, the answer bank), with my name, email, phone, address and profile links
+swapped for [NAME], [EMAIL], [PHONE], [ADDRESS] and [LINK_n] by the same redaction every model
+call uses, and guard() refuses the export if anything personal is left. `import` takes its
+answers back, puts the real values in locally (restore), and hands them to the same answer
+step as the Needs input panel, so the job is prepared again and reaches Ready for review.
+Nothing here approves or submits.
 
-With JAP_WRITER=claude (PRD 1.28) it also writes required cover letters (W11: a question
-marked cover_letter, answered with the letter under cover_letter_rules; JAP builds the PDF)
-and reads new resumes (W12: each entry in resumes, answered under "resume:<id>" with its
-skills, titles and years_experience, saved as suggestions as JAP's own parse saves them).
+With JAP_WRITER=agent (PRD 1.28; named claude before 1.30) it also writes required cover
+letters (W11: a question marked cover_letter, answered with the letter under
+cover_letter_rules; JAP builds the PDF) and reads new resumes (W12: each entry in resumes,
+answered under "resume:<id>" with its skills, titles and years_experience, saved as suggestions
+as JAP's own parse saves them).
 
     python -m pipeline.claude_writer export            > jobs.json
     python -m pipeline.claude_writer import            < answers.json
+    python -m pipeline.claude_writer status            (one line for agent/run.sh)
 
 answers.json: {"<application id>": {"<question key>": "<answer>", ...}, ...,
                "resume:<resume id>": {"skills": [...], "titles": [...], "years_experience": 8}}
@@ -39,6 +41,7 @@ from database.models import AnswerBank, Application, Company, Listing, Profile, 
 from database.session import get_sessionmaker
 from llm.call import load_prompt
 from llm.redact import Sensitive, find_links, from_resume_text, guard, redact, restore
+from pipeline.agent_contract import CONTRACT_VERSION
 from pipeline.apply.flow import letter_fields
 from pipeline.resume import save_parsed, sensitive_from_profile
 from schemas.resume import ParsedResume
@@ -99,6 +102,7 @@ def build_export(
 ) -> dict[str, Any]:
     """The redacted payload; raises PersonalDataBlocked if any personal value survives."""
     out = {
+        "contract_version": CONTRACT_VERSION,
         "review_rule": REVIEW_RULE,
         "cover_letter_rules": _rules("cover_letter"),
         "resume_rules": _rules("resume_parse"),
@@ -247,8 +251,11 @@ async def _main(command: str) -> None:
         elif command == "import":
             for line in await import_answers(session, json.loads(sys.stdin.read())):
                 print(line)
+        elif command == "status":
+            out = await export(session)
+            print(f"jobs={len(out['jobs'])} resumes={len(out['resumes'])}")
         else:
-            raise SystemExit("usage: python -m pipeline.claude_writer export|import")
+            raise SystemExit("usage: python -m pipeline.claude_writer export|import|status")
 
 
 if __name__ == "__main__":

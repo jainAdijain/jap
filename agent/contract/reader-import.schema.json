@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "jap/reader-import/1",
+  "title": "JAP reader import, contract 1 (make reader-import FILE=...)",
+  "description": "One object keyed by posting_id, plus pair:<pair_id> for each settled pair. Each posting holds its description_hash exactly as exported and exactly the keys in its keys list; JAP checks the values against field_schema and saves only postings that pass. PRD 1.25 R5, 1.28 R8.",
+  "type": "object",
+  "patternProperties": {
+    "^pair:": {
+      "type": "object",
+      "required": [
+        "same",
+        "reason"
+      ],
+      "additionalProperties": false,
+      "properties": {
+        "same": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "additionalProperties": {
+    "type": "object",
+    "required": [
+      "description_hash"
+    ],
+    "properties": {
+      "description_hash": {
+        "type": "string"
+      }
+    }
+  }
+}

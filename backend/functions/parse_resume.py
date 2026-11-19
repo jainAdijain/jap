@@ -62,7 +62,7 @@ async def parse_step(version_id: str) -> dict[str, Any]:
         if version is None or not version.text:
             raise inngest.NonRetriableError("resume text missing")
         resume_text = version.text
-        if get_settings().jap_writer == "claude":
+        if get_settings().jap_writer == "agent":
             # W12 (PRD 1.28): the Claude writer reads it (writer-export / writer-import); it
             # shows Reading until then.
             return {"resume_version_id": version_id, "waiting_for_writer": True}

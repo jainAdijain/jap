@@ -426,7 +426,7 @@ async def settle_duplicates(session: AsyncSession) -> Settled:
     """
     out = Settled()
     pairs = await open_pairs(session)
-    if get_settings().jap_reader == "claude":
+    if get_settings().jap_reader == "agent":
         # R8 (PRD 1.28): the Claude reader settles them (reader-export / reader-import).
         out.undecided = len(pairs)
         return out

@@ -42,6 +42,8 @@ live in `docs/` and are **not in git**: this repo is public and they carry perso
 
 ```
 Makefile            every job has one target; `make help` lists them
+agent/              the AI harness runner (PRD 1.30): run.sh, job prompts, one adapter per
+                    harness, contract schemas, launchd schedule; agent/README.md maps it
 infra/              compose.yaml (local), compose.release.yaml (live), docker/, caddy/,
                     env/, tunnel/, postgres/init.sql, scripts/
 seed/               companies.yaml, skills.yaml
