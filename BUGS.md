@@ -27,6 +27,7 @@ commit that fixes them.
 | [JAP-10](#jap-10--bug--remote-jobs-failed-location-when-the-model-had-not-read-them) | Bug | Fixed (v0.19.1) | Remote jobs failed Location when the model had not read them |
 | [JAP-11](#jap-11--bug--ashby-applications-were-sent-half-filled) | Bug | Fixed (v0.19.2) | Ashby applications were sent half filled |
 | [JAP-12](#jap-12--bug--applications-waiting-across-the-v0230-deploy-failed-with-int-is-not-iterable) | Bug | Fixed (v0.24.1) | Applications waiting across the v0.23.0 deploy failed with "'int' is not iterable" |
+| [JAP-13](#jap-13--bug--supabase-silently-dropped-applications-past-its-own-limit) | Bug | Fixed (v0.25.0) | Supabase silently dropped applications past its own limit |
 
 ---
 
@@ -374,3 +375,28 @@ that started on older code goes on as before. Retry each of the three on Jobs to
 Lesson: a step's return type is part of the stored state of every run in flight. When a deploy
 changes it, the new code must still accept the old shape, and a deploy should check for
 waiting apply runs first.
+
+## JAP-13 — Bug — Supabase silently dropped applications past its own limit
+
+**Status:** Fixed (v0.25.0). Reported 19 Nov 2026 by Aditya: after the three JAP-12 retries,
+only SWE Storage got a confirmation email. Turso and Spark failed with "Submitted, but the page
+did not confirm the application".
+
+Cause: Supabase's Ashby forms say "This job has application limits. You can submit up to 3
+applications within a 60-day period". JAP had sent 3 on 18 Nov (AI Tooling, AI Platform
+Engineer, AI Tooling Infrastructure). Storage went through as a 4th, then the form took
+Turso's and Spark's submits and dropped them with no error on the page. JAP never read the
+notice. Two smaller gaps let it happen fast: manual Retries skip the per-company daily limit
+(that is a pick rule), and the per-ATS gap ran only from confirmed submits, so Spark went 26
+seconds after the unconfirmed Turso.
+
+Fixed: `read_form` reads a stated cap (`form.apply_limit`) and `read_and_save` keeps it on the
+company (migration `0013_company_limit`). An attempt past the cap fails with "Company limit:
+..., nothing was sent; it can try again from <date>", `submit` checks again just before
+pressing (two jobs at one company can read their forms together), and `pick` passes over the
+company until the window has room. The ATS and global gaps now count `submit_started_at` when
+there is no `submitted_at`. Supabase takes nothing more from Aditya until about mid-January
+2027; Turso and Spark were not sent and should not be retried before then.
+
+Lesson: "did not confirm" can mean the employer refused silently. Read what the form says
+about limits before sending, not only what it says after.

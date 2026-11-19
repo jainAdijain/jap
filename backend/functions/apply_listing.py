@@ -55,6 +55,8 @@ async def read_step(app_id: str, url: str) -> dict[str, Any]:
             return {"fields": await flow.read_and_save(session, app_id, url)}
         except flow.BoardBlocked as exc:
             return {"wait_until": await flow.board_hold(session, app_id, str(exc))}
+        except flow.CompanyLimit as exc:  # JAP-13: failed with the reason, nothing sent
+            return {"stopped": str(exc)}
 
 
 async def refused_step(app_id: str) -> None:
@@ -188,6 +190,8 @@ async def apply_listing(ctx: inngest.Context) -> dict[str, Any]:
             await ctx.step.sleep_until(f"board-wait-{i}", datetime.fromisoformat(str(held)))
             continue
         read = await ctx.step.run(f"read-form-{i}" if i else "read-form", read_step, app_id, url)
+        if isinstance(read, dict) and "stopped" in read:
+            return {"application_id": app_id, "status": "failed"}
         if form_was_read(read):
             break
     else:
