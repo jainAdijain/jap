@@ -21,6 +21,7 @@ import hashlib
 import logging
 import re
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 
@@ -116,19 +117,48 @@ async def clear_strikes(session: AsyncSession, ats: str | None) -> None:
 SENT_AT = func.coalesce(Application.submitted_at, Application.submit_started_at)
 
 
-async def sent_to_company(
-    session: AsyncSession, company_id: uuid.UUID, since: datetime, *, but: uuid.UUID | None = None
-) -> int:
-    """Attempts whose Submit was pressed at this company since then, confirmed or not."""
+@dataclass
+class CompanyWindow:
+    """A company's own cap (JAP-13) as it stands now: what was sent inside the window, and
+    when it has room again (None when it has room now)."""
+
+    company_id: uuid.UUID
+    name: str
+    limit: int
+    days: int
+    sent: list[tuple[datetime, uuid.UUID]]  # (when Submit went out, attempt), oldest first
+    opens_at: datetime | None
+
+
+async def company_window(
+    session: AsyncSession, company: Company, now: datetime, *, but: uuid.UUID | None = None
+) -> CompanyWindow | None:
+    """The window of a company with a known cap, not counting attempt `but` itself."""
+    if not company.apply_limit or not company.apply_limit_days:
+        return None
+    days = timedelta(days=company.apply_limit_days)
     q = (
-        select(func.count())
-        .select_from(Application)
+        select(SENT_AT, Application.id)
         .join(Listing, Listing.id == Application.listing_id)
-        .where(Listing.company_id == company_id, SENT_AT >= since)
+        .where(Listing.company_id == company.id, SENT_AT >= now - days)
+        .order_by(SENT_AT)
     )
     if but is not None:
         q = q.where(Application.id != but)
-    return int(await session.scalar(q) or 0)
+    sent = [(at, app_id) for at, app_id in (await session.execute(q)).all()]
+    opens_at = None
+    if len(sent) >= company.apply_limit:
+        # room again once all but limit - 1 of them have left the window
+        opens_at = sent[len(sent) - company.apply_limit][0] + days
+    return CompanyWindow(
+        company.id, company.name, company.apply_limit, company.apply_limit_days, sent, opens_at
+    )
+
+
+def local_date(at: datetime) -> str:
+    """'18 Jan 2027, 6:02 PM' in JAP_TZ."""
+    local = at.astimezone(ZoneInfo(get_settings().jap_tz))
+    return f"{local:%d %b %Y}, {local:%I:%M %p}".replace(", 0", ", ")
 
 
 async def company_limit(
@@ -136,22 +166,13 @@ async def company_limit(
 ) -> str | None:
     """Why this company takes no more from me now, by its own stated cap (JAP-13), or None."""
     company = await session.get(Company, company_id)
-    if company is None or not company.apply_limit or not company.apply_limit_days:
+    window = company and await company_window(session, company, now, but=but)
+    if not window or window.opens_at is None:
         return None
-    since = now - timedelta(days=company.apply_limit_days)
-    sent = await sent_to_company(session, company_id, since, but=but)
-    if sent < company.apply_limit:
-        return None
-    first: datetime | None = await session.scalar(
-        select(func.min(SENT_AT))
-        .join(Listing, Listing.id == Application.listing_id)
-        .where(Listing.company_id == company_id, SENT_AT >= since)
-    )
-    free = (first or now) + timedelta(days=company.apply_limit_days)
     return (
-        f"Company limit: {company.name} takes up to {company.apply_limit} applications in "
-        f"{company.apply_limit_days} days, and JAP has sent {sent}. Nothing was sent; it can "
-        f"try again from {free.astimezone(ZoneInfo(get_settings().jap_tz)):%d %b %Y}"
+        f"Company limit: {window.name} takes up to {window.limit} applications in "
+        f"{window.days} days, and JAP has sent {len(window.sent)}. Nothing was sent; it can "
+        f"try again from {local_date(window.opens_at)}"
     )
 
 

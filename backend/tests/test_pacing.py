@@ -379,3 +379,27 @@ async def test_submit_checks_the_company_limit_again(
         assert await flow.submit(session, app_id) == {"status": "failed"}
     row = sql.execute("SELECT error FROM application WHERE id = %s", (app_id,)).fetchone()
     assert row is not None and str(row[0]).startswith("Company limit: Acme")
+
+
+async def test_company_limits_show_what_was_sent_and_when_the_window_opens(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], api: httpx.AsyncClient
+) -> None:
+    """V10, as Supabase stood on 19 Nov: 3 in 60 days, 3 sent the day before and 3 today
+    (one confirmed, two not), so it opens 60 days after today's first."""
+    now = datetime.now(UTC)
+    times = [now - timedelta(days=1, minutes=i) for i in (3, 2, 1)] + [
+        now - timedelta(minutes=i) for i in (6, 5, 4)
+    ]
+    for i, at in enumerate(times):
+        _sent(sql, setup["resume"], _listing(sql, f"Engineer {i}", ext=f"s{i}"), at)
+    assert (await api.get("/api/boards/limits")).json() == []  # no limit known yet
+    sql.execute("UPDATE company SET apply_limit = 3, apply_limit_days = 60")
+    [acme] = (await api.get("/api/boards/limits")).json()
+    assert (acme["company"], acme["limit"], acme["days"]) == ("Acme", 3, 60)
+    assert [s["title"] for s in acme["sent"]] == [f"Engineer {i}" for i in range(6)]
+    opens = datetime.fromisoformat(acme["opens_at"])
+    assert abs(opens - (times[3] + timedelta(days=60))) < timedelta(seconds=1)
+    assert acme["opens_on"] == pacing.local_date(opens)
+    sql.execute("UPDATE company SET apply_limit = 9")
+    [acme] = (await api.get("/api/boards/limits")).json()
+    assert acme["opens_at"] is None  # room left: open now

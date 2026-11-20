@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.25.0 (respects a company's own application limit, JAP-13), 19 Nov 2026.**
+**Version 0.26.0 (company limits and the date each opens again, in Job preferences), 19 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -328,6 +328,9 @@ so that no job board rate-limits or flags you:
   (`company.apply_limit`, `apply_limit_days`); once that many have been sent in the window it
   fails the attempt with "Company limit: ..., nothing was sent", checks again just before
   Submit, and stops picking that company until the window has room, in either mode (JAP-13).
+  Job preferences shows each such company under Company limits (`GET /api/boards/limits`):
+  the limit, every job sent inside the window with its date (unconfirmed ones marked), and the
+  exact date and time it opens again (PRD 1.31, V10).
 - **Unconfirmed submits count.** The gaps above run from the last submit that was pressed,
   confirmed or not, since an unconfirmed one may well have reached the board.
 - **Backoff.** A 429 or 403 from an ATS, or a page saying too many requests, puts that ATS on
@@ -698,6 +701,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.26.0 | 19 Nov 2026 | Company limits in the UI (PRD 1.31, V10). Job preferences lists every company with a limit of its own: the limit, the jobs sent inside the current window with their dates, and the exact date and time, in `JAP_TZ`, that it opens again. The open date is when enough sends have left the window to make room, not the oldest send plus the window. `GET /api/boards/limits` |
 | 0.25.0 | 19 Nov 2026 | Fix JAP-13: Supabase allows 3 applications per person in 60 days, and its Ashby form quietly dropped the 5th and 6th (Turso, Spark) with no error, so JAP saw only "did not confirm". JAP now reads such a limit off the form (migration `0013_company_limit`: `company.apply_limit`, `apply_limit_days`), fails an attempt past it before Submit with the reason, re-checks just before Submit, and passes over that company in pick until the window has room. The per-ATS and global submit gaps now also count a pressed submit that got no confirmation |
 | 0.24.1 | 19 Nov 2026 | Fix JAP-12: an application that passed read-form before v0.23.0 and was waiting when v0.23.0 was deployed failed with "'int' is not iterable" when it resumed, because the stored read-form result was the old field count. apply-listing now accepts both shapes |
 | 0.24.0 | 19 Nov 2026 | Swappable AI harness (PRD 1.30, AH1 to AH8). The AI reader and writer run on any agent harness and subscription: `JAP_HARNESS` picks Claude Code, Codex, Gemini CLI or opencode. A runner (`agent/run.sh`, `make agent-run`) does the exports, imports, 8 parallel reader shards, leftover pass and usage-limit stop itself, and adds a checker session before writer answers go back; the harness only reads `in.json` and writes one file. Harness-neutral job prompts and JSON Schemas live in `agent/`, exports carry `contract_version` 1, and `make ENV=live agent-schedule` puts the daily reader and writer on the Mac's launchd instead of the Claude app. `make agent-check HARNESS=...` tries a harness on the local stack. Modes renamed `agent` and `api` (`claude` and `openrouter` still work); Needs you says "Waiting for the AI writer" |

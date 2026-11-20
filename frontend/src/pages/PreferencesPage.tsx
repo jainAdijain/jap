@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react'
 
-import { api, type Board, type Condition, type MatchPreview, type UnfollowEffect, type WorkMode } from '../api/client'
+import { api, type Board, type CompanyLimit, type Condition, type MatchPreview, type UnfollowEffect, type WorkMode } from '../api/client'
 import TagInput from '../components/TagInput'
 import { atsLabel, errorText, plural } from '../format'
 import { useApp } from '../appContext'
@@ -144,6 +144,52 @@ function Companies() {
             {joinOr(broken.map((b) => b.display_name))} could not be read at the last search. Check the link, or remove {broken.length === 1 ? 'it' : 'them'}.
           </p>
         )}
+      </div>
+    </div>
+  )
+}
+
+const day = (iso: string) => new Date(iso).toLocaleDateString(undefined, { day: 'numeric', month: 'short', year: 'numeric' })
+
+/** V10: each company's own limit, what JAP sent inside its window, and when it opens again. */
+function CompanyLimits() {
+  const { tick } = useApp()
+  const [limits, setLimits] = useState<CompanyLimit[]>([])
+  useEffect(() => {
+    api.companyLimits().then(setLimits, () => setLimits([]))
+  }, [tick])
+  if (limits.length === 0) return null
+  return (
+    <div className="sec">
+      <div className="sec-l">
+        <h2>Company limits</h2>
+        <p>Some companies take only a few applications from one person in a set number of days, and quietly drop the rest. JAP reads the limit off their form and sends nothing more there until the window opens again.</p>
+      </div>
+      <div className="sec-r">
+        {limits.map((c) => (
+          <div key={c.company} className={c.opens_on ? 'note-box warn' : 'note-box plain'} style={{ marginBottom: 10 }}>
+            <p>
+              <b>{c.company}</b>: up to {plural(c.limit, 'application')} in {c.days} days.{' '}
+              {c.opens_on ? (
+                <>
+                  Limit reached. Opens again on <b>{c.opens_on}</b>.
+                </>
+              ) : (
+                <>Open now ({c.limit - c.sent.length} left in this window).</>
+              )}
+            </p>
+            {c.sent.length > 0 && (
+              <ul className="small">
+                {c.sent.map((s) => (
+                  <li key={s.sent_at + s.title}>
+                    {s.title}: sent {day(s.sent_at)}
+                    {s.status === 'applied' ? '' : ', not confirmed'}
+                  </li>
+                ))}
+              </ul>
+            )}
+          </div>
+        ))}
       </div>
     </div>
   )
@@ -311,6 +357,7 @@ export default function PreferencesPage() {
       </div>
 
       <Companies />
+      <CompanyLimits />
 
       <div className="sec">
         <div className="sec-l">
