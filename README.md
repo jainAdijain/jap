@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.26.0 (company limits and the date each opens again, in Job preferences), 19 Nov 2026.**
+**Version 0.26.1 (a JAP icon and a named browser tab), 20 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -701,6 +701,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.26.1 | 20 Nov 2026 | A JAP icon in the browser tab: a white J on the app's teal, as `favicon.svg` with a 32 px PNG fallback and a 180 px home-screen icon, in `frontend/public/`. The tab title names the screen and counts the jobs that need you, `(3) Jobs · JAP`, with `[TEST]` or `[LOCAL]` in front on a copy that isn't prod, and reads `Sign in · JAP` before sign-in |
 | 0.26.0 | 19 Nov 2026 | Company limits in the UI (PRD 1.31, V10). Job preferences lists every company with a limit of its own: the limit, the jobs sent inside the current window with their dates, and the exact date and time, in `JAP_TZ`, that it opens again. The open date is when enough sends have left the window to make room, not the oldest send plus the window. `GET /api/boards/limits` |
 | 0.25.0 | 19 Nov 2026 | Fix JAP-13: Supabase allows 3 applications per person in 60 days, and its Ashby form quietly dropped the 5th and 6th (Turso, Spark) with no error, so JAP saw only "did not confirm". JAP now reads such a limit off the form (migration `0013_company_limit`: `company.apply_limit`, `apply_limit_days`), fails an attempt past it before Submit with the reason, re-checks just before Submit, and passes over that company in pick until the window has room. The per-ATS and global submit gaps now also count a pressed submit that got no confirmation |
 | 0.24.1 | 19 Nov 2026 | Fix JAP-12: an application that passed read-form before v0.23.0 and was waiting when v0.23.0 was deployed failed with "'int' is not iterable" when it resumed, because the stored read-form result was the old field count. apply-listing now accepts both shapes |

@@ -64,6 +64,13 @@ function Shell() {
   }, [])
 
   const needsYou = summary?.totals.needs_input ?? 0
+  // The browser tab names the screen, counts the jobs that need you, and marks a copy that
+  // isn't prod, so a pinned tab says what is waiting without opening it.
+  useEffect(() => {
+    const env = health?.env && health.env !== 'prod' ? `[${health.env.toUpperCase()}] ` : ''
+    const count = needsYou > 0 ? `(${needsYou}) ` : ''
+    document.title = `${count}${env}${LABELS[view]} · JAP`
+  }, [view, needsYou, health?.env])
   const attention = needsAttention(health, healthError, ops)
   const last = runs?.last
   const busy = searching(runs)

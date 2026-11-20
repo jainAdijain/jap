@@ -1,4 +1,4 @@
-import { useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useState, type FormEvent, type ReactNode } from 'react'
 
 import { auth, type AuthState, type User } from '../api/client'
 import { errorText } from '../format'
@@ -66,6 +66,10 @@ function takeResetToken(): string | null {
 }
 
 export default function SignInPage({ state, onSignedIn }: { state: AuthState; onSignedIn: (u: User) => void }) {
+  // Signing out leaves the last screen's name in the tab; put the plain name back.
+  useEffect(() => {
+    document.title = 'Sign in · JAP'
+  }, [])
   const [resetToken] = useState(takeResetToken)
   const [mode, setMode] = useState<Mode>(() =>
     resetToken ? 'reset' : state.two_step_pending ? 'code' : state.sign_up_open ? 'create' : 'sign-in',
