@@ -34,10 +34,21 @@ EMBED_MODEL ?= nomic-embed-text
 COMPOSE_FILES := -f infra/compose.yaml $(if $(filter 1 true,$(JAP_RELEASE)),-f infra/compose.release.yaml)
 COMPOSE := docker compose -p $(JAP_PROJECT) --env-file $(ENV_FILE) $(COMPOSE_FILES)
 TUNNEL_ENV := infra/tunnel/.env.tunnel
-TUNNEL := docker compose --env-file $(TUNNEL_ENV) -f infra/tunnel/compose.yaml
+# On Linux the tunnel shares the host's network (infra/tunnel/compose.linux.yaml says why).
+TUNNEL := docker compose --env-file $(TUNNEL_ENV) -f infra/tunnel/compose.yaml \
+	$(if $(filter Linux,$(shell uname)),-f infra/tunnel/compose.linux.yaml)
+
+# live runs on the VM since 21 Nov 2026 (README, Hosting), in Automatic mode. A second live
+# on this Mac would search and submit beside it, so the same application would go out twice;
+# a second tunnel would send some visitors to a stack that is not there. The targets that
+# start either one therefore refuse on a Mac. Moving live back is a deliberate act: stop it
+# on the VM first, then add LIVE_ON_THIS_MAC=1.
+REFUSE_LIVE_ON_MAC = test "$$(uname)" != Darwin -o "$(LIVE_ON_THIS_MAC)" = 1 || { \
+	echo "live runs on the VM, not on this Mac. A second live would submit the same applications twice (README, Hosting)."; \
+	echo "To move it back here: stop it on the VM first, then run this again with LIVE_ON_THIS_MAC=1."; exit 1; }
 
 .DEFAULT_GOAL := help
-.PHONY: help env tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check reader-export reader-import reader-status writer-export writer-import writer-status agent-run agent-check agent-schedule agent-unschedule agent-status test-agent finish demo demo-clear
+.PHONY: help env live-not-here tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check reader-export reader-import reader-status writer-export writer-import writer-status agent-run agent-check agent-schedule agent-unschedule agent-status test-agent finish demo demo-clear
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
@@ -49,7 +60,12 @@ else
 	@test -f .env.live || infra/scripts/env-create.sh
 endif
 
-start: env ## Start the stack, wait for /api/health, apply migrations
+live-not-here:
+ifeq ($(ENV),live)
+	@$(REFUSE_LIVE_ON_MAC)
+endif
+
+start: live-not-here env ## Start the stack, wait for /api/health, apply migrations
 	$(COMPOSE) up -d --build
 	@infra/scripts/wait-for-health.sh $(HEALTH_URL)
 	@$(MAKE) --no-print-directory migrate
@@ -59,9 +75,9 @@ start: env ## Start the stack, wait for /api/health, apply migrations
 stop: ## Stop the stack (data is kept)
 	$(COMPOSE) down
 
-restart: stop start ## Stop, then start
+restart: live-not-here stop start ## Stop, then start
 
-reset: env ## Wipe the database and start fresh: down -v, up, migrate, seed (asks first)
+reset: live-not-here env ## Wipe the database and start fresh: down -v, up, migrate, seed (asks first)
 	@printf 'This deletes the JAP database (profile, jobs, applications). data/ is kept. Type yes to continue: '; \
 	read answer; [ "$$answer" = "yes" ] || { echo "Cancelled."; exit 1; }
 	$(COMPOSE) down -v
@@ -218,6 +234,7 @@ ollama-check: ## Check that Ollama answers on the Mac and has the embedder pulle
 # ---- Hosting (PRD H1 to H8; README, Hosting) ----
 
 tunnel-start: ## Start JAP's Cloudflare Tunnel: live goes on the internet (PRD H6)
+	@$(REFUSE_LIVE_ON_MAC)
 	@test -f $(TUNNEL_ENV) || { echo "No $(TUNNEL_ENV). Copy infra/tunnel/.env.tunnel.example to it and paste the token."; exit 1; }
 	@printf 'This puts JAP on the internet at jap.tutorial.monster. Is the live stack up (make start ENV=live) with sign-in working? Type yes: '; \
 	read answer; [ "$$answer" = "yes" ] || { echo "Cancelled."; exit 1; }

@@ -10,7 +10,8 @@
 # the harness once per batch through its adapter (agent/harnesses/<name>.sh), imports what
 # comes back, runs the reader's shards in parallel and a leftover pass, and stops when the
 # plan's usage limit is reached. The harness only ever sees one batch folder: in.json from the
-# export, the job's prompt (agent/jobs/) and the file it writes. It never runs JAP's commands,
+# export, the job's prompt (agent/jobs/), the shared failures log (docs/failures.md) when one
+# exists, and the file it writes. It never runs JAP's commands,
 # never reads the database and needs no shell.
 #
 # Settings (from the environment's .env file through make, or the environment):
@@ -25,6 +26,8 @@
 #   JAP_AGENT_WORK_DIR     where batch folders go; default outside the repo, in the temp
 #                          folder, so a harness that reads instruction files from the git
 #                          tree it runs in (AGENTS.md, CLAUDE.md) finds none of JAP's
+#   JAP_FAILURES_FILE      the shared failures log handed to every harness session; default
+#                          docs/failures.md in this checkout (not in git)
 #   MAX_BATCHES            stop each shard after this many batches; 0 = until done (0)
 # Exit code: 0 done or nothing to do, 75 usage limit reached, 1 something failed.
 set -u
@@ -48,6 +51,7 @@ TIMEOUT_MIN="${JAP_AGENT_TIMEOUT_MIN:-20}"
 MAX_BATCHES="${MAX_BATCHES:-0}"
 DATA="${JAP_DATA_HOST_DIR:-data}"
 case "$DATA" in /*) ;; *) DATA="$ROOT/$DATA" ;; esac
+FAILURES="${JAP_FAILURES_FILE:-$ROOT/docs/failures.md}"
 # How the runner calls JAP; the test swaps in a stand-in.
 JAP_MAKE="${JAP_MAKE:-make -s --no-print-directory -C $ROOT ENV=$ENV_NAME}"
 
@@ -95,6 +99,7 @@ kill_tree() {
 call_harness() {
 	local name=$1 model=$2 prompt=$3 dir=$4 pid wd rc
 	cp "$prompt" "$dir/prompt.md"
+	[ -f "$FAILURES" ] && cp "$FAILURES" "$dir/failures.md"
 	(cd "$dir" && JAP_MODEL="$model" exec "$ROOT/agent/harnesses/$name.sh" prompt.md) \
 		>"$dir/harness.log" 2>&1 &
 	pid=$!

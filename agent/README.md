@@ -1,9 +1,10 @@
 # agent/: JAP's AI work on any harness
 
-Version 1.1, 19 Nov 2026 · follows PRD 1.30 (AH1 to AH8) · code v0.24.0
+Version 1.2, 23 Nov 2026 · follows PRD 1.30 (AH1 to AH8) · code v0.26.2
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.2 | 23 Nov 2026 | The harness gets `failures.md` (a copy of `docs/failures.md`, the shared failures log) when one exists; scheduled runs keep the Mac awake (`caffeinate`) and keep `DOCKER_HOST` |
 | 1.1 | 19 Nov 2026 | Writer and checker follow `review_rule` (PRD 1.29 V6): a flagged job comes back with `_review` instead of being left out |
 | 1.0 | 19 Nov 2026 | First version: runner, job prompts, adapters for Claude Code, Codex, Gemini CLI and opencode, launchd schedule, contract 1 |
 

@@ -12,7 +12,7 @@ fails=0
 check() { if eval "$2"; then echo "ok   $1"; else echo "FAIL $1"; fails=$((fails + 1)); fi; }
 
 export FAKE_STATE="$TMP/state.json" JAP_MAKE="$HERE/fake-jap.sh" JAP_DATA_HOST_DIR="$TMP/data"
-export JAP_AGENT_WORK_DIR="$TMP/work"
+export JAP_AGENT_WORK_DIR="$TMP/work" JAP_FAILURES_FILE="$TMP/failures.md"
 export JAP_HARNESS=fake JAP_AGENT_SHARDS=3 JAP_AGENT_BATCH=4 JAP_AGENT_TIMEOUT_MIN=1
 state() { python3 -c "import json; print(json.dumps(json.load(open('$FAKE_STATE'))$1))"; }
 
@@ -45,6 +45,15 @@ check "usage limit leaves postings unread" '[ "$(state "[\"unread\"]")" = "[\"1\
 FAKE_LIMIT=1 "$ROOT/agent/run.sh" writer >"$TMP/limit-w.out" 2>&1
 rc=$?
 check "writer usage limit exits 75, imports nothing" '[ "$rc" = 75 ] && [ "$(state "[\"jobs\"]")" = "[\"a3\"]" ]'
+
+echo "lessons" >"$JAP_FAILURES_FILE"
+python3 -c "import json; json.dump({'unread': ['9'], 'pairs': [], 'jobs': ['a4']},
+  open('$FAKE_STATE', 'w'))"
+"$ROOT/agent/run.sh" reader >"$TMP/failures.out" 2>&1
+check "failures.md reaches the batch folder" '[ -f "$TMP"/work/*-reader/reader-*-of-3/batch-1/failures.md ]'
+"$ROOT/agent/run.sh" writer >"$TMP/failures-w.out" 2>&1
+check "failures.md reaches the writer folder" '[ -f "$TMP"/work/*-writer/writer/failures.md ]'
+check "failures.md reaches the checker folder" '[ -f "$TMP"/work/*-writer/writer/check/failures.md ]'
 
 JAP_HARNESS=nosuch "$ROOT/agent/run.sh" reader >"$TMP/nosuch.out" 2>&1
 rc=$?

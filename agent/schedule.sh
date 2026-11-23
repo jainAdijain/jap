@@ -6,11 +6,14 @@
 #   agent/schedule.sh status     whether each is loaded, its time and its last run
 #
 # Started by make ENV=live agent-schedule / agent-unschedule / agent-status. Each job runs
-# `make ENV=<env> agent-run JOB=<job>` from this checkout in a login shell, so the harness's
-# command line tool is found on the same PATH as in Terminal. The harness and model are read
-# from the env file at run time, so after changing JAP_HARNESS nothing needs reinstalling;
-# only a new time does. launchd runs a job missed while the Mac slept when it wakes, and
-# make mac-wake wakes it before the daily search (W7).
+# `make ENV=<env> agent-run JOB=<job>` under /usr/bin/caffeinate -i, so the Mac cannot idle
+# sleep while a run is going (a sleep mid-run broke the ssh to the live VM; PRD 1.30, AH).
+# The command runs in a login shell, so the harness's command line tool is found on the
+# same PATH as in Terminal. A DOCKER_HOST set in the scheduling environment is written into
+# each plist, so the jobs reach the live stack on its VM when it lives there. The harness
+# and model are read from the env file at run time, so after changing JAP_HARNESS nothing
+# needs reinstalling; only a new time does. launchd runs a job missed while the Mac slept
+# when it wakes, and make mac-wake wakes it before the daily search (W7).
 set -u
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ACTION="${1:-status}"
@@ -47,6 +50,10 @@ install_one() {
 	esac
 	hour=$((10#${at%%:*}))
 	minute=$((10#${at##*:}))
+	local envvars=""
+	if [ -n "${DOCKER_HOST:-}" ]; then
+		envvars=$(printf '\n\t<key>EnvironmentVariables</key>\n\t<dict><key>DOCKER_HOST</key><string>%s</string></dict>' "$DOCKER_HOST")
+	fi
 	mkdir -p "$AGENTS" "$DATA/agent"
 	cat >"$(plist "$job")" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -57,10 +64,10 @@ install_one() {
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/zsh</string><string>-lc</string>
-		<string>cd '$ROOT' &amp;&amp; make ENV=$ENV_NAME agent-run JOB=$job</string>
+		<string>cd '$ROOT' &amp;&amp; /usr/bin/caffeinate -i make ENV=$ENV_NAME agent-run JOB=$job</string>
 	</array>
 	<key>StartCalendarInterval</key>
-	<dict><key>Hour</key><integer>$hour</integer><key>Minute</key><integer>$minute</integer></dict>
+	<dict><key>Hour</key><integer>$hour</integer><key>Minute</key><integer>$minute</integer></dict>$envvars
 	<key>StandardOutPath</key><string>$DATA/agent/launchd-$job.log</string>
 	<key>StandardErrorPath</key><string>$DATA/agent/launchd-$job.log</string>
 </dict>

@@ -8,35 +8,31 @@ applications for you to review.
 section that covers whatever you are changing before you change it. PRD ids (`A5`, `S6`, `H4`,
 `O12`, `U8`) are used all over the code and in commit messages.
 
-The PRD is the source of truth, with the build plan and engineering design doc under it. They
-live in `docs/` and are **not in git**: this repo is public and they carry personal data.
+The PRD is the source of truth, with the engineering design doc under it. They live in `docs/`
+and are **not in git**: this repo is public and they carry personal data.
 
-- List `docs/` first rather than reaching for a fixed filename — the names and the format
-  depend on how the documents were last exported. Today it holds PDF exports of the PRD, the
-  build plan, the engineering design doc, the hosting plan and the ideas list, with the text of
-  each pulled out alongside in `docs/text/`. Read the text, and open the PDF when a diagram or
-  the shape of a table matters.
-- The PDF is the document; `docs/text/` is a `pypdf` extraction of it, so diagrams are gone and
-  tables arrive flattened to one cell per line. Rebuild it after a fresh export:
-
-  ```bash
-  cd docs && uv run --with pypdf python -c '
-  import pathlib, re, pypdf
-  for p in pathlib.Path(".").glob("*.pdf"):
-      t = "\n".join(pg.extract_text() or "" for pg in pypdf.PdfReader(str(p)).pages)
-      t = "\n".join(l for l in t.split("\n") if not re.fullmatch(r"Page \d+ of \d+", l.strip()))
-      o = pathlib.Path("text") / (p.stem.lower().replace(" ", "-").replace(",", "") + ".txt")
-      o.parent.mkdir(exist_ok=True); o.write_text(t)
-  '
-  ```
-
+- The documents are **Markdown files in `docs/`, edited in place** (since 23 Nov 2026). The
+  `.md` is the document: there is no export to refresh and no copy elsewhere that outranks it.
+  List `docs/` first rather than reaching for a fixed filename. Today the PRD is a `.md`; the
+  engineering design doc and the hosting plan are still the PDF exports of 3 Nov 2026, with
+  their text in `docs/text/` (a `pypdf` extraction: diagrams gone, tables flattened to one
+  cell per line), and stay that way until each is brought over as a `.md`.
+- `docs/archive/` holds what is no longer current: the PDFs and text a `.md` has replaced, and
+  the build plan, retired on 23 Nov 2026 because all of its phases (0 to 8) are built. Never
+  read it as current, and do not start a new build plan here without being asked.
+- A change to the PRD raises its version: the line under the title and a new row at the top of
+  its Version history, saying who asked. Scope changes go into the PRD first, then the code
+  and `README.md`.
 - The documents carry their own versions and they drift apart. Check the line under each title
-  before you trust it: the design doc and the build plan each say which PRD version they follow,
-  and the design doc also names the code version it describes. Where they disagree the PRD wins,
-  so say that the older document is behind rather than quietly following it.
+  before you trust it: the design doc says which PRD version it follows and names the code
+  version it describes. Where they disagree the PRD wins, so say that the older document is
+  behind rather than quietly following it.
 - If `docs/` is empty or absent you are on a machine without it. Work from `README.md`, and say
   that the PRD was unavailable rather than guessing at the meaning of a PRD id you cannot read.
 - Never copy the contents of `docs/` into a tracked file, a commit message or a PR body.
+- Two files in `docs/` are not exports but living lists that **every harness keeps current**
+  (Claude, Codex, Gemini, opencode, Devin): `docs/ideas-pending.md` and `docs/failures.md`.
+  See [Ideas and failures](#ideas-and-failures).
 
 ## Layout
 
@@ -73,9 +69,9 @@ make errors                 # last 20 warnings and errors from log_event
 calling a change done. A single test:
 `docker compose -p jap exec app pytest -q tests/test_matching.py -k remote`.
 
-Ollama is **not** in Docker — it runs natively on the Mac for the GPU, reached at
-`http://host.docker.internal:11434`. `make ollama-check` says whether it is up with
-`nomic-embed-text` pulled.
+Ollama is **not** in Docker — it runs natively on the machine that runs Docker (the VM today),
+reached at `http://host.docker.internal:11434`. `/api/health` says whether the stack's Ollama is
+up with `nomic-embed-text` pulled; `make ollama-check` asks the machine it is run on.
 
 Services: ui 5173, app 8001 (`/api`), inngest 8290, db 5432, adminer 8080 — all bound to
 127.0.0.1, all overridable with `JAP_*_PORT` in `.env`.
@@ -84,6 +80,20 @@ Every target takes `ENV=local|live`. Both run from this checkout: `local` is the
 (`.env`, `data/`, never submits), `live` is the release stack behind the Cloudflare Tunnel at
 jap.tutorial.monster (`.env.live`, `data-live/`, submits for real). Leave `ENV` off unless the
 task is about hosting, and never run anything with `ENV=live` without being asked.
+
+**Both stacks run on a VM, not on this Mac** (README, Hosting; PRD H1 to H9): live since
+21 Nov 2026, and local too. The code is still edited here and copied to the VM, one way, every
+two minutes, so do not edit on the VM. The local stack's ports are forwarded here, so
+`localhost:5173` and `localhost:8001` answer as before, but this Mac's own Docker has no running
+JAP stack:
+
+- Run anything that talks to the containers with the VM as the Docker host:
+  `DOCKER_HOST=ssh://oracle-vm make test`, and the same in front of a bare `docker compose`.
+- `make start` builds from the source and mounts it, so it belongs on the VM, in its copy of
+  the checkout. Do not start the stopped `jap` or `jap-live` containers here by hand.
+- On a Mac `make start`, `restart` and `reset` with `ENV=live`, and `make tunnel-start`, refuse:
+  live is in Automatic mode and a second one would submit the same applications twice. Do not
+  pass `LIVE_ON_THIS_MAC=1`.
 
 ### Do not run without being asked
 
@@ -188,6 +198,28 @@ avoids GitHub turning a bare `#2` into a link to pull request 2.
 
 Cite the id in commit subjects next to the version — `Fix the enrich retry storm (v0.17.0,
 JAP-2)` — and close the entry in the same commit that fixes it.
+
+## Ideas and failures
+
+Two private lists in `docs/`, one of each, shared by every harness. Read both at the start of a
+session, update them in the same session the idea or the failure comes up, and do not start a
+second file for either anywhere else.
+
+- **`docs/ideas-pending.md`** is the ideas list (it replaced the ideas PDF on 23 Nov 2026).
+  When Aditya raises an idea, add it there: a row in "Later (v2)" with who raised it and when,
+  a section of its own when a row is not enough, a version bump and a line in its Version
+  history. Never delete an idea; change its status. An idea becomes work only once it is in
+  the PRD.
+- **`docs/failures.md`** is the failures log: applications that failed on live and runs that
+  broke, with the reason, the root cause, the status and the lessons. When you find a failed
+  application or a broken run, add or update its row there and the "Last updated" line.
+  `agent/run.sh` hands a copy to every reader, writer and checker session, so it must never
+  hold personal data (no name, email, phone, address, resume text or answers) and its Lessons
+  stay short. A defect in JAP still gets its `JAP-N` in `BUGS.md` as above; the failures row
+  cites the id.
+
+Both name companies and jobs, so they stay out of git like the rest of `docs/`: do not quote
+them in a tracked file, a commit message or a PR body.
 
 ## Releases
 

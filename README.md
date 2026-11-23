@@ -1,14 +1,18 @@
 # JAP: Job Application Pipeline
 
-**Version 0.26.1 (a JAP icon and a named browser tab), 20 Nov 2026.**
+**Version 0.26.2 (both stacks on the VM; AI runs survive the Mac's sleep and share a failures log), 23 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
 It is a personal, single-user tool today: one account, one profile, one resume (see
 [Sign-in and accounts](#sign-in-and-accounts)).
-The [JAP PRD](https://claude.ai/artifact/WL9RYjsPDCTmknMLRqzKRj) is the single source of truth;
-the [build plan](https://claude.ai/artifact/1TrqC2jt8SuPVbULa8i6eU) and the
-[engineering design doc](https://claude.ai/artifact/XsWXaEvBdEsFf97GguqtAy) follow it.
+The JAP PRD is the single source of truth. Since 23 Nov 2026 it is kept as Markdown in `docs/`,
+which is not in git because it carries personal data (see `AGENTS.md`); the
+[claude.ai copy](https://claude.ai/artifact/WL9RYjsPDCTmknMLRqzKRj) this README links to is
+where it came from and is no longer the maintained one. The
+[engineering design doc](https://claude.ai/artifact/XsWXaEvBdEsFf97GguqtAy) follows it. The
+[build plan](https://claude.ai/artifact/1TrqC2jt8SuPVbULa8i6eU) was retired on 23 Nov 2026:
+all of its phases (0 to 8) are built.
 
 ## What runs
 
@@ -24,8 +28,12 @@ Each host port can be changed in `.env` (`JAP_UI_PORT`, `JAP_API_PORT`, `JAP_INN
 `JAP_DB_PORT`, `JAP_ADMINER_PORT`). The API and Inngest use 8001 and 8290 so they don't clash with
 other projects on 8000 and 8288-8289 (an Inngest dev server publishes both). Inside Docker the services keep their usual ports.
 
-Ollama is **not** in Docker. It runs natively on the Mac so it can use the GPU, and the app
-reaches it at `http://host.docker.internal:11434`.
+Ollama is **not** in Docker. It runs natively on the machine that runs Docker (on a Mac it can
+use the GPU), and the app reaches it at `http://host.docker.internal:11434`.
+
+Today that machine is a VM, not the Mac: both stacks run there, and an ssh port forward
+brings these addresses to the Mac, so they open as written. See
+[Hosting](#hosting-local-and-live).
 
 ## The screens
 
@@ -208,7 +216,7 @@ run queues one run behind it; more triggers join that queued run instead of addi
   new jobs that fit (see Applying).
 - **Daily search**: the switch in Settings, at 06:00 in `JAP_TZ` unless you change the time
   next to it. An Inngest cron ticks every minute and fires once per day in the first five
-  minutes after that time, so a run missed while the Mac sleeps is skipped, not caught up.
+  minutes after that time, so a run missed while JAP is down is skipped, not caught up.
 - **Job preferences saved**: the stored listings are re-filtered at once, then a fetch follows
   in the background; new matching jobs appear on Jobs without a reload. Saving only contact
   details or the cover letter style on Profile starts no search.
@@ -380,8 +388,10 @@ Automatic mode does not send it.
   answer each under `"pair:<pair id>": {"same": true or false, "reason": "..."}` in the same
   import. Same merges into the older job, not same keeps them apart, as before.
 
-The runner starts 8 workers, one per shard; each repeats export, read, import until its
-batch is empty or saves nothing. The first read of a large backlog (thousands of postings)
+The runner starts 8 workers, one per shard (`JAP_AGENT_SHARDS`), and asks for 10 postings a
+batch (`JAP_AGENT_BATCH`), not the 50 a `make reader-export` by hand gives; each worker
+repeats export, read, import until its batch is empty or saves nothing, and one more pass
+then takes whatever is left. The first read of a large backlog (thousands of postings)
 is a one-off and can reach your plan's usage limit; what is left is read on the next run.
 After that only new or changed postings are read. `make reader-status` prints one line
 (`run_active=0 unread=12 pairs=1`) for the runner.
@@ -431,14 +441,21 @@ models. Switching is one line and one command. Everything is in `agent/`:
 Settings, in `.env.live` (see `.env.example`): `JAP_HARNESS` (`claude`, `codex`, `gemini` or
 `opencode`), `JAP_HARNESS_MODEL` (empty = the harness's default), `JAP_CHECKER_HARNESS` and
 `JAP_CHECKER_MODEL` (the checker pass; empty = the same, `none` = no check),
-`JAP_AGENT_SHARDS` (8), `JAP_AGENT_BATCH` (10), `JAP_AGENT_TIMEOUT_MIN` (20) and
-`JAP_AGENT_READER_AT` / `JAP_AGENT_WRITER_AT` (07:05 and 07:30, the Mac's time).
+`JAP_AGENT_SHARDS` (8 reader shards in parallel), `JAP_AGENT_BATCH` (10 postings per reader
+batch), `JAP_AGENT_TIMEOUT_MIN` (20 minutes per harness session) and `JAP_AGENT_READER_AT` /
+`JAP_AGENT_WRITER_AT` (07:05 and 07:30, the Mac's time). The writer has no batch size: one
+session takes everything that is waiting, and the checker session follows it.
 
 **First time, moving off the Claude app's tasks.** Run `make ENV=live agent-schedule`, then
 pause the two JAP tasks under Scheduled in the Claude app so nothing runs twice. `make
 ENV=live agent-status` shows both jobs and their last runs. Each run's log stays in
 `data-live/agent/runs/` for 30 days; its batch folders sit in the temp folder, outside the
-repo, for 3 days (`JAP_AGENT_WORK_DIR` moves them).
+repo, for 3 days (`JAP_AGENT_WORK_DIR` moves them). The jobs run under `caffeinate -i` so
+the Mac cannot idle sleep while one is going — it cannot stop the lid being closed on
+battery, so keep the Mac on power — and keep any `DOCKER_HOST` the schedule was installed
+with. `docs/failures.md`, the log of failed applications and the lessons from them that every
+harness keeps, is copied into every batch folder for the harness to read; it is not in git,
+holds no personal data and never overrides the job prompt (`JAP_FAILURES_FILE` moves it).
 
 **Switching harness** (AH7):
 
@@ -505,7 +522,7 @@ nothing; the only data that leaves is redacted errors sent to Sentry, and only w
   and emails the address on My profile when the Daily search didn't start, a search is stuck,
   more than `JAP_ALERT_ERRORS_PER_HOUR` (10) errors happened in an hour, AI spend reached 80% or
   100% of the limit, or the disk is over 85% full. Each problem is emailed at most once a day
-  (spend once a month). `JAP_ALERTS_ENABLED=false` turns them off; outside prod the subject
+  (spend once a month). `JAP_ALERTS_ENABLED=false` turns them off; outside live the subject
   starts with the environment, for example `[DEV]`. **Check now** or `make health-check` runs
   it at once. Failed searches, applications and form tests keep their own alerts.
 - **What JAP did**: a failed or sent job's panel has a timeline of its application: the form
@@ -516,9 +533,9 @@ nothing; the only data that leaves is redacted errors sent to Sentry, and only w
 - **Sentry** (optional, free Developer plan): create a project at sentry.io, put its DSN in
   `SENTRY_DSN` and restart. Only errors are sent, with no request bodies, cookies, headers or
   local variables, and every message scrubbed.
-- **Uptime from outside** (O7): once prod is public, add a free uptime check (a Cloudflare
-  health check, or a free monitor such as UptimeRobot) on `https://jap.tutorial.monster/api/health`
-  every 5 minutes, emailing you when it fails. It works even when the Mac is asleep.
+- **Uptime from outside** (O7): add a free uptime check (a Cloudflare health check, or a free
+  monitor such as UptimeRobot) on `https://jap.tutorial.monster/api/health` every 5 minutes,
+  emailing you when it fails. It runs outside JAP, so it still reports when the VM is down.
 
 Part B comes after sign-in step 2: the user on every log line, Health for the admin only,
 first-party usage counts (`usage_event`), each user's own Insights, and per-user counts and
@@ -588,9 +605,42 @@ was sent and the job becomes Apply yourself.
 
 ## Hosting: local and live
 
-JAP runs for free on the Mac as two stacks, and JAP's own Cloudflare Tunnel publishes the
-live one over HTTPS ([PRD](https://claude.ai/artifact/WL9RYjsPDCTmknMLRqzKRj) H1 to H8). It
-is up while the Mac is on and awake.
+**Both stacks run on a free-tier VM (Linux, ARM), not on the Mac** (PRD 1.32, H1 to H9). live
+moved there on 21 Nov 2026 and local runs there too, so neither depends on the Mac being on
+and awake. The Mac is where the code is edited and where the AI reader and writer start. The
+VM is JAP's home for now: JAP stays on a free VM, so if this one leaves the free tier it
+moves to another, and a serverless stack is a possible later move.
+
+- **The code is edited on the Mac only.** The VM holds a copy of this checkout, kept in step
+  one way, Mac to VM, every two minutes by a sync job on the Mac that is not part of this
+  repo. local reloads from that copy. Do not edit on the VM.
+- **Opening local.** Its ports are published on the VM's 127.0.0.1 only. An ssh port forward,
+  kept up by a launchd job on the Mac, carries them across, so http://localhost:5173 and the
+  other local addresses in this README open on the Mac as before. local is never published.
+- **Running make from the Mac.** A target that only talks to running containers works with
+  the VM as the Docker host: `DOCKER_HOST=ssh://oracle-vm make ps`, and the same for `logs`,
+  `migrate`, `test` and `errors`. `make start` builds from the source and mounts it, so run
+  it on the VM, in its copy of the checkout.
+- **Data.** Each stack's database and data folder (`data/`, `data-live/`) are the VM's. The
+  copies left on the Mac stopped at the move and are only a way back.
+- **Ollama** runs natively on the VM, without a GPU, for embeddings only, and both stacks
+  share it.
+- **One live only.** On a Mac `make start`, `restart` and `reset` with `ENV=live`, and
+  `make tunnel-start`, refuse. live is in Automatic mode: a second live would submit the same
+  applications twice. Moving it back is deliberate: stop it on the VM first, then add
+  `LIVE_ON_THIS_MAC=1`.
+- **The tunnel on Linux** shares the host's network (`infra/tunnel/compose.linux.yaml`),
+  because a bridge container there cannot reach the UI port, which is published on 127.0.0.1
+  only.
+- **What still needs the Mac.** The AI reader and writer are scheduled on the Mac (launchd,
+  07:05 and 07:30) and reach live through `DOCKER_HOST` in their jobs;
+  `DOCKER_HOST=ssh://oracle-vm make ENV=live agent-schedule` rewrites those jobs and keeps
+  it. `make finish` opens its browser on the Mac and still expects `data-live/` there. The
+  daily search, backups, the form test and the health watch run inside JAP on the VM and
+  need no Mac.
+
+JAP runs for free as two stacks, and JAP's own Cloudflare Tunnel publishes the live one over
+HTTPS (PRD H1 to H9).
 
 | | local | live |
 | --- | --- | --- |
@@ -604,10 +654,10 @@ is up while the Mac is on and awake.
 | Sends email | no | yes, the real mailbox |
 | 06:00 daily search | leave off | turn on in Settings once you trust it |
 | Adminer | yes, `:8080` | no |
-| Restarts with Docker Desktop | no | yes |
+| Restarts on its own | no | yes, with Docker, which starts when the VM boots |
 | UI badge | **DEV** | none |
 
-Both run from this one checkout and share nothing but the Mac and Ollama: separate Docker
+Both run from this one checkout and share nothing but the machine and Ollama: separate Docker
 project (`jap`, `jap-live`), separate database volume, separate data folder, separate ports.
 So `make reset` on local cannot touch a real application, and a broken edit cannot reach the
 public site. Every target takes `ENV=local|live`; without it you get local, exactly as before
@@ -620,6 +670,9 @@ the API port, Inngest's dashboard, Postgres, Adminer and Ollama are never publis
 and the local stack is never published at all.
 
 **First time**
+
+These steps were written for a Mac. On the VM, skip 1 and 2: Docker starts when the VM boots,
+and the daily search does not wait on a Mac.
 
 1. Docker Desktop: Settings, General, turn on *Start Docker Desktop when you sign in*.
 2. `make mac-wake` so the Mac wakes at 05:55 for the 06:00 search.
@@ -638,11 +691,11 @@ per-account lockout is the only limit JAP itself applies.
 
 **Releasing**
 
-There is no promotion step: live runs whatever this checkout builds.
+There is no promotion step: live runs whatever the VM's copy of this checkout builds.
 
 1. Make the change and check it on local (`make start`, `make test`).
 2. `make backup ENV=live` if the change has a migration.
-3. `make start ENV=live` rebuilds the image, restarts live and applies migrations.
+3. `make start ENV=live`, on the VM, rebuilds the image, restarts live and applies migrations.
 4. Something wrong: `git checkout <last good tag>` and `make start ENV=live` again. If a
    migration changed data, `make restore ENV=live FILE=data-live/backups/<file>.sql.gz`.
 
@@ -701,6 +754,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.26.2 | 23 Nov 2026 | The scheduled AI reader and writer now run under `caffeinate` so the Mac cannot idle sleep mid-run (a sleep broke the ssh to the live VM on 22 and 23 Nov), and `make ENV=live agent-schedule` writes a set `DOCKER_HOST` into the launchd jobs instead of dropping it. Every harness session also gets `docs/failures.md`, a shared log of failed applications and the lessons from them, copied into its batch folder (agent prompts 1.2). Both stacks now run on a free-tier VM (PRD 1.32, H1 to H9; see Hosting): on a Mac `make start`, `restart` and `reset` with `ENV=live`, and `make tunnel-start`, refuse unless `LIVE_ON_THIS_MAC=1`, and on Linux the tunnel shares the host's network (`infra/tunnel/compose.linux.yaml`). The PRD is now kept as Markdown in `docs/` and the build plan is retired |
 | 0.26.1 | 20 Nov 2026 | A JAP icon in the browser tab: a white J on the app's teal, as `favicon.svg` with a 32 px PNG fallback and a 180 px home-screen icon, in `frontend/public/`. The tab title names the screen and counts the jobs that need you, `(3) Jobs · JAP`, with `[TEST]` or `[LOCAL]` in front on a copy that isn't prod, and reads `Sign in · JAP` before sign-in |
 | 0.26.0 | 19 Nov 2026 | Company limits in the UI (PRD 1.31, V10). Job preferences lists every company with a limit of its own: the limit, the jobs sent inside the current window with their dates, and the exact date and time, in `JAP_TZ`, that it opens again. The open date is when enough sends have left the window to make room, not the oldest send plus the window. `GET /api/boards/limits` |
 | 0.25.0 | 19 Nov 2026 | Fix JAP-13: Supabase allows 3 applications per person in 60 days, and its Ashby form quietly dropped the 5th and 6th (Turso, Spark) with no error, so JAP saw only "did not confirm". JAP now reads such a limit off the form (migration `0013_company_limit`: `company.apply_limit`, `apply_limit_days`), fails an attempt past it before Submit with the reason, re-checks just before Submit, and passes over that company in pick until the window has room. The per-ATS and global submit gaps now also count a pressed submit that got no confirmation |

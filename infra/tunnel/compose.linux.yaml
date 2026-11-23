@@ -1,0 +1,11 @@
+# Added to infra/tunnel/compose.yaml on Linux (the Makefile does it), where live runs now.
+# The public hostname routes to http://host.docker.internal:5373 and the live UI publishes
+# that port on 127.0.0.1 only (PRD H2). Docker Desktop lets a container reach the Mac's
+# 127.0.0.1 by that name; on Linux a bridge container cannot reach the host's 127.0.0.1 at
+# all. So here the tunnel shares the host's network and the name points at 127.0.0.1, which
+# keeps the UI port off every other interface of a machine that has a public address.
+services:
+  cloudflared:
+    network_mode: host
+    extra_hosts: !override
+      - "host.docker.internal:127.0.0.1"
