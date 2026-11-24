@@ -143,6 +143,17 @@ def openrouter_reader(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def no_trace_service(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Tests never send to the trace service the stack they run in is set up with (PRD 1.33,
+    O23); test_trace.py sets a stand-in of its own."""
+    monkeypatch.setenv("JAP_TRACE_ENDPOINT", "")
+    monkeypatch.setenv("JAP_TRACE_HEADERS", "")
+    get_settings.cache_clear()
+    yield
+    get_settings.cache_clear()
+
+
+@pytest.fixture(autouse=True)
 def fast_hashing(monkeypatch: pytest.MonkeyPatch) -> None:
     """A cheap scrypt cost in tests; the real cost is checked in test_auth.py."""
     import auth.passwords

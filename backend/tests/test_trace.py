@@ -203,7 +203,9 @@ def test_off_unless_both_settings_are_filled(monkeypatch: pytest.MonkeyPatch) ->
     get_settings.cache_clear()
 
 
-def test_a_span_goes_out_as_otlp_with_the_headers_from_the_setting(service: Service) -> None:
+def test_a_span_goes_out_as_otlp_with_the_headers_from_the_setting(
+    service: Service, monkeypatch: pytest.MonkeyPatch
+) -> None:
     trace.record(
         "door.reader.export",
         "chain",
@@ -220,6 +222,11 @@ def test_a_span_goes_out_as_otlp_with_the_headers_from_the_setting(service: Serv
     got = service.spans()
     url, headers, _ = service.requests[0]
     assert url == URL and headers["x-api-key"] == "k-123" and headers["Langsmith-Project"] == "jap"
+    for base in ("https://trace.example/otel", "https://trace.example/otel/", URL + "/"):
+        monkeypatch.setenv("JAP_TRACE_ENDPOINT", base)  # the base address, as LangSmith gives it
+        get_settings.cache_clear()
+        to = trace.target()
+        assert to is not None and to[0] == URL
     assert headers["Content-Type"] == "application/x-protobuf"
     assert [(name, ok) for name, _, ok in got] == [
         ("door.reader.export", True),

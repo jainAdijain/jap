@@ -248,6 +248,10 @@ def target() -> tuple[str, dict[str, str]] | None:
     url, headers = settings.jap_trace_endpoint.strip(), _headers(settings.jap_trace_headers)
     if not url or not headers:
         return None
+    # A service gives its OTLP base address (LangSmith: .../otel); traces go to /v1/traces
+    # under it. The full address is taken as it is.
+    url = url.rstrip("/")
+    url = url if url.endswith("/v1/traces") else url + "/v1/traces"
     parts = urlsplit(url)
     if parts.scheme != "https" and parts.hostname not in LOCAL_HOSTS:
         _warn("JAP_TRACE_ENDPOINT must be an https address")
