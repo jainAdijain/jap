@@ -39,6 +39,11 @@ class ChatResult:
     tokens_in: int | None
     tokens_out: int | None
     cost_usd: float | None
+    # O19: who served the call, the model as served, and the token detail, where given.
+    provider: str | None = None
+    model: str | None = None
+    tokens_cached: int | None = None
+    tokens_reasoning: int | None = None
 
 
 def build_body(
@@ -103,4 +108,17 @@ async def chat(api_key: str, body: dict[str, Any], wait_s: float = 120.0) -> Cha
         tokens_in=usage.get("prompt_tokens"),
         tokens_out=usage.get("completion_tokens"),
         cost_usd=usage.get("cost"),
+        provider=_text(data.get("provider")),
+        model=_text(data.get("model")),
+        tokens_cached=_detail(usage, "prompt_tokens_details", "cached_tokens"),
+        tokens_reasoning=_detail(usage, "completion_tokens_details", "reasoning_tokens"),
     )
+
+
+def _text(value: Any) -> str | None:
+    return value[:80] if isinstance(value, str) and value else None
+
+
+def _detail(usage: dict[str, Any], group: str, name: str) -> int | None:
+    value = (usage.get(group) or {}).get(name) if isinstance(usage.get(group), dict) else None
+    return value if isinstance(value, int) and not isinstance(value, bool) else None

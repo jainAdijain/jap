@@ -34,6 +34,7 @@ fields.json: {"<posting id>": {"description_hash": "<from the export>", "skills"
 import asyncio
 import json
 import sys
+import time
 import uuid
 from typing import Any
 
@@ -45,6 +46,7 @@ from database.models import PossibleDuplicate, Posting, Profile, Run, WatchedBoa
 from database.session import get_sessionmaker
 from llm.call import load_prompt
 from llm.redact import Sensitive, guard, redact
+from pipeline import agent_doors
 from pipeline.agent_contract import CONTRACT_VERSION
 from pipeline.dedup import SameJob, apply_same, open_pairs, pair_postings, refresh_listings
 from pipeline.enrich import (
@@ -308,16 +310,22 @@ async def status(session: AsyncSession) -> str:
 
 async def _main(argv: list[str]) -> None:
     command = argv[0] if argv else ""
+    started = time.time()  # O17, level 1: each export and import is counted (agent_doors)
     async with get_sessionmaker()() as session:
         if command == "export":
             opts = dict(zip(argv[1::2], argv[2::2], strict=False))
             limit = max(1, int(opts.get("--limit") or BATCH))
             shard = parse_shard(opts.get("--shard") or "1/1")
             out = await export(session, limit, shard)
-            print(json.dumps(out, ensure_ascii=False, indent=1))
+            text = json.dumps(out, ensure_ascii=False, indent=1)
+            print(text)
+            counts = agent_doors.reader_export(out, len(text.encode()))
+            agent_doors.record("reader", "export", started, counts)
         elif command == "import":
-            for line in await import_fields(session, json.loads(sys.stdin.read())):
+            lines = await import_fields(session, json.loads(sys.stdin.read()))
+            for line in lines:
                 print(line)
+            agent_doors.record("reader", "import", started, agent_doors.reader_import(lines))
         elif command == "status":
             print(await status(session))
         else:
@@ -325,6 +333,7 @@ async def _main(argv: list[str]) -> None:
                 "usage: python -m pipeline.claude_reader "
                 "export [--limit N] [--shard i/n] | import | status"
             )
+    agent_doors.done()
 
 
 if __name__ == "__main__":

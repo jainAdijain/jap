@@ -115,6 +115,11 @@ still passes locally.
   `tests/test_isolation.py` greps the tree and fails otherwise. Every model call goes through
   `llm.call()`, which redacts, guards, enforces the spend cap, logs an `llm_call` row with cost,
   and validates the reply against a Pydantic model.
+- **`backend/observability/trace.py` is the only file that talks to the trace service**
+  (PRD 1.33; `tests/test_trace.py` checks it), and a trace never holds text: numbers, JAP's
+  ids, values from fixed lists and short identifiers only. A new field goes on `FIELDS` there
+  with the check its value must pass; never send a prompt, job text, an answer, a company or
+  a title. The service's key (`JAP_TRACE_HEADERS`) is never given to a harness.
 - **Prompts are versioned files** in `backend/llm/prompts/<name>.v<N>.md`. Changing a prompt's
   behaviour means a new version file, not an edit in place. Each purpose has a `max_tokens` cap
   in `llm/call.py`.
@@ -127,7 +132,7 @@ still passes locally.
 - **Logs are scrubbed** (`backend/observability/scrub.py`): emails, phone numbers, keys, tokens
   and security codes are replaced, and answers, resume text and cover letters are never written
   at all. Keep it that way when adding log lines.
-- **Secrets:** `.env` and `.env.live` are gitignored and hold the OpenRouter key and the mailbox
+- **Secrets:** `.env` and `.env.live` are gitignored and hold the OpenRouter key, the trace service's key and the mailbox
   password. Never commit one, never echo its values into output, never add a real key to
   `.env.example`. Concretely, and without exception:
   - Do not open `.env`, `.env.*` or `.env.tunnel` with the read tool, `cat`, `head` or an editor.

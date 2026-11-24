@@ -132,7 +132,9 @@ call_harness() {
 	[ -f "$FAILURES" ] && cp "$FAILURES" "$dir/failures.md"
 	was=$(cksum <"$dir/in.json" 2>/dev/null)
 	t=$(date +%s)
-	(cd "$dir" && JAP_MODEL="$model" exec "$ROOT/agent/harnesses/$name.sh" prompt.md) \
+	# AH8: the trace service's settings, were they ever in the runner's environment, stop here.
+	(cd "$dir" && JAP_MODEL="$model" exec env -u JAP_TRACE_ENDPOINT -u JAP_TRACE_HEADERS \
+		"$ROOT/agent/harnesses/$name.sh" prompt.md) \
 		>"$dir/harness.log" 2>&1 &
 	pid=$!
 	(
@@ -159,7 +161,7 @@ has() { grep -q "\"$2\"" "$1"; }
 
 # reader_worker <i> <n>: export, read, import, until a batch is empty or saves nothing.
 reader_worker() {
-	local i=$1 n=$2 k=0 b rc saved t why
+	local i=$1 n=$2 k=0 b rc said saved t why
 	while :; do
 		[ -e "$RUN/stop" ] && return 0
 		k=$((k + 1))
@@ -192,7 +194,9 @@ reader_worker() {
 		$JAP_MAKE reader-import FILE="$b/out.json" >"$b/import.txt" 2>&1
 		stamp "$b" import "$t" "$?"
 		saved=$(sed -n 's/^saved \([0-9][0-9]*\) of [0-9][0-9]*$/\1/p' "$b/import.txt" | tail -1)
-		log "shard $i/$n batch $k: $(tail -1 "$b/import.txt")$(session "$b" reader "$HARNESS" "$MODEL" out.json "$i/$n" "$k" line)"
+		# The total line, not whatever came last: the import may add a line on stderr.
+		said=$(grep '^saved [0-9]* of [0-9]*$' "$b/import.txt" | tail -1 | grep . || tail -1 "$b/import.txt")
+		log "shard $i/$n batch $k: $said$(session "$b" reader "$HARNESS" "$MODEL" out.json "$i/$n" "$k" line)"
 		[ "${saved:-0}" -gt 0 ] || return 0
 		[ "$MAX_BATCHES" -gt 0 ] && [ "$k" -ge "$MAX_BATCHES" ] && return 0
 	done

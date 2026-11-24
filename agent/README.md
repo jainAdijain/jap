@@ -39,7 +39,7 @@ sets (harness, model, tool, a file of the batch folder, a cause).
 
 | Level | Who measures | What |
 | --- | --- | --- |
-| 1 | JAP's export and import (the backend; from v0.28.0) | Items handed out, saved, not saved and why |
+| 1 | JAP's export and import (`backend/pipeline/agent_doors.py`, v0.28.0) | Items handed out, the export's size, items saved, and why the others were not, as codes; one `log_event` row and one span each |
 | 2 | `run.sh` | Each export, session and import timed; exit; a cause when a session failed; sizes; what the import saved; a token estimate from the file sizes when the harness gave no record |
 | 3 | `trace.py read`, from the harness's own record | Each model request (time, tokens in and out, cached) and each tool call (tool, file, time, ok) |
 

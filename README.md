@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.27.0 (AI runs leave a trace: time, tokens, tool calls and a cause; a Devin adapter), 24 Nov 2026.**
+**Version 0.28.0 (Every model call and every export and import counted; a sender to a trace service, off unless set), 24 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -105,7 +105,9 @@ No name, email, phone, address or profile link is sent to any model. `backend/ll
 swaps them for placeholders such as `[NAME]`, a guard blocks any request that still contains
 one, and `backend/llm/client.py` is the only code that talks to OpenRouter (a test enforces
 it). Each call is logged in `llm_call` with its cost; model steps stop once this month's
-spend reaches `JAP_MONTHLY_COST_CAP_USD`.
+spend reaches `JAP_MONTHLY_COST_CAP_USD`. When a trace service is set, numbers about AI work
+(times, token counts, counts of items, ids) go to it and no text about you or about a job
+(`backend/observability/trace.py`, the only code that talks to it; a test enforces both).
 
 ## Fetching jobs
 
@@ -480,7 +482,19 @@ no prompt, job text, resume, answer or reply is kept in a trace.
   quota" used to stop the run, and Claude Code's "You've hit your weekly limit" was not
   recognised at all.
 
-Nothing leaves the Mac in this version. Proven by a real run so far (23 Nov 2026): Devin,
+**JAP's doors** (O17, level 1, from v0.28.0). Each export and each import is also counted by
+JAP itself, so a harness driven by hand with no runner is covered too: one `log_event` row
+(`agent.export` or `agent.import`, kept 30 days) with how many postings, pairs, jobs,
+questions and resumes went out and how big the export was, how many came back, how many
+were saved, and why the others were not, as codes (`missing_field`, `changed`, `gone`,
+`already_read` and so on). Counts only: no posting or application id, no title, no answer.
+The same goes to the trace service when one is set
+([Logs, Health and Insights](#logs-health-and-insights)). The runner's own trace files stay
+on the Mac for now: sending them is the next release. The trace service's key is never given
+to a harness: the runner takes `JAP_TRACE_ENDPOINT` and `JAP_TRACE_HEADERS` out of its
+environment.
+
+Proven by a real run so far (23 Nov 2026): Devin,
 with `make agent-check HARNESS=devin` (a reader batch, and a writer with its checker), and
 Claude Code's reply at its plan limit. Not yet proven: the record of a Claude Code session
 that worked, and Codex's, Gemini CLI's and opencode's records; `agent/README.md` keeps the
@@ -539,9 +553,10 @@ Some subscriptions do not allow unattended use: check your plan's terms.
 
 ## Logs, Health and Insights
 
-PRD 1.19 (O1 to O15), Part A. Everything runs on the Mac with the rest of JAP and costs
-nothing; the only data that leaves is redacted errors sent to Sentry, and only when
-`SENTRY_DSN` is set.
+PRD 1.19 (O1 to O15), Part A, and 1.33 (O16 to O23), Part C. Everything runs with the rest
+of JAP and costs nothing. Two kinds of data leave, each only when its setting is filled in:
+redacted errors to Sentry (`SENTRY_DSN`), and numbers about AI work to a trace service
+(`JAP_TRACE_ENDPOINT` and `JAP_TRACE_HEADERS`), never text.
 
 - **Logs**: the app and every Inngest function write one JSON line per event to stdout, with
   the ids it belongs to: request, run, application, posting, listing, Inngest run and
@@ -572,6 +587,30 @@ nothing; the only data that leaves is redacted errors sent to Sentry, and only w
 - **Sentry** (optional, free Developer plan): create a project at sentry.io, put its DSN in
   `SENTRY_DSN` and restart. Only errors are sent, with no request bodies, cookies, headers or
   local variables, and every message scrubbed.
+- **Traces of AI work** (optional, PRD 1.33; LangSmith's free Developer plan first). Off
+  unless both settings are filled in, and JAP works the same without them:
+  `JAP_TRACE_ENDPOINT` is the address traces are posted to, used exactly as given (LangSmith:
+  `https://api.smith.langchain.com/otel/v1/traces`, `eu.api...` for the EU region), and
+  `JAP_TRACE_HEADERS` is `name=value,name=value` with the service's key (LangSmith:
+  `x-api-key=<key>,Langsmith-Project=jap`). They are OpenTelemetry traces over HTTPS, written
+  out by `backend/observability/trace.py`, the only module that talks to the service (a test
+  checks it), with no service's library: moving to Sentry, Langfuse or Logfire is those two
+  settings. What goes out:
+  - one span per model call JAP makes itself (`api` mode): purpose, model, the provider that
+    served it, prompt version, attempt, time, tokens in and out, cached and reasoning tokens,
+    cost, and how it ended (`valid`, `retried`, `blocked`, `spend_cap`, `error`), with the run,
+    application and posting ids. One application's calls are grouped, else one run's. The
+    `llm_call` row holds the same, whether or not a service is set;
+  - one span per export and import of the AI reader and writer (see
+    [AI harness](#ai-harness)): counts and reason codes.
+
+  Never text. The sender takes fields by name and keeps a value only when it is a number, one
+  of JAP's ids, a value from a fixed list, or a short identifier such as a model name; a
+  prompt, a job description, an answer, a company or a job title cannot pass, and a test
+  fails the build if one does. Sending never delays or fails the work: spans wait on a queue
+  for a background thread, a post that fails is dropped with one line on stderr, and an
+  export or import waits at most 3 seconds for its own span before it exits. JAP's own pages
+  do not show these traces. Not yet tried against LangSmith itself: that needs its key.
 - **Uptime from outside** (O7): add a free uptime check (a Cloudflare health check, or a free
   monitor such as UptimeRobot) on `https://jap.tutorial.monster/api/health` every 5 minutes,
   emailing you when it fails. It runs outside JAP, so it still reports when the VM is down.
@@ -793,6 +832,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.28.0 | 24 Nov 2026 | The trace of AI work, second of three releases (PRD 1.33: O17 level 1, O19, O22, O23). **A sender**: `backend/observability/trace.py` is the only module that talks to a trace service, as OpenTelemetry traces over HTTPS with no service's library, off unless `JAP_TRACE_ENDPOINT` and `JAP_TRACE_HEADERS` are both set (LangSmith's free plan first). It takes fields by name and lets through only numbers, JAP's ids, values from fixed lists and short identifiers such as a model name, so no prompt, job text, answer, company or title can be sent; a test fails the build if text gets through. It never delays or fails the work: spans are queued and posted by a background thread, and a post that fails is dropped. **Model calls JAP makes itself** (`api` mode): each `llm_call` row now also holds the posting, the provider that served it, the attempt, cached and reasoning tokens and how it ended (`valid`, `retried`, `blocked`, `spend_cap`, `error`), and the same goes out as one span per call, the calls of one application or one run grouped. **JAP's doors**: every reader and writer export and import leaves one `log_event` row (`agent.export`, `agent.import`) and one span with counts only: items handed out, the export's size, items saved, and why the others were not, as codes. The runner takes the trace settings out of a harness's environment. Migration `0014_llm_call_trace`. Not yet proven against LangSmith itself: that needs its key. The runner's own traces are sent in the next release |
 | 0.27.0 | 24 Nov 2026 | AI runs leave a trace (PRD 1.33, O16 to O21, first of three releases; nothing leaves the Mac yet). `agent/trace.py` and the runner record every reader, writer and checker session in numbers only: start, end, exit, what the import saved, and one named cause when it failed (`not_logged_in`, `slept`, `timeout`, `usage_limit`, `no_output`, `export_failed`, `import_failed`), where three different failures on 21 to 23 Nov all read "wrote no out.json". Where the harness gives a record of its session, each model request and tool call is kept with its time and tokens, and the run log and `make agent-status` show them; a harness without one gets an estimate from the file sizes. One trace file per run in `data*/agent/traces/` (30 days), one per session in its batch folder. A fifth adapter, for Devin's command line tool. A usage limit is read from the harness's record or its failing last words: Claude Code's "You've hit your weekly limit" was not recognised before, and a reply that quoted the word quota stopped a run. `JAP_AGENT_TRACE=0` runs the harnesses as before. The Devin adapter runs under JAP's own settings file (no shell, no web, `in.json` read-only), and the checker always gets the export as JAP gave it. Proven by a run: Devin (`make agent-check HARNESS=devin`) and Claude Code's limit reply; the other records are read from each tool's documents until `make agent-check` proves them |
 | 0.26.2 | 23 Nov 2026 | The scheduled AI reader and writer now run under `caffeinate` so the Mac cannot idle sleep mid-run (a sleep broke the ssh to the live VM on 22 and 23 Nov), and `make ENV=live agent-schedule` writes a set `DOCKER_HOST` into the launchd jobs instead of dropping it. Every harness session also gets `docs/failures.md`, a shared log of failed applications and the lessons from them, copied into its batch folder (agent prompts 1.2). Both stacks now run on a free-tier VM (PRD 1.32, H1 to H9; see Hosting): on a Mac `make start`, `restart` and `reset` with `ENV=live`, and `make tunnel-start`, refuse unless `LIVE_ON_THIS_MAC=1`, and on Linux the tunnel shares the host's network (`infra/tunnel/compose.linux.yaml`). The PRD is now kept as Markdown in `docs/` and the build plan is retired |
 | 0.26.1 | 20 Nov 2026 | A JAP icon in the browser tab: a white J on the app's teal, as `favicon.svg` with a 32 px PNG fallback and a 180 px home-screen icon, in `frontend/public/`. The tab title names the screen and counts the jobs that need you, `(3) Jobs · JAP`, with `[TEST]` or `[LOCAL]` in front on a copy that isn't prod, and reads `Sign in · JAP` before sign-in |
