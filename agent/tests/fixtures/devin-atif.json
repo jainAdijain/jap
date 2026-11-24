@@ -1,0 +1,231 @@
+{
+ "schema_version": "ATIF-v1.7",
+ "session_id": "x",
+ "agent": {
+  "name": "devin",
+  "version": "3000.14.30833",
+  "model_name": "SWE-2 High",
+  "tool_definitions": [
+   {
+    "type": "function",
+    "function": {
+     "name": "edit",
+     "description": "SECRET-TEXT must never reach a trace"
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "find_file_by_name",
+     "description": "SECRET-TEXT must never reach a trace"
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "grep",
+     "description": "SECRET-TEXT must never reach a trace"
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_call_tool",
+     "description": "SECRET-TEXT must never reach a trace"
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_list_servers",
+     "description": "SECRET-TEXT must never reach a trace"
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_list_tools",
+     "description": "SECRET-TEXT must never reach a trace"
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "mcp_read_resource",
+     "description": "SECRET-TEXT must never reach a trace"
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "read",
+     "description": "SECRET-TEXT must never reach a trace"
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "read_page_content",
+     "description": "SECRET-TEXT must never reach a trace"
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "skill",
+     "description": "SECRET-TEXT must never reach a trace"
+    }
+   },
+   {
+    "type": "function",
+    "function": {
+     "name": "write",
+     "description": "SECRET-TEXT must never reach a trace"
+    }
+   }
+  ],
+  "extra": {
+   "backend": "Windsurf",
+   "permission_mode": "AcceptEdits"
+  }
+ },
+ "steps": [
+  {
+   "step_id": 1,
+   "timestamp": "2026-11-23T11:18:19.859134+00:00",
+   "source": "system",
+   "message": "SECRET-TEXT must never reach a trace"
+  },
+  {
+   "step_id": 2,
+   "timestamp": "2026-11-23T11:18:19.859439+00:00",
+   "source": "system",
+   "message": "SECRET-TEXT must never reach a trace"
+  },
+  {
+   "step_id": 3,
+   "timestamp": "2026-11-23T11:18:19.896078+00:00",
+   "source": "system",
+   "message": "SECRET-TEXT must never reach a trace"
+  },
+  {
+   "step_id": 4,
+   "timestamp": "2026-11-23T11:18:19.896093+00:00",
+   "source": "system",
+   "message": "SECRET-TEXT must never reach a trace"
+  },
+  {
+   "step_id": 5,
+   "timestamp": "2026-11-23T11:18:19.896090+00:00",
+   "source": "system",
+   "message": "SECRET-TEXT must never reach a trace"
+  },
+  {
+   "step_id": 6,
+   "timestamp": "2026-11-23T11:18:19.859938+00:00",
+   "source": "system",
+   "message": "SECRET-TEXT must never reach a trace"
+  },
+  {
+   "step_id": 7,
+   "timestamp": "2026-11-23T11:18:19.915840+00:00",
+   "source": "user",
+   "message": "SECRET-TEXT must never reach a trace"
+  },
+  {
+   "step_id": 8,
+   "timestamp": "2026-11-23T11:18:19.918043+00:00",
+   "source": "system",
+   "message": "SECRET-TEXT must never reach a trace"
+  },
+  {
+   "step_id": 9,
+   "timestamp": "2026-11-23T11:18:19.918823333+00:00",
+   "source": "agent",
+   "message": "SECRET-TEXT must never reach a trace",
+   "model_name": "swe-2-high",
+   "metrics": {
+    "prompt_tokens": 7762,
+    "completion_tokens": 747
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call-1",
+     "function_name": "write",
+     "arguments": {
+      "file_path": "/tmp/jap-outside-write.txt",
+      "content": "SECRET-TEXT must never reach a trace"
+     }
+    },
+    {
+     "tool_call_id": "call-2",
+     "function_name": "read",
+     "arguments": {
+      "file_path": "in.json",
+      "content": "SECRET-TEXT must never reach a trace"
+     }
+    }
+   ],
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call-1",
+      "content": "Tool execution was rejected: User rejected this tool call"
+     },
+     {
+      "source_call_id": "call-2",
+      "content": "SECRET-TEXT must never reach a trace"
+     }
+    ]
+   }
+  },
+  {
+   "step_id": 10,
+   "timestamp": "2026-11-23T11:18:26.220202791+00:00",
+   "source": "agent",
+   "message": "SECRET-TEXT must never reach a trace",
+   "model_name": "swe-2-high",
+   "metrics": {
+    "prompt_tokens": 8619,
+    "completion_tokens": 152,
+    "cached_tokens": 8448
+   },
+   "tool_calls": [
+    {
+     "tool_call_id": "call-3",
+     "function_name": "write",
+     "arguments": {
+      "file_path": "out.json",
+      "content": "SECRET-TEXT must never reach a trace"
+     }
+    }
+   ],
+   "observation": {
+    "results": [
+     {
+      "source_call_id": "call-3",
+      "content": "SECRET-TEXT must never reach a trace"
+     }
+    ]
+   }
+  },
+  {
+   "step_id": 11,
+   "timestamp": "2026-11-23T11:18:28.500173833+00:00",
+   "source": "agent",
+   "message": "SECRET-TEXT must never reach a trace",
+   "model_name": "swe-2-high",
+   "metrics": {
+    "prompt_tokens": 8821,
+    "completion_tokens": 284,
+    "cached_tokens": 8704
+   }
+  }
+ ],
+ "final_metrics": {
+  "total_prompt_tokens": 25202,
+  "total_completion_tokens": 1183,
+  "total_cached_tokens": 17152,
+  "total_steps": 11
+ }
+}

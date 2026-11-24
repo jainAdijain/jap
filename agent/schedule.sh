@@ -3,7 +3,8 @@
 #
 #   agent/schedule.sh install    (re)install both jobs at JAP_AGENT_READER_AT / _WRITER_AT
 #   agent/schedule.sh remove     remove both jobs
-#   agent/schedule.sh status     whether each is loaded, its time and its last run
+#   agent/schedule.sh status     whether each is loaded, its time, its last run and that
+#                                run's trace (sessions, time in the model, tokens, causes)
 #
 # Started by make ENV=live agent-schedule / agent-unschedule / agent-status. Each job runs
 # `make ENV=<env> agent-run JOB=<job>` under /usr/bin/caffeinate -i, so the Mac cannot idle
@@ -85,7 +86,7 @@ remove_one() {
 }
 
 status_one() {
-	local job=$1
+	local job=$1 last
 	if launchctl print "$DOMAIN/$(label "$job")" >/dev/null 2>&1; then
 		echo "$job: scheduled daily at $(at_for "$job") (installed time: $(
 			/usr/libexec/PlistBuddy -c 'Print :StartCalendarInterval:Hour' "$(plist "$job")"
@@ -95,7 +96,12 @@ status_one() {
 	fi
 	if [ -f "$DATA/agent/last-$job.log" ]; then
 		echo "  last run: $(head -1 "$DATA/agent/last-$job.log")"
-		echo "            $(tail -1 "$DATA/agent/last-$job.log")"
+		echo "            $(grep -v '^[0-9:]* Trace: ' "$DATA/agent/last-$job.log" | tail -1)"
+	fi
+	# The last run's trace (PRD 1.33, O18): sessions, time in the model, tokens and causes.
+	last=$(ls "$DATA"/agent/traces/*-"$job".json 2>/dev/null | tail -1)
+	if [ -n "$last" ] && command -v python3 >/dev/null 2>&1; then
+		python3 "$ROOT/agent/trace.py" last "$last" | sed 's/^/  last trace: /'
 	fi
 }
 

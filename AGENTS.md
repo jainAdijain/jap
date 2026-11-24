@@ -39,7 +39,8 @@ and are **not in git**: this repo is public and they carry personal data.
 ```
 Makefile            every job has one target; `make help` lists them
 agent/              the AI harness runner (PRD 1.30): run.sh, job prompts, one adapter per
-                    harness, contract schemas, launchd schedule; agent/README.md maps it
+                    harness, contract schemas, launchd schedule, trace.py (the trace of each
+                    run, PRD 1.33: numbers only, never text); agent/README.md maps it
 infra/              compose.yaml (local), compose.release.yaml (live), docker/, caddy/,
                     env/, tunnel/, postgres/init.sql, scripts/
 seed/               companies.yaml, skills.yaml

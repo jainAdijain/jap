@@ -1,0 +1,6 @@
+{"type": "thread.started", "_t": 1795317869.729, "thread_id": "x"}
+{"type": "turn.started", "_t": 1795317869.829}
+{"type": "item.started", "_t": 1795317871.729, "item": {"id": "i1", "type": "command_execution", "command": "SECRET-TEXT must never reach a trace"}}
+{"type": "item.completed", "_t": 1795317872.729, "item": {"id": "i1", "type": "command_execution", "status": "completed"}}
+{"type": "item.completed", "_t": 1795317875.729, "item": {"id": "i2", "type": "agent_message", "text": "done"}}
+{"type": "turn.completed", "_t": 1795317875.729, "usage": {"input_tokens": 24763, "cached_input_tokens": 24448, "output_tokens": 122}}

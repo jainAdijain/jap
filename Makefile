@@ -189,6 +189,7 @@ AGENT_ENV = ENV=$(ENV) JAP_DATA_HOST_DIR='$(JAP_DATA_HOST_DIR)' \
 	JAP_CHECKER_HARNESS='$(or $(CHECKER),$(JAP_CHECKER_HARNESS))' JAP_CHECKER_MODEL='$(JAP_CHECKER_MODEL)' \
 	JAP_AGENT_SHARDS='$(JAP_AGENT_SHARDS)' JAP_AGENT_BATCH='$(JAP_AGENT_BATCH)' \
 	JAP_AGENT_TIMEOUT_MIN='$(JAP_AGENT_TIMEOUT_MIN)' \
+	JAP_AGENT_TRACE='$(JAP_AGENT_TRACE)' JAP_DEVIN_BIN='$(JAP_DEVIN_BIN)' \
 	JAP_AGENT_READER_AT='$(JAP_AGENT_READER_AT)' JAP_AGENT_WRITER_AT='$(JAP_AGENT_WRITER_AT)'
 
 agent-run: ## Run the AI reader or writer now on JAP_HARNESS: JOB=reader|writer [HARNESS=codex]
@@ -207,7 +208,7 @@ agent-schedule: ## Schedule the AI reader and writer on this Mac (launchd): make
 agent-unschedule: ## Remove the AI reader and writer from this Mac's schedule
 	@$(AGENT_ENV) agent/schedule.sh remove
 
-agent-status: ## Whether the AI reader and writer are scheduled, and how their last runs went
+agent-status: ## Whether the AI reader and writer are scheduled, how their last runs went, and what they used (time, tokens, causes)
 	@$(AGENT_ENV) agent/schedule.sh status
 
 test-agent: ## The runner against a stand-in JAP and a stand-in harness (no model, no Docker)
