@@ -48,7 +48,7 @@ REFUSE_LIVE_ON_MAC = test "$$(uname)" != Darwin -o "$(LIVE_ON_THIS_MAC)" = 1 || 
 	echo "To move it back here: stop it on the VM first, then run this again with LIVE_ON_THIS_MAC=1."; exit 1; }
 
 .DEFAULT_GOAL := help
-.PHONY: help env live-not-here tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check reader-export reader-import reader-status writer-export writer-import writer-status agent-run agent-check agent-schedule agent-unschedule agent-status test-agent finish demo demo-clear
+.PHONY: help env live-not-here tunnel-start tunnel-stop tunnel-status mac-wake start stop restart reset clean logs ps migrate seed test test-app test-ui qa backup restore close-unfollowed form-check health-check errors two-step-off sign-out-all set-password email-test code-mail-check ollama-check llm-check reader-export reader-import reader-status writer-export writer-import writer-status agent-trace-send agent-run agent-check agent-schedule agent-unschedule agent-status test-agent finish demo demo-clear
 
 help: ## List the targets
 	@grep -hE '^[a-z-]+:.*## ' $(firstword $(MAKEFILE_LIST)) | awk 'BEGIN {FS = ":.*## "} {printf "  make %-13s %s\n", $$1, $$2}'
@@ -182,6 +182,10 @@ reader-status: ## One line for the runner: run_active, unread postings, open pai
 writer-status: ## One line for the runner: jobs and resumes waiting for the AI writer (PRD 1.30)
 	@$(COMPOSE) exec -T app python -m pipeline.claude_writer status
 
+agent-trace-send: ## A run's trace file to JAP, which sends it to the trace service when one is set (PRD 1.34, O22): FILE=<run>.json
+	@test -f "$(FILE)" || { echo "Usage: make agent-trace-send FILE=data/agent/traces/<run>-<job>.json"; exit 1; }
+	@$(COMPOSE) exec -T app python -m pipeline.agent_run_trace < "$(FILE)"
+
 # The AI harness (PRD 1.30, AH4 to AH7): JAP_HARNESS and the rest come from the env file;
 # HARNESS=<name> on the command line overrides it for one run.
 AGENT_ENV = ENV=$(ENV) JAP_DATA_HOST_DIR='$(JAP_DATA_HOST_DIR)' \
@@ -189,7 +193,8 @@ AGENT_ENV = ENV=$(ENV) JAP_DATA_HOST_DIR='$(JAP_DATA_HOST_DIR)' \
 	JAP_CHECKER_HARNESS='$(or $(CHECKER),$(JAP_CHECKER_HARNESS))' JAP_CHECKER_MODEL='$(JAP_CHECKER_MODEL)' \
 	JAP_AGENT_SHARDS='$(JAP_AGENT_SHARDS)' JAP_AGENT_BATCH='$(JAP_AGENT_BATCH)' \
 	JAP_AGENT_TIMEOUT_MIN='$(JAP_AGENT_TIMEOUT_MIN)' \
-	JAP_AGENT_TRACE='$(JAP_AGENT_TRACE)' JAP_DEVIN_BIN='$(JAP_DEVIN_BIN)' \
+	JAP_AGENT_TRACE='$(JAP_AGENT_TRACE)' JAP_AGENT_SEND_S='$(JAP_AGENT_SEND_S)' \
+	JAP_DEVIN_BIN='$(JAP_DEVIN_BIN)' \
 	JAP_AGENT_READER_AT='$(JAP_AGENT_READER_AT)' JAP_AGENT_WRITER_AT='$(JAP_AGENT_WRITER_AT)'
 
 agent-run: ## Run the AI reader or writer now on JAP_HARNESS: JOB=reader|writer [HARNESS=codex]

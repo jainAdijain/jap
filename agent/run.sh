@@ -21,6 +21,14 @@
 # folder's agent/traces (30 days), and a summary line in the run log. Tracing needs python3
 # and never stops a run: without it the run goes on as before.
 #
+# The run's trace is then handed to JAP (make agent-trace-send), which sends it to the trace
+# service when one is set (PRD 1.34, O22). The runner never holds that service's key. A
+# trace JAP could not take stays marked (<run>.unsent beside the file) and is handed over
+# again at the start of the next run, once JAP has answered. Handing it over comes after
+# the run's work and is stopped after a minute, so it cannot hold a run or change how it ends.
+# The writer and the checker also say why they left a job out, held it or fixed it, in codes
+# from fixed lists (reasons.json, O24): the trace keeps them and the run log gets a line each.
+#
 # Settings (from the environment's .env file through make, or the environment):
 #   JAP_HARNESS            claude (default), codex, gemini, opencode, or any adapter's name
 #   JAP_HARNESS_MODEL      model for that harness; empty = the harness's own default
@@ -37,6 +45,8 @@
 #                          tree it runs in (AGENTS.md, CLAUDE.md) finds none of JAP's
 #   JAP_FAILURES_FILE      the shared failures log handed to every harness session; default
 #                          docs/failures.md in this checkout (not in git)
+#   JAP_AGENT_SEND_S       seconds JAP may take over one run's trace before the runner
+#                          stops waiting and keeps it for the next run (60)
 #   MAX_BATCHES            stop each shard after this many batches; 0 = until done (0)
 # Exit code: 0 done or nothing to do, 75 usage limit reached, 1 something failed.
 set -u
@@ -57,6 +67,7 @@ CHECKER_MODEL="${JAP_CHECKER_MODEL:-$MODEL}"
 SHARDS="${JAP_AGENT_SHARDS:-8}"
 BATCH="${JAP_AGENT_BATCH:-10}"
 TIMEOUT_MIN="${JAP_AGENT_TIMEOUT_MIN:-20}"
+SEND_S="${JAP_AGENT_SEND_S:-60}"
 MAX_BATCHES="${MAX_BATCHES:-0}"
 DATA="${JAP_DATA_HOST_DIR:-data}"
 case "$DATA" in /*) ;; *) DATA="$ROOT/$DATA" ;; esac
@@ -96,6 +107,8 @@ trap 'rm -rf "$LOCK"' EXIT
 find "$WORK" -mindepth 1 -maxdepth 1 -type d -name '20*' -mtime +3 -exec rm -rf {} + 2>/dev/null
 find "$DATA/agent/runs" -name '*.log' -mtime +30 -exec rm -f {} + 2>/dev/null
 find "$DATA/agent/traces" -maxdepth 1 -name '*.json' -mtime +30 -exec rm -f {} + 2>/dev/null
+# A mark whose trace file is gone has nothing left to send.
+for m in "$DATA"/agent/traces/*.unsent; do [ -e "${m%.unsent}.json" ] || rm -f "$m"; done
 
 # trace <command> <arguments>: agent/trace.py, for the run's trace (O17 to O21). Without
 # python3, or when it breaks, it says nothing and the run goes on.
@@ -122,6 +135,69 @@ kill_tree() {
 	local c
 	for c in $(pgrep -P "$1" 2>/dev/null); do kill_tree "$c"; done
 	kill -TERM "$1" 2>/dev/null
+}
+
+# reasons <folder> <who>: why that session left a job out, held it or fixed it, in the
+# codes it gave (O24): one line each in the run log, from the session's trace.
+reasons() { trace reasons "$1/trace.json" | sed "s/^/  why ($2): /" | tee -a "$LOG"; }
+
+# bounded <seconds> <command ...>: run it, stopped after that long. Handing a trace over
+# must never hold a run, or its lock, however JAP or the network behave (O22).
+bounded() {
+	local s=$1 pid wd rc
+	shift
+	"$@" &
+	pid=$!
+	(
+		sleep "$s"
+		kill_tree "$pid"
+	) >/dev/null 2>&1 &
+	wd=$!
+	wait "$pid"
+	rc=$?
+	kill_tree "$wd"
+	wait "$wd" 2>/dev/null
+	return "$rc"
+}
+
+# send_trace <run trace file>: hand it to JAP, which sends it to the trace service when one
+# is set (O22). Prints JAP's answer: "sent <n> spans", "off" (no service set) or "not a run
+# trace"; or, returning 1, why it was not sent (nothing when JAP did not answer). Until JAP
+# has taken it the file stays marked .unsent.
+send_trace() {
+	local f=$1 mark="${1%.json}.unsent" said
+	[ -e "$mark" ] || : >"$mark"
+	said=$(bounded "$SEND_S" $JAP_MAKE agent-trace-send FILE="$f" 2>>"$RUN/trace.err" | tail -1)
+	case "$said" in
+	"sent "* | off | "not a run trace")
+		echo "$said"
+		rm -f "$mark"
+		;;
+	"not sent ("*)
+		said="${said#not sent (}"
+		echo "${said%)}"
+		return 1
+		;;
+	*) return 1 ;;
+	esac
+}
+
+# send_waiting: the traces of earlier runs that could not be sent, handed over again now
+# that JAP has answered (O22): oldest first, 10 at most, and no more after one that fails.
+# A mark under two minutes old is another run's, still handing its own trace over.
+send_waiting() {
+	local mark f said
+	find "$DATA/agent/traces" -maxdepth 1 -name '*.unsent' -mmin +2 2>/dev/null | sort | head -10 |
+		while read -r mark; do
+			f="${mark%.unsent}.json"
+			if said=$(send_trace "$f"); then
+				case "$said" in "sent "*) log "The trace of an earlier run is sent ($(basename "$f"), ${said#sent })" ;; esac
+			else
+				log "The trace of an earlier run still cannot be sent${said:+ ($said)}; it waits"
+				break
+			fi
+		done
+	return 0
 }
 
 # call_harness <name> <model> <prompt> <folder>: one session in that folder, at most
@@ -213,6 +289,7 @@ run_reader() {
 		log "JAP did not answer (is the $ENV_NAME stack up?)"
 		return 1
 	}
+	send_waiting
 	while [ "$(field "$st" run_active)" = 1 ] && [ "$tries" -lt 10 ]; do
 		log "A search is still running; waiting a minute ($st)"
 		sleep 60
@@ -256,6 +333,7 @@ run_writer() {
 		log "JAP did not answer (is the $ENV_NAME stack up?)"
 		return 1
 	}
+	send_waiting
 	echo "$st" >"$RUN/before.txt"
 	log "Writer on $HARNESS${MODEL:+ ($MODEL)}, checker on $CHECKER: $st"
 	if [ "$(field "$st" jobs)" = 0 ] && [ "$(field "$st" resumes)" = 0 ]; then
@@ -313,6 +391,7 @@ run_writer() {
 		[ -s "$b/check/findings.txt" ] && sed 's/^/  checker: /' "$b/check/findings.txt" | tee -a "$LOG"
 		why=$(session "$b/check" checker "$CHECKER" "$CHECKER_MODEL" out.json "" "" line)
 		[ -n "$why" ] && log "checker session$why"
+		reasons "$b/check" checker
 	fi
 	t=$(date +%s)
 	$JAP_MAKE writer-import FILE="$b/out.json" >"$b/import.txt" 2>&1
@@ -320,6 +399,7 @@ run_writer() {
 	sed 's/^/  import: /' "$b/import.txt" | tee -a "$LOG"
 	why=$(session "$b" writer "$HARNESS" "$MODEL" draft.json "" "" line)
 	[ -n "$why" ] && log "writer session$why"
+	reasons "$b" writer
 	st=$($JAP_MAKE writer-status 2>/dev/null | tail -1)
 	echo "$st" >"$RUN/after.txt"
 	log "Done. $st"
@@ -329,10 +409,19 @@ log "JAP $JOB run on $ENV_NAME, folder $RUN"
 T0=$(date +%s)
 "run_$JOB"
 rc=$?
+KEPT="$DATA/agent/traces/$STAMP-$JOB.json"
 SUM=$(trace run --run-dir "$RUN" --job "$JOB" --env "$ENV_NAME" --harness "$HARNESS" \
 	--model "$MODEL" --checker "$CHECKER" --stamp "$STAMP" --shards "$SHARDS" --batch "$BATCH" \
-	--start "$T0" --rc "$rc" --out "$DATA/agent/traces/$STAMP-$JOB.json")
+	--start "$T0" --rc "$rc" --out "$KEPT")
 [ -n "$SUM" ] && log "$SUM"
+# O22: the work is done; now the trace goes to JAP, which sends it on when a service is set.
+if [ -s "$KEPT" ]; then
+	if SAID=$(send_trace "$KEPT"); then
+		case "$SAID" in "sent "*) log "Trace sent to the trace service (${SAID#sent })" ;; esac
+	else
+		log "Trace not sent${SAID:+ ($SAID)}: it is kept and handed over again at the start of the next run"
+	fi
+fi
 cp "$LOG" "$DATA/agent/last-$JOB.log"
 cp "$LOG" "$DATA/agent/runs/$STAMP-$JOB.log"
 exit "$rc"

@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.28.0 (Every model call and every export and import counted; a sender to a trace service, off unless set), 24 Nov 2026.**
+**Version 0.29.0 (Each AI run's trace sent to the trace service; why a job was left out, in codes), 24 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -435,9 +435,9 @@ each on its own subscription and models. Switching is one line and one command. 
 | Part | What it is |
 | --- | --- |
 | `agent/run.sh` | The runner (`make agent-run JOB=reader|writer`). It exports each batch, starts the harness once per batch, imports what comes back, runs the reader's 8 shards in parallel plus a leftover pass, runs the writer and then a checker session before anything is imported, and stops when the plan's usage limit is reached (exit 75; the rest waits for the next run). One reader and one writer run at a time. |
-| `agent/jobs/` | The job prompts, one per job (`reader.md`, `writer.md`, `checker.md`), written for any harness. The harness sees only one batch folder: `in.json` from the export, the prompt, and the file it writes (`out.json`, `draft.json`, `findings.txt`). It runs no command, reads no database, needs no shell or web. |
+| `agent/jobs/` | The job prompts, one per job (`reader.md`, `writer.md`, `checker.md`), written for any harness. The harness sees only one batch folder: `in.json` from the export, the prompt, and the files it writes (`out.json`, `draft.json`, `findings.txt`, `reasons.json`). It runs no command, reads no database, needs no shell or web. |
 | `agent/harnesses/` | One small adapter per harness: how to run a prompt without a chat window, how to get its record of the session, and how its usage-limit message reads. Add a harness by copying one and following `common.sh`. |
-| `agent/trace.py` | The trace of each run (PRD 1.33, O16 to O21): numbers only. See below. |
+| `agent/trace.py` | The trace of each run (PRD 1.33, O16 to O21; 1.34, O24): numbers and codes only. See below. |
 | `agent/contract/` | JSON Schemas of the reader and writer exports and imports, at `contract_version` 1 (in every export). |
 | `agent/schedule.sh` | The Mac's schedule (launchd), replacing the Claude app's scheduled tasks. |
 
@@ -446,8 +446,9 @@ Settings, in `.env.live` (see `.env.example`): `JAP_HARNESS` (`claude`, `codex`,
 `JAP_CHECKER_MODEL` (the checker pass; empty = the same, `none` = no check),
 `JAP_AGENT_SHARDS` (8 reader shards in parallel), `JAP_AGENT_BATCH` (10 postings per reader
 batch), `JAP_AGENT_TIMEOUT_MIN` (20 minutes per harness session), `JAP_AGENT_TRACE` (0 = do
-not ask the harness for a record of its session) and `JAP_AGENT_READER_AT` /
-`JAP_AGENT_WRITER_AT` (07:05 and 07:30, the Mac's time). The writer has no batch size: one
+not ask the harness for a record of its session), `JAP_AGENT_SEND_S` (60 seconds JAP may
+take over a run's trace before the runner keeps it for the next run) and
+`JAP_AGENT_READER_AT` / `JAP_AGENT_WRITER_AT` (07:05 and 07:30, the Mac's time). The writer has no batch size: one
 session takes everything that is waiting, and the checker session follows it.
 
 **First time, moving off the Claude app's tasks.** Run `make ENV=live agent-schedule`, then
@@ -489,10 +490,41 @@ questions and resumes went out and how big the export was, how many came back, h
 were saved, and why the others were not, as codes (`missing_field`, `changed`, `gone`,
 `already_read` and so on). Counts only: no posting or application id, no title, no answer.
 The same goes to the trace service when one is set
-([Logs, Health and Insights](#logs-health-and-insights)). The runner's own trace files stay
-on the Mac for now: sending them is the next release. The trace service's key is never given
-to a harness: the runner takes `JAP_TRACE_ENDPOINT` and `JAP_TRACE_HEADERS` out of its
-environment.
+([Logs, Health and Insights](#logs-health-and-insights)).
+
+**Why a job was left out, in codes** (PRD 1.34, O24, from v0.29.0). The writer and the
+checker now also write `reasons.json` beside their answers: for each job left out, held for
+review or fixed, what happened (`ok`, `fixed`, `held`, `left_out`), why, from a fixed list
+(`fact_not_in_bank`, `not_in_resume`, `no_option_fits`, `unclear_question`,
+`unsupported_claim`, `missing_answer`, `bad_option`, `too_long`, `cover_letter_rule`,
+`placeholder`, `ai_banned`, `other`), and for a fact only you know that the answer bank does
+not give, which kind (`salary`, `notice_period`, `grades`, `travel`, `nationality`,
+`work_permit`, `gender`, `ethnicity`, `disability`, `other`). The runner keeps a value only
+when it is one of those codes, for a job or resume that was in the export, and counts what
+it dropped, so no sentence gets into a trace this way. The codes are kept in the session's
+and the run's trace, and the run log gets a line per job:
+`why (writer): <application id>: left out (fact_not_in_bank; the answer bank lacks: salary)`.
+The runner also counts the jobs left out itself, from what went in and what came back, so a
+harness that writes no `reasons.json` still shows `1 job left out with no reason given`.
+Before this the reason was only in the harness's last words, in a temp folder kept 3 days.
+`findings.txt` stays as it is, for you to read. Each session's trace now also names the
+version of the job prompt and of the contract it worked on (O20).
+
+**The run's trace goes to the trace service** (O22, from v0.29.0). When a run's work is done
+the runner hands its trace file to JAP (`make agent-trace-send FILE=...`), and JAP sends it
+on when a trace service is set: one trace per run, with a span for the run, one for each
+session with its export and its import, and one for each model request and tool call. The
+runner itself never holds the service's key, and it takes `JAP_TRACE_ENDPOINT` and
+`JAP_TRACE_HEADERS` out of a harness's environment. Handing the trace over comes after the
+work, is stopped after a minute (`JAP_AGENT_SEND_S`) and never changes how a run ends. A
+trace JAP could not take (the service did not answer, JAP was down, or live is still on a
+version before 0.29.0) stays marked `<run>.unsent` beside its file, the run log says so,
+and it is handed over again at the start of the next run of either job, once JAP has
+answered: oldest first, 10 at most. A trace sent twice carries the same ids both times, so
+the service can tell it is one trace (whether LangSmith then shows it once is not confirmed).
+With no trace service set JAP answers `off` and nothing is kept. Tried against LangSmith
+from the local stack on 24 Nov 2026 with the two stand-in runs of the tests: both were
+accepted, 9 and 15 spans. A run with a real harness has not been sent yet.
 
 Proven by a real run so far (23 Nov 2026): Devin,
 with `make agent-check HARNESS=devin` (a reader batch, and a writer with its checker), and
@@ -604,15 +636,27 @@ redacted errors to Sentry (`SENTRY_DSN`), and numbers about AI work to a trace s
     application and posting ids. One application's calls are grouped, else one run's. The
     `llm_call` row holds the same, whether or not a service is set;
   - one span per export and import of the AI reader and writer (see
-    [AI harness](#ai-harness)): counts and reason codes.
+    [AI harness](#ai-harness)): counts and reason codes;
+  - one trace per run of the runner (from v0.29.0, `backend/pipeline/agent_run_trace.py`):
+    the run, each harness session with its export and import, and each model request (tokens
+    in and out, cached) and tool call (the tool, the file of the batch folder, whether it
+    worked), with the harness, the model, the job prompt's version, a failed session's cause,
+    what was saved and left out, and the writer's and checker's reason codes as counts. No
+    id of an application or posting goes out with it. Tokens are sent as usage on a model
+    request only, so the service adds a run up once; a session with no record from its
+    harness carries its estimate under a name that says it is one.
 
   Never text. The sender takes fields by name and keeps a value only when it is a number, one
   of JAP's ids, a value from a fixed list, or a short identifier such as a model name; a
   prompt, a job description, an answer, a company or a job title cannot pass, and a test
-  fails the build if one does. Sending never delays or fails the work: spans wait on a queue
-  for a background thread, a post that fails is dropped with one line on stderr, and an
-  export or import waits at most 3 seconds for its own span before it exits. JAP's own pages
-  do not show these traces. Tried against LangSmith on 24 Nov 2026: a span was accepted and
+  fails the build if one does. The runner's trace file passes the same list: it is
+  written on the Mac, and whatever is in it, only what the list knows goes out. Sending
+  never delays or fails the work: spans wait on a queue for a background thread, a post that
+  fails is dropped with one line on stderr, and an export or import waits at most 3 seconds
+  for its own span before it exits. A run's trace is the exception to dropping: it is sent
+  after the run's work, the runner is told whether the service took it, and one that was not
+  taken is kept and sent at the start of the next run. JAP's own pages do not show these
+  traces. Tried against LangSmith on 24 Nov 2026: a span was accepted and
   shows there as a model run with its tokens and JAP's fields, with no input or output text.
 - **Uptime from outside** (O7): add a free uptime check (a Cloudflare health check, or a free
   monitor such as UptimeRobot) on `https://jap.tutorial.monster/api/health` every 5 minutes,
@@ -807,6 +851,7 @@ There is no promotion step: live runs whatever the VM's copy of this checkout bu
 | `make agent-run JOB=reader\|writer [HARNESS=...]` | Run the AI reader or writer now on `JAP_HARNESS` (PRD 1.30) |
 | `make agent-check HARNESS=...` | Try a harness on the local stack (one small reader batch and the writer), never live |
 | `make ENV=live agent-schedule` / `agent-unschedule` / `agent-status` | The Mac's daily schedule for the AI reader and writer (launchd); `agent-status` also shows the last run's trace (sessions, time in the model, tokens, causes) |
+| `make agent-trace-send FILE=...` | Hand a run's trace file (`data*/agent/traces/<run>-<job>.json`) to JAP, which sends it to the trace service when one is set; the runner does this itself after every run (PRD 1.34, O22) |
 | `make test-agent` | The runner against a stand-in JAP and harness (no model, no Docker; part of `make test`) |
 | `make reader-export` / `make reader-import FILE=...` / `reader-status` | One batch of unread postings for the AI reader, redacted; its fields back in, checked (PRD 1.25) |
 | `make writer-export` / `make writer-import FILE=...` / `writer-status` | Jobs at Needs you for the AI writer, redacted; its answers back in (PRD 1.22) |
@@ -835,6 +880,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.29.0 | 24 Nov 2026 | The trace of AI work, third of three releases (PRD 1.34: O22, O24, and O20 completed). **The runner's trace is sent**: after each run `agent/run.sh` hands the run's trace file to JAP (`make agent-trace-send`, `backend/pipeline/agent_run_trace.py`), which sends it as one trace: the run, each session with its export and import, each model request and tool call. It passes the same allow-list as every other span, so a trace file with text in it sends none of it, and no application or posting id goes out. The runner never holds the service's key. A trace that could not be sent stays marked `.unsent` beside its file and is handed over again at the start of the next run; handing over is stopped after a minute and never changes how a run ends. `observability/trace.py` gains `send_tree` (parents and children, ids worked out from the run's stamp, so a second send carries the same ids) and the fields of a run on its allow-list. **Why a job was left out, in codes**: the writer and checker prompts (version 1.3) ask for `reasons.json`, what happened to each job, why, and which kind of fact the answer bank lacked, from fixed lists; the runner keeps only those codes for ids of the export, counts the jobs left out itself, and writes a line per job to the run log. **O20**: a session's trace names the job prompt's version and the contract version. `make test-agent` grows from 67 to 84 checks, one of which keeps the codes the same in the prompts, the runner and the sender. Tried against LangSmith from the local stack with the tests' two stand-in runs (accepted, 9 and 15 spans); not yet by a run with a real harness. |
 | 0.28.0 | 24 Nov 2026 | The trace of AI work, second of three releases (PRD 1.33: O17 level 1, O19, O22, O23). **A sender**: `backend/observability/trace.py` is the only module that talks to a trace service, as OpenTelemetry traces over HTTPS with no service's library, off unless `JAP_TRACE_ENDPOINT` and `JAP_TRACE_HEADERS` are both set (LangSmith's free plan first). It takes fields by name and lets through only numbers, JAP's ids, values from fixed lists and short identifiers such as a model name, so no prompt, job text, answer, company or title can be sent; a test fails the build if text gets through. It never delays or fails the work: spans are queued and posted by a background thread, and a post that fails is dropped. **Model calls JAP makes itself** (`api` mode): each `llm_call` row now also holds the posting, the provider that served it, the attempt, cached and reasoning tokens and how it ended (`valid`, `retried`, `blocked`, `spend_cap`, `error`), and the same goes out as one span per call, the calls of one application or one run grouped. **JAP's doors**: every reader and writer export and import leaves one `log_event` row (`agent.export`, `agent.import`) and one span with counts only: items handed out, the export's size, items saved, and why the others were not, as codes. The runner takes the trace settings out of a harness's environment. Migration `0014_llm_call_trace`. Tried against LangSmith on 24 Nov 2026: a span was accepted and shows there as a model run with its tokens and JAP's fields, and no input or output text. The runner's own traces are sent in the next release |
 | 0.27.0 | 24 Nov 2026 | AI runs leave a trace (PRD 1.33, O16 to O21, first of three releases; nothing leaves the Mac yet). `agent/trace.py` and the runner record every reader, writer and checker session in numbers only: start, end, exit, what the import saved, and one named cause when it failed (`not_logged_in`, `slept`, `timeout`, `usage_limit`, `no_output`, `export_failed`, `import_failed`), where three different failures on 21 to 23 Nov all read "wrote no out.json". Where the harness gives a record of its session, each model request and tool call is kept with its time and tokens, and the run log and `make agent-status` show them; a harness without one gets an estimate from the file sizes. One trace file per run in `data*/agent/traces/` (30 days), one per session in its batch folder. A fifth adapter, for Devin's command line tool. A usage limit is read from the harness's record or its failing last words: Claude Code's "You've hit your weekly limit" was not recognised before, and a reply that quoted the word quota stopped a run. `JAP_AGENT_TRACE=0` runs the harnesses as before. The Devin adapter runs under JAP's own settings file (no shell, no web, `in.json` read-only), and the checker always gets the export as JAP gave it. Proven by a run: Devin (`make agent-check HARNESS=devin`) and Claude Code's limit reply; the other records are read from each tool's documents until `make agent-check` proves them |
 | 0.26.2 | 23 Nov 2026 | The scheduled AI reader and writer now run under `caffeinate` so the Mac cannot idle sleep mid-run (a sleep broke the ssh to the live VM on 22 and 23 Nov), and `make ENV=live agent-schedule` writes a set `DOCKER_HOST` into the launchd jobs instead of dropping it. Every harness session also gets `docs/failures.md`, a shared log of failed applications and the lessons from them, copied into its batch folder (agent prompts 1.2). Both stacks now run on a free-tier VM (PRD 1.32, H1 to H9; see Hosting): on a Mac `make start`, `restart` and `reset` with `ENV=live`, and `make tunnel-start`, refuse unless `LIVE_ON_THIS_MAC=1`, and on Linux the tunnel shares the host's network (`infra/tunnel/compose.linux.yaml`). The PRD is now kept as Markdown in `docs/` and the build plan is retired |

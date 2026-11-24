@@ -1,8 +1,12 @@
 #!/usr/bin/env bash
 # A stand-in for `make ENV=... <target>` in agent/tests/run_test.sh (PRD 1.30): JAP's
 # reader and writer commands over a small JSON state file (FAKE_STATE), no Docker, no database.
+# agent-trace-send (PRD 1.34, O22) notes each run trace it is handed in FAKE_STATE.sent;
+#   FAKE_TRACE=down  the trace service refuses: "not sent (why)", exit 1, as JAP says it
+#   FAKE_TRACE=off   no trace service is set
+#   FAKE_TRACE=hang  JAP never answers
 exec python3 - "$@" <<'PY'
-import fcntl, json, os, sys
+import fcntl, json, os, sys, time
 state_file = os.environ["FAKE_STATE"]
 # The runner's shards call this in parallel: one at a time, as JAP's database would be.
 lock = open(state_file + ".lock", "w")
@@ -51,6 +55,20 @@ elif target == "writer-import":
         state["jobs"].remove(key)
         print(f"{key}: ready_for_review")
     save()
+elif target == "agent-trace-send":
+    how = os.environ.get("FAKE_TRACE", "")
+    if how == "down":
+        print("not sent (RuntimeError: the trace service answered 401)")
+        sys.exit(1)
+    if how == "hang":
+        time.sleep(300)
+    if how == "off":
+        print("off")
+    else:
+        run = json.load(open(args["FILE"]))
+        with open(state_file + ".sent", "a") as f:
+            f.write(os.path.basename(args["FILE"]) + "\n")
+        print(f"sent {1 + len(run['sessions'])} spans")
 else:
     sys.exit(f"fake-jap: no target {target}")
 PY

@@ -9,6 +9,9 @@
 #   FAKE_RECORD=0      give no record, as a harness that cannot
 #   FAKE_SAY=<words>   end with these words (a session that worked and mentions a quota)
 #   FAKE_EDIT_INPUT=1  as the writer, change in.json, which a harness should only read
+#   FAKE_REASONS=1     as the writer, leave the first job out and say why in reasons.json
+#                      (PRD 1.34, O24), with words in it that are not codes; as the checker,
+#                      call each job fixed. FAKE_REASONS=silent: leave it out and say nothing
 set -u
 . "$(dirname "$0")/common.sh"
 out=$(mktemp)
@@ -37,6 +40,17 @@ if "JAP reader job" in prompt:
     wrote = "out.json"
 elif "JAP writer job" in prompt:
     out = {j["application_id"]: {q["key"]: "ok" for q in j["questions"]} for j in data["jobs"]}
+    if os.environ.get("FAKE_REASONS") in ("1", "silent") and out:
+        first, *rest = out
+        del out[first]
+    if os.environ.get("FAKE_REASONS") == "1" and len(out) < len(data["jobs"]):
+        json.dump({
+            first: {"outcome": "left_out",
+                    "why": ["fact_not_in_bank", "SECRET reason in my own words"],
+                    "facts": ["salary", "notice_period", "SECRET-FACT"]},
+            "SECRET-not-a-job-of-the-export": {"outcome": "left_out", "why": ["other"]},
+            **{k: {"outcome": "SECRET outcome", "why": ["other"]} for k in rest},
+        }, open("reasons.json", "w"))
     json.dump(out, open("draft.json", "w"))
     wrote = "draft.json"
     if os.environ.get("FAKE_EDIT_INPUT") == "1":
@@ -45,6 +59,9 @@ else:
     draft = json.load(open("draft.json"))
     json.dump(draft, open("out.json", "w"))
     open("findings.txt", "w").write("".join(f"{k}: ok\n" for k in draft))
+    if os.environ.get("FAKE_REASONS") == "1":
+        json.dump({k: {"outcome": "fixed", "why": "unsupported_claim"} for k in draft},
+                  open("reasons.json", "w"))
     wrote = "out.json"
 said = os.environ.get("FAKE_SAY") or "fake harness done"
 if os.environ.get("FAKE_RECORD") == "0" or os.environ.get("JAP_AGENT_TRACE") == "0":

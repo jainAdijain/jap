@@ -1,9 +1,10 @@
 # agent/: JAP's AI work on any harness
 
-Version 1.3, 23 Nov 2026 · follows PRD 1.33 (AH1 to AH9, O16 to O21) · code v0.27.0
+Version 1.4, 24 Nov 2026 · follows PRD 1.34 (AH1 to AH9, O16 to O24) · code v0.29.0
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.4 | 24 Nov 2026 | The run's trace is handed to JAP, which sends it to the trace service; one that could not be sent waits as `<run>.unsent` and goes at the start of the next run (O22). The writer and checker say why in codes (`reasons.json`, O24; prompts 1.3): kept in the trace, a line per job in the run log, and the runner counts the jobs left out itself. A session's trace names the prompt's and the contract's version (O20) |
 | 1.3 | 23 Nov 2026 | Every run leaves a trace (PRD 1.33): `trace.py`, a `trace.json` per session and a file per run, a cause for each failed session, tokens and time in the run log and in `make agent-status`. An adapter for Devin. A usage limit is read from the harness's record or its failing last words, not searched for in everything it printed |
 | 1.2 | 23 Nov 2026 | The harness gets `failures.md` (a copy of `docs/failures.md`, the shared failures log) when one exists; scheduled runs keep the Mac awake (`caffeinate`) and keep `DOCKER_HOST` |
 | 1.1 | 19 Nov 2026 | Writer and checker follow `review_rule` (PRD 1.29 V6): a flagged job comes back with `_review` instead of being left out |
@@ -24,18 +25,23 @@ make agent-run JOB=reader
   │           trace.py session → batch/trace.json, and the batch's line in the run log
   └── leftover pass (1/1), then a summary in data*/agent/last-reader.log
       and trace.py run → data*/agent/traces/<run>-reader.json
+      agent-trace-send FILE=<that file>    (JAP sends it on; kept as .unsent when it cannot)
 
 make agent-run JOB=writer
   run.sh ── writer-export > in.json
-            harness  jobs/writer.md  → draft.json
-            checker  jobs/checker.md → out.json + findings.txt   (W8)
+            harness  jobs/writer.md  → draft.json + reasons.json
+            checker  jobs/checker.md → out.json + findings.txt + reasons.json   (W8)
             writer-import FILE=out.json
+            the same trace files, and agent-trace-send, as the reader
 ```
 
-## The trace (PRD 1.33, O16 to O21)
+Both jobs start by handing over any trace an earlier run could not send, once JAP has
+answered its status.
+
+## The trace (PRD 1.33, O16 to O21; 1.34, O22 and O24)
 
 Numbers only, never text: times, token counts, counts of items, ids, and names from short
-sets (harness, model, tool, a file of the batch folder, a cause).
+sets (harness, model, tool, a file of the batch folder, a cause, a reason code).
 
 | Level | Who measures | What |
 | --- | --- | --- |
@@ -51,6 +57,7 @@ Causes: `not_logged_in`, `slept`, `timeout`, `usage_limit`, `no_output`, `export
 | `steps.json` | Batch folder: level 3, as the adapter wrote it | 3 days |
 | `trace.json` | Batch folder: the session, levels 2 and 3 together | 3 days |
 | `<run>-<job>.json` | `data*/agent/traces/`: the run with all its sessions | 30 days |
+| `<run>-<job>.unsent` | Beside it: JAP has not taken this trace yet | Until it is sent |
 
 `make agent-status` shows the last run's sessions, time in the model, tokens and causes.
 `JAP_AGENT_TRACE=0` stops asking a harness for its record (the adapters then run it as before
@@ -65,7 +72,50 @@ Which level 3 readers a real run has proven:
 | Codex, Gemini CLI, opencode | `--json`, `--output-format stream-json`, `--format json` | Not yet: not installed here |
 
 A trace also says when a session changed its `in.json` (`input_changed`), which a harness
-should only read; the checker always gets the export as JAP gave it.
+should only read; the checker always gets the export as JAP gave it. And it names the version
+of the job prompt (the line under its title) and of the contract the session worked on.
+
+### Why a job was left out (`reasons.json`, O24)
+
+The writer and the checker write `reasons.json` beside their answers, keyed by application
+id (or `resume:<id>`): `{"outcome": ..., "why": [...], "facts": [...]}`.
+
+| Part | Codes |
+| --- | --- |
+| `outcome` | `ok`, `fixed`, `held`, `left_out` |
+| `why` | `fact_not_in_bank`, `not_in_resume`, `no_option_fits`, `unclear_question`, `unsupported_claim`, `missing_answer`, `bad_option`, `too_long`, `cover_letter_rule`, `placeholder`, `ai_banned`, `other` |
+| `facts` | `salary`, `notice_period`, `grades`, `travel`, `nationality`, `work_permit`, `gender`, `ethnicity`, `disability`, `other` |
+
+`trace.py` compares each value with these lists and keeps the code, never the value: an entry
+for an id that was not in the export, an outcome or a reason that is not a code, are dropped
+and counted (`dropped`). The session's trace keeps them per job (`items.reasons`), the run's
+trace adds them up (`totals.why`, `totals.facts`, `totals.left_out`), and the run log gets
+`why (writer): <id>: left out (fact_not_in_bank; the answer bank lacks: salary)`. `left_out`
+is counted by the runner from what went in and what came back, so it is there with or
+without a `reasons.json`.
+
+The lists are written in four places: `jobs/writer.md`, `jobs/checker.md`, `trace.py` and
+the sender's allow-list (`backend/observability/trace.py`). `make test-agent` fails when
+they differ. To add a code, add it to all four.
+
+### Sending (O22)
+
+`run.sh` holds no key. After a run it calls `make agent-trace-send FILE=<run trace>`, and
+JAP (`backend/pipeline/agent_run_trace.py`) answers on one line:
+
+| JAP says | The runner |
+| --- | --- |
+| `sent <n> spans` | Says so in the run log |
+| `off` (no trace service set) | Nothing |
+| `not a run trace` | Nothing: trying again would change nothing |
+| `not sent (...)`, or nothing within `JAP_AGENT_SEND_S` (60 s) | Keeps `<run>-<job>.unsent` beside the file and says so in the run log |
+
+A waiting trace is handed over at the start of the next run of either job: oldest first, 10
+at most, none after the first that fails, and not one whose mark is under two minutes old
+(another run is still handing it over). A mark goes when its trace file does, after 30 days.
+The backend's test reads a copy of two trace files (`backend/tests/traces/agent_runs.json`);
+`make test-agent` fails when `trace.py` writes another shape, and
+`JAP_WRITE_FIXTURE=1 make test-agent` writes the copy again.
 
 A record `trace.py` cannot read costs level 3 only. To record a fixture from a real session,
 run it with `JAP_TRACE_KEEP=<file>`; that file holds the session's text, so cut the text out

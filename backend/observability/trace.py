@@ -1,4 +1,4 @@
-"""The one module that talks to the trace service (PRD 1.33, O16, O22, O23).
+"""The one module that talks to the trace service (PRD 1.33, O16, O22, O23; 1.34, O24).
 
 A trace of AI work holds numbers, ids and names from short sets, never text. This is where
 that is enforced for everything JAP sends: record() takes fields by name, keeps only the
@@ -20,8 +20,16 @@ queue; one background thread posts it; a post that fails is dropped with one lin
 (the llm_call row, or the door's log_event row, is still the record). A command that exits
 straight away, as the export and import doors do, calls flush() first, which waits a few
 seconds at most. The service's key is in JAP_TRACE_HEADERS and is never logged or handed on.
+
+The runner's trace of a run is the one thing sent another way (send_tree, from 1.34). It is a
+whole trace of many spans (the run, its sessions, each model request and tool call), handed
+over by a command whose only work is sending it, so that caller waits and is told whether
+the service took it: the runner keeps a trace that could not be sent and tries again at the
+start of the next run (O22). The same allow-list stands in front of it. Its ids are worked
+out from the run's own stamp, so a trace sent twice carries the same ids both times.
 """
 
+import hashlib
 import os
 import queue
 import re
@@ -30,7 +38,8 @@ import sys
 import threading
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from dataclasses import dataclass, field
 from decimal import Decimal
 from typing import Any, Literal
 from urllib.parse import urlsplit
@@ -39,7 +48,7 @@ import httpx
 
 from config import get_settings
 
-Kind = Literal["llm", "chain"]
+Kind = Literal["llm", "chain", "tool"]
 Value = str | int | float | bool
 Check = Callable[[Any], Value | None]
 
@@ -68,6 +77,66 @@ REASONS = (
     "resume_not_read",
     "other",
 )
+# The runner's trace (agent/trace.py writes it, pipeline/agent_run_trace.py reads it). Who
+# worked in a session, why one failed (O18; no_answer is a run in which JAP itself did not
+# answer), and the files of a batch folder a tool may be said to have touched.
+ROLES = ("reader", "writer", "checker")
+CAUSES = (
+    "not_logged_in",
+    "slept",
+    "timeout",
+    "usage_limit",
+    "no_output",
+    "export_failed",
+    "import_failed",
+    "no_answer",
+)
+FILES = (
+    "in.json",
+    "out.json",
+    "draft.json",
+    "findings.txt",
+    "reasons.json",
+    "prompt.md",
+    "failures.md",
+    "other",
+    "outside",
+)
+# O24: why a writer or checker left a job out, held it or fixed it, and which kind of fact
+# only the person knows the answer bank did not give. The same lists as agent/trace.py and
+# the job prompts; agent/tests/run_test.sh keeps them in step.
+WHY = (
+    "fact_not_in_bank",
+    "not_in_resume",
+    "no_option_fits",
+    "unclear_question",
+    "unsupported_claim",
+    "missing_answer",
+    "bad_option",
+    "too_long",
+    "cover_letter_rule",
+    "placeholder",
+    "ai_banned",
+    "other",
+)
+FACTS = (
+    "salary",
+    "notice_period",
+    "grades",
+    "travel",
+    "nationality",
+    "work_permit",
+    "gender",
+    "ethnicity",
+    "disability",
+    "other",
+)
+# What a harness loaded at the start of a session, what the checker found, and JAP's status
+# line before and after a run: each a count under a name built from these.
+LOADED = ("tools", "mcp_servers", "plugins", "skills", "agents")
+CHECKED = ("ok", "fixed", "held", "left_out")
+WAITING = ("unread", "pairs", "jobs", "resumes")
+STAMP = re.compile(r"^\d{8}-\d{6}-\d{1,8}$")
 COUNTS = (
     "attempt",
     "latency_ms",
@@ -91,11 +160,45 @@ COUNTS = (
     "answered",
     "held",
     "resumes_read",
+    # From the runner's trace: a run and its sessions.
+    "level",
+    "exit_code",
+    "seconds",
+    "sessions",
+    "failed",
+    "traced",
+    "model_requests",
+    "tool_calls",
+    "turns",
+    "batch",
+    "batch_size",
+    "in_bytes",
+    "out_bytes",
+    "tokens_in_estimate",
+    "tokens_out_estimate",
+    "total_tokens_in",
+    "total_tokens_out",
+    "total_cache_read",
+    "total_cache_write",
+    "model_ms",
+    "tool_ms",
+    "denied",
+    "input_changed",
+    "written",
+    "resumes_written",
+    "pairs_settled",
+    "left_out",
+    "not_answered",
+    "reasons_dropped",
+    "steps_not_sent",
 )
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "host.docker.internal")
 MAX_QUEUE = 1_000
 BATCH = 50
 WAIT_S = 5.0
+# A run's trace, sent whole: spans to a request, and how long one request may take.
+TREE_BATCH = 500
+TREE_WAIT_S = 20.0
 
 
 def _count(value: Any) -> Value | None:
@@ -126,6 +229,16 @@ def _one_of(allowed: tuple[str, ...]) -> Check:
     return lambda value: value if isinstance(value, str) and value in allowed else None
 
 
+def _stamp(value: Any) -> Value | None:
+    """A run's stamp as agent/run.sh makes it: date, time and process id, digits only."""
+    return value if isinstance(value, str) and STAMP.match(value) else None
+
+
+def _counts(names: tuple[str, ...], pattern: str) -> dict[str, tuple[str, Check]]:
+    """A count for each name on a list, under a field name built from it."""
+    return {pattern.format(name): (META + pattern.format(name), _count) for name in names}
+
+
 # Every field a trace may carry: the name it is sent under, and what its value must be.
 FIELDS: dict[str, tuple[str, Check]] = {
     "model": ("gen_ai.request.model", _name),
@@ -135,6 +248,7 @@ FIELDS: dict[str, tuple[str, Check]] = {
     "tokens_in": ("gen_ai.usage.input_tokens", _count),
     "tokens_out": ("gen_ai.usage.output_tokens", _count),
     "tokens_cached": ("gen_ai.usage.cache_read.input_tokens", _count),
+    "tokens_cache_write": ("gen_ai.usage.cache_creation.input_tokens", _count),
     "tokens_reasoning": ("gen_ai.usage.reasoning.output_tokens", _count),
     "mode": (META + "mode", _one_of(MODES)),
     "env": (META + "env", _name),
@@ -149,8 +263,22 @@ FIELDS: dict[str, tuple[str, Check]] = {
     "application_id": (META + "application_id", _id),
     "posting_id": (META + "posting_id", _id),
     "thread_id": (META + "thread_id", _id),
+    "role": (META + "role", _one_of(ROLES)),
+    "cause": (META + "cause", _one_of(CAUSES)),
+    "file": (META + "file", _one_of(FILES)),
+    "tool": (META + "tool", _name),
+    "checker": (META + "checker", _name),
+    "harness_version": (META + "harness_version", _name),
+    "run_stamp": (META + "run_stamp", _stamp),
     **{name: (META + name, _count) for name in COUNTS},
-    **{f"not_saved_{why}": (f"{META}not_saved_{why}", _count) for why in REASONS},
+    **_counts(REASONS, "not_saved_{}"),
+    **_counts(CAUSES, "cause_{}"),
+    **_counts(WHY, "why_{}"),
+    **_counts(FACTS, "fact_{}"),
+    **_counts(LOADED, "loaded_{}"),
+    **_counts(CHECKED, "checked_{}"),
+    **_counts(WAITING, "{}_before"),
+    **_counts(WAITING, "{}_after"),
 }
 
 
@@ -203,10 +331,21 @@ def _attributes(number: int, attrs: dict[str, Value]) -> bytes:
     )
 
 
-def _span(name: str, started: float, ended: float, ok: bool, attrs: dict[str, Value]) -> bytes:
+def _span(
+    name: str,
+    started: float,
+    ended: float,
+    ok: bool,
+    attrs: dict[str, Value],
+    ids: tuple[bytes, bytes, bytes | None] | None = None,
+) -> bytes:
+    """One span. ids: its trace, itself and its parent, for a span that is part of a tree;
+    left out, it is a trace of its own."""
+    trace_id, span_id, parent = ids or (os.urandom(16), os.urandom(8), None)
     return (
-        _bytes(1, os.urandom(16))  # trace_id
-        + _bytes(2, os.urandom(8))  # span_id
+        _bytes(1, trace_id)
+        + _bytes(2, span_id)
+        + (_bytes(4, parent) if parent else b"")
         + _bytes(5, name.encode())
         + _field(6, 0, _varint(1))  # kind: internal
         + _field(7, 1, struct.pack("<Q", int(started * 1e9)))
@@ -259,12 +398,12 @@ def target() -> tuple[str, dict[str, str]] | None:
     return url, headers
 
 
-def _post(url: str, headers: dict[str, str], body: bytes) -> None:
+def _post(url: str, headers: dict[str, str], body: bytes, wait_s: float = WAIT_S) -> None:
     resp = httpx.post(
         url,
         content=body,
         headers={**headers, "Content-Type": "application/x-protobuf"},
-        timeout=WAIT_S,
+        timeout=wait_s,
     )
     if resp.status_code >= 400:
         raise RuntimeError(f"the trace service answered {resp.status_code}")
@@ -301,6 +440,17 @@ def _ensure_thread() -> None:
             _thread.start()
 
 
+def _attrs(kind: Kind, fields: dict[str, Any]) -> dict[str, Value]:
+    """A span's attributes: the fields the allow-list keeps, and what kind of work it was."""
+    attrs = clean({"env": get_settings().jap_env, **fields})
+    attrs["langsmith.span.kind"] = kind
+    if kind == "llm":
+        attrs["gen_ai.operation.name"] = "chat"
+    if META + "thread_id" in attrs:
+        attrs["session.id"] = attrs[META + "thread_id"]
+    return attrs
+
+
 def record(
     name: str, kind: Kind, started: float, ended: float, *, ok: bool = True, **fields: Any
 ) -> dict[str, Value]:
@@ -308,12 +458,7 @@ def record(
     service when one is set. Returns the attributes as they are sent, after the allow-list."""
     try:
         settings = get_settings()
-        attrs = clean({"env": settings.jap_env, **fields})
-        attrs["langsmith.span.kind"] = kind
-        if kind == "llm":
-            attrs["gen_ai.operation.name"] = "chat"
-        if META + "thread_id" in attrs:
-            attrs["session.id"] = attrs[META + "thread_id"]
+        attrs = _attrs(kind, fields)
         to = target()
         if to is None or not NAME.match(name):
             return attrs
@@ -334,3 +479,61 @@ def flush(timeout: float = 3.0) -> None:
     deadline = time.monotonic() + timeout
     while _queue.unfinished_tasks and time.monotonic() < deadline:
         time.sleep(0.02)
+
+
+@dataclass(frozen=True)
+class Node:
+    """One span of a trace that is sent whole (send_tree). `path` names it within the trace
+    and `parent` is the path of the span it belongs to; the span's id is worked out from it."""
+
+    path: str
+    parent: str | None
+    name: str
+    kind: Kind
+    started: float
+    ended: float
+    ok: bool = True
+    fields: dict[str, Any] = field(default_factory=dict)
+
+
+class NotSent(RuntimeError):
+    """The trace service did not take a trace; the caller keeps it and tries again."""
+
+
+def _digest(text: str, size: int) -> bytes:
+    return hashlib.sha256(text.encode()).digest()[:size]
+
+
+def send_tree(key: str, nodes: Sequence[Node]) -> int | None:
+    """One trace of many spans, sent now: how many spans the service took, or None when
+    tracing to a service is off. Raises NotSent when it could not be sent (O22: the runner
+    then keeps the run's trace for the next run). `key` names the trace, so the same key
+    and paths give the same ids every time it is sent."""
+    to = target()
+    if to is None:
+        return None
+    url, headers = to
+    env = get_settings().jap_env
+    trace_id = _digest(f"jap:{key}", 16)
+    spans = [
+        _span(
+            node.name,
+            node.started,
+            node.ended,
+            node.ok,
+            _attrs(node.kind, node.fields),
+            (
+                trace_id,
+                _digest(f"jap:{key}/{node.path}", 8),
+                _digest(f"jap:{key}/{node.parent}", 8) if node.parent is not None else None,
+            ),
+        )
+        for node in nodes
+        if NAME.match(node.name)
+    ]
+    try:
+        for i in range(0, len(spans), TREE_BATCH):
+            _post(url, headers, _request(spans[i : i + TREE_BATCH], env), TREE_WAIT_S)
+    except Exception as exc:
+        raise NotSent(f"{type(exc).__name__}: {str(exc)[:200]}") from None
+    return len(spans)
