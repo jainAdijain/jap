@@ -1,0 +1,4 @@
+{"type": "system", "subtype": "init", "_t": 1795317869.729, "model": "claude-opus-5-5", "claude_code_version": "2.1.330", "tools": ["Read", "Write"], "mcp_servers": []}
+{"type": "rate_limit_event", "_t": 1795317870.229, "rate_limit_info": {}}
+{"type": "assistant", "_t": 1795317870.329, "error": "rate_limit", "message": {"model": "<synthetic>", "content": [{"type": "text", "text": "You've hit your weekly limit \u00b7 resets Jan 1 at 12:00am (UTC)"}], "usage": {"input_tokens": 0, "output_tokens": 0}}}
+{"type": "result", "_t": 1795317870.329, "subtype": "success", "is_error": true, "num_turns": 1, "total_cost_usd": 0, "api_error_status": 429, "api_error_type": "rate_limit_error", "api_error": "usage_limit_reached", "terminal_reason": "api_error", "permission_denials": [], "result": "You've hit your weekly limit \u00b7 resets Jan 1 at 12:00am (UTC)"}

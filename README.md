@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.26.2 (both stacks on the VM; AI runs survive the Mac's sleep and share a failures log), 23 Nov 2026.**
+**Version 0.27.0 (AI runs leave a trace: time, tokens, tool calls and a cause; a Devin adapter), 24 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -426,15 +426,16 @@ Reading until then). With both settings on `agent`, JAP makes no OpenRouter call
 
 ## AI harness
 
-PRD 1.30, AH1 to AH8. The AI reader and writer run on whichever agent harness you pay for:
-Claude Code, OpenAI Codex CLI, Gemini CLI or opencode, each on its own subscription and
-models. Switching is one line and one command. Everything is in `agent/`:
+PRD 1.30, AH1 to AH9. The AI reader and writer run on whichever agent harness you pay for:
+Claude Code, OpenAI Codex CLI, Gemini CLI, opencode or Devin's command line tool (from 1.33),
+each on its own subscription and models. Switching is one line and one command. Everything is in `agent/`:
 
 | Part | What it is |
 | --- | --- |
 | `agent/run.sh` | The runner (`make agent-run JOB=reader|writer`). It exports each batch, starts the harness once per batch, imports what comes back, runs the reader's 8 shards in parallel plus a leftover pass, runs the writer and then a checker session before anything is imported, and stops when the plan's usage limit is reached (exit 75; the rest waits for the next run). One reader and one writer run at a time. |
 | `agent/jobs/` | The job prompts, one per job (`reader.md`, `writer.md`, `checker.md`), written for any harness. The harness sees only one batch folder: `in.json` from the export, the prompt, and the file it writes (`out.json`, `draft.json`, `findings.txt`). It runs no command, reads no database, needs no shell or web. |
-| `agent/harnesses/` | One small adapter per harness: how to run a prompt without a chat window, and how its usage-limit message reads. Add a harness by copying one and following `common.sh`. |
+| `agent/harnesses/` | One small adapter per harness: how to run a prompt without a chat window, how to get its record of the session, and how its usage-limit message reads. Add a harness by copying one and following `common.sh`. |
+| `agent/trace.py` | The trace of each run (PRD 1.33, O16 to O21): numbers only. See below. |
 | `agent/contract/` | JSON Schemas of the reader and writer exports and imports, at `contract_version` 1 (in every export). |
 | `agent/schedule.sh` | The Mac's schedule (launchd), replacing the Claude app's scheduled tasks. |
 
@@ -442,7 +443,8 @@ Settings, in `.env.live` (see `.env.example`): `JAP_HARNESS` (`claude`, `codex`,
 `opencode`), `JAP_HARNESS_MODEL` (empty = the harness's default), `JAP_CHECKER_HARNESS` and
 `JAP_CHECKER_MODEL` (the checker pass; empty = the same, `none` = no check),
 `JAP_AGENT_SHARDS` (8 reader shards in parallel), `JAP_AGENT_BATCH` (10 postings per reader
-batch), `JAP_AGENT_TIMEOUT_MIN` (20 minutes per harness session) and `JAP_AGENT_READER_AT` /
+batch), `JAP_AGENT_TIMEOUT_MIN` (20 minutes per harness session), `JAP_AGENT_TRACE` (0 = do
+not ask the harness for a record of its session) and `JAP_AGENT_READER_AT` /
 `JAP_AGENT_WRITER_AT` (07:05 and 07:30, the Mac's time). The writer has no batch size: one
 session takes everything that is waiting, and the checker session follows it.
 
@@ -457,9 +459,46 @@ with. `docs/failures.md`, the log of failed applications and the lessons from th
 harness keeps, is copied into every batch folder for the harness to read; it is not in git,
 holds no personal data and never overrides the job prompt (`JAP_FAILURES_FILE` moves it).
 
+**What a run leaves behind** (PRD 1.33, O16 to O21). Every run is traced, in numbers only:
+no prompt, job text, resume, answer or reply is kept in a trace.
+
+- The runner times each export, session and import and, when a session fails, names the
+  cause in the run log: `not_logged_in`, `slept`, `timeout`, `usage_limit`, `no_output`,
+  `export_failed` or `import_failed`. Before 1.33 the first, second and fifth all read
+  "wrote no out.json (exit 1)".
+- Where the harness gives a record of its own session, each model request (time, tokens in
+  and out, cached tokens) and each tool call (which tool, which file of the batch folder,
+  how long, whether it worked) is kept too. Each batch's line in the run log then ends with
+  them: `saved 10 of 10 · 42 s · 4 model requests · 3 tool calls · 208,102 tokens in, 3,797
+  out · claude-opus-5-5`. A harness that gives no record gets an estimate from the file
+  sizes, said to be one.
+- One file per run in `data-live/agent/traces/` (30 days) holds every session of the run, and
+  `trace.json` in each batch folder (3 days) holds that session. `make ENV=live agent-status`
+  shows the last run's sessions, time in the model, tokens and causes.
+- A usage limit is read from the harness's record, or from its last words when it failed,
+  no longer searched for in everything it printed: a session that worked and quoted a "sales
+  quota" used to stop the run, and Claude Code's "You've hit your weekly limit" was not
+  recognised at all.
+
+Nothing leaves the Mac in this version. Proven by a real run so far (23 Nov 2026): Devin,
+with `make agent-check HARNESS=devin` (a reader batch, and a writer with its checker), and
+Claude Code's reply at its plan limit. Not yet proven: the record of a Claude Code session
+that worked, and Codex's, Gemini CLI's and opencode's records; `agent/README.md` keeps the
+list. A record that cannot be read costs only the detail inside the session.
+
+**Devin** runs under JAP's own settings (`agent/harnesses/devin.config.json`), not yours: no
+shell or web tool, nothing readable under your home folder, nothing writable outside the
+batch folder, and `in.json` read-only. Its file reader cuts lines at 2,000 characters, so it
+searches `in.json` to get at a long job description: one reader batch of 3 postings and a
+pair took 9 minutes and 1.3 million input tokens, against 42 seconds and 208,000 for 10
+postings on Claude Code. Check the tokens in `make agent-status` before making it the daily
+harness.
+
 **Switching harness** (AH7):
 
-1. Install the new tool and sign in with your subscription (`codex`, `gemini`, `opencode`).
+1. Install the new tool and sign in with your subscription (`codex`, `gemini`, `opencode`;
+   Devin: `devin auth login`, and the adapter finds the copy inside Devin Desktop when
+   `devin` is not on PATH).
 2. `make agent-check HARNESS=codex` runs one small reader batch and the writer on the local
    stack, never live. Look at its output and at `data/agent/last-reader.log`.
 3. Set `JAP_HARNESS=codex` (and `JAP_HARNESS_MODEL` if you want one) in `.env.live`.
@@ -725,7 +764,7 @@ There is no promotion step: live runs whatever the VM's copy of this checkout bu
 | `make email-test TO=...` | Send one test email from the mailbox in `.env` |
 | `make agent-run JOB=reader\|writer [HARNESS=...]` | Run the AI reader or writer now on `JAP_HARNESS` (PRD 1.30) |
 | `make agent-check HARNESS=...` | Try a harness on the local stack (one small reader batch and the writer), never live |
-| `make ENV=live agent-schedule` / `agent-unschedule` / `agent-status` | The Mac's daily schedule for the AI reader and writer (launchd) |
+| `make ENV=live agent-schedule` / `agent-unschedule` / `agent-status` | The Mac's daily schedule for the AI reader and writer (launchd); `agent-status` also shows the last run's trace (sessions, time in the model, tokens, causes) |
 | `make test-agent` | The runner against a stand-in JAP and harness (no model, no Docker; part of `make test`) |
 | `make reader-export` / `make reader-import FILE=...` / `reader-status` | One batch of unread postings for the AI reader, redacted; its fields back in, checked (PRD 1.25) |
 | `make writer-export` / `make writer-import FILE=...` / `writer-status` | Jobs at Needs you for the AI writer, redacted; its answers back in (PRD 1.22) |
@@ -754,6 +793,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.27.0 | 24 Nov 2026 | AI runs leave a trace (PRD 1.33, O16 to O21, first of three releases; nothing leaves the Mac yet). `agent/trace.py` and the runner record every reader, writer and checker session in numbers only: start, end, exit, what the import saved, and one named cause when it failed (`not_logged_in`, `slept`, `timeout`, `usage_limit`, `no_output`, `export_failed`, `import_failed`), where three different failures on 21 to 23 Nov all read "wrote no out.json". Where the harness gives a record of its session, each model request and tool call is kept with its time and tokens, and the run log and `make agent-status` show them; a harness without one gets an estimate from the file sizes. One trace file per run in `data*/agent/traces/` (30 days), one per session in its batch folder. A fifth adapter, for Devin's command line tool. A usage limit is read from the harness's record or its failing last words: Claude Code's "You've hit your weekly limit" was not recognised before, and a reply that quoted the word quota stopped a run. `JAP_AGENT_TRACE=0` runs the harnesses as before. The Devin adapter runs under JAP's own settings file (no shell, no web, `in.json` read-only), and the checker always gets the export as JAP gave it. Proven by a run: Devin (`make agent-check HARNESS=devin`) and Claude Code's limit reply; the other records are read from each tool's documents until `make agent-check` proves them |
 | 0.26.2 | 23 Nov 2026 | The scheduled AI reader and writer now run under `caffeinate` so the Mac cannot idle sleep mid-run (a sleep broke the ssh to the live VM on 22 and 23 Nov), and `make ENV=live agent-schedule` writes a set `DOCKER_HOST` into the launchd jobs instead of dropping it. Every harness session also gets `docs/failures.md`, a shared log of failed applications and the lessons from them, copied into its batch folder (agent prompts 1.2). Both stacks now run on a free-tier VM (PRD 1.32, H1 to H9; see Hosting): on a Mac `make start`, `restart` and `reset` with `ENV=live`, and `make tunnel-start`, refuse unless `LIVE_ON_THIS_MAC=1`, and on Linux the tunnel shares the host's network (`infra/tunnel/compose.linux.yaml`). The PRD is now kept as Markdown in `docs/` and the build plan is retired |
 | 0.26.1 | 20 Nov 2026 | A JAP icon in the browser tab: a white J on the app's teal, as `favicon.svg` with a 32 px PNG fallback and a 180 px home-screen icon, in `frontend/public/`. The tab title names the screen and counts the jobs that need you, `(3) Jobs · JAP`, with `[TEST]` or `[LOCAL]` in front on a copy that isn't prod, and reads `Sign in · JAP` before sign-in |
 | 0.26.0 | 19 Nov 2026 | Company limits in the UI (PRD 1.31, V10). Job preferences lists every company with a limit of its own: the limit, the jobs sent inside the current window with their dates, and the exact date and time, in `JAP_TZ`, that it opens again. The open date is when enough sends have left the window to make room, not the oldest send plus the window. `GET /api/boards/limits` |

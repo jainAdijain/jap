@@ -1,0 +1,5 @@
+{"type": "init", "_t": 1795317869.729, "session_id": "x", "model": "gemini-3-pro"}
+{"type": "tool_use", "_t": 1795317870.729, "tool_name": "read_file", "tool_id": "g1", "parameters": {"file_path": "in.json"}}
+{"type": "tool_result", "_t": 1795317870.9290001, "tool_id": "g1", "status": "success", "output": "SECRET-TEXT must never reach a trace"}
+{"type": "message", "_t": 1795317873.729, "role": "assistant", "content": "done"}
+{"type": "result", "_t": 1795317873.729, "status": "success", "stats": {"input_tokens": 9000, "output_tokens": 300, "total_tokens": 9300}}

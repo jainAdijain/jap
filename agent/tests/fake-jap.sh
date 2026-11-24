@@ -24,7 +24,8 @@ elif target == "reader-export":
     mine = [p for p in state["unread"] if in_shard(p, shard)][:limit]
     pairs = state["pairs"][:limit] if shard.startswith("1/") else []
     print(json.dumps({"contract_version": 1, "postings": [
-        {"posting_id": p, "description_hash": "h" + p, "keys": ["skills"]} for p in mine],
+        {"posting_id": p, "description_hash": "h" + p, "keys": ["skills"],
+         "description_text": "SECRET-POSTING-TEXT with a sales quota"} for p in mine],
         "pairs": [{"pair_id": p} for p in pairs]}))
 elif target == "reader-import":
     given = json.load(open(args["FILE"]))
@@ -32,6 +33,7 @@ elif target == "reader-import":
     for key, value in given.items():
         if key.startswith("pair:"):
             state["pairs"].remove(key[5:]); saved += 1
+            print(f"{key}: kept apart")
         elif key in state["unread"] and value.get("description_hash") == "h" + key:
             state["unread"].remove(key); saved += 1
             print(f"{key}: saved")
@@ -41,7 +43,8 @@ elif target == "writer-status":
     print(f"jobs={len(state['jobs'])} resumes=0")
 elif target == "writer-export":
     print(json.dumps({"contract_version": 1, "resumes": [], "jobs": [
-        {"application_id": a, "questions": [{"key": "why"}]} for a in state["jobs"]]}))
+        {"application_id": a, "questions": [{"key": "why", "label": "SECRET-QUESTION-TEXT"}]}
+        for a in state["jobs"]]}))
 elif target == "writer-import":
     given = json.load(open(args["FILE"]))
     for key in given:

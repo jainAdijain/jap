@@ -1,0 +1,4 @@
+{"type": "step_start", "_t": 1795317869.729, "part": {}}
+{"type": "tool_use", "_t": 1795317871.729, "part": {"tool": "read", "callID": "o1", "state": {"status": "completed", "input": {"filePath": "in.json"}, "output": "SECRET-TEXT must never reach a trace", "time": {"start": 1795317871229, "end": 1795317871729}}}}
+{"type": "text", "_t": 1795317872.729, "part": {"text": "done"}}
+{"type": "step_finish", "_t": 1795317872.729, "part": {"cost": 0.01, "tokens": {"input": 209, "output": 40, "reasoning": 10, "cache": {"read": 18944, "write": 0}}}}
