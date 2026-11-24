@@ -12,6 +12,8 @@
 set -u
 . "$(dirname "$0")/common.sh"
 out=$(mktemp)
+# AH8: a harness must never be handed the trace service's settings; the test looks for this.
+[ -z "${JAP_TRACE_ENDPOINT:-}${JAP_TRACE_HEADERS:-}" ] || touch "$FAKE_STATE.saw-trace-key"
 if [ "${FAKE_LIMIT:-}" = 1 ]; then
 	echo "You've hit your usage limit" >"$out"
 	finish 1 "$out"

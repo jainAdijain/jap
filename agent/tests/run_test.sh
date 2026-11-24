@@ -21,9 +21,11 @@ state() { python3 -c "import json; print(json.dumps(json.load(open('$FAKE_STATE'
 
 python3 -c "import json; json.dump({'unread': [str(i) for i in range(1, 30)],
   'pairs': ['p1', 'p2'], 'jobs': ['a1', 'a2']}, open('$FAKE_STATE', 'w'))"
-"$ROOT/agent/run.sh" reader >"$TMP/reader.out" 2>&1
+JAP_TRACE_ENDPOINT=https://trace.example JAP_TRACE_HEADERS=x-api-key=k \
+	"$ROOT/agent/run.sh" reader >"$TMP/reader.out" 2>&1
 rc=$?
 check "reader exits 0" '[ "$rc" = 0 ]'
+check "the trace service's settings never reach a harness" '[ ! -e "$FAKE_STATE.saw-trace-key" ]'
 check "reader read every posting" '[ "$(state "[\"unread\"]")" = "[]" ]'
 check "reader settled every pair" '[ "$(state "[\"pairs\"]")" = "[]" ]'
 check "reader ran 3 shards" '[ "$(ls -d "$TMP"/work/*-reader/reader-*-of-3 | wc -l | tr -d " ")" = 3 ]'

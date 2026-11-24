@@ -30,6 +30,7 @@ import asyncio
 import json
 import re
 import sys
+import time
 import uuid
 from typing import Any
 
@@ -41,6 +42,7 @@ from database.models import AnswerBank, Application, Company, Listing, Profile, 
 from database.session import get_sessionmaker
 from llm.call import load_prompt
 from llm.redact import Sensitive, find_links, from_resume_text, guard, redact, restore
+from pipeline import agent_doors
 from pipeline.agent_contract import CONTRACT_VERSION
 from pipeline.apply.flow import letter_fields
 from pipeline.resume import save_parsed, sensitive_from_profile
@@ -245,17 +247,27 @@ async def import_answers(session: AsyncSession, answers: dict[str, Any]) -> list
 
 
 async def _main(command: str) -> None:
+    started = time.time()  # O17, level 1: each export and import is counted (agent_doors)
     async with get_sessionmaker()() as session:
         if command == "export":
-            print(json.dumps(await export(session), ensure_ascii=False, indent=1))
+            out = await export(session)
+            text = json.dumps(out, ensure_ascii=False, indent=1)
+            print(text)
+            counts = agent_doors.writer_export(out, len(text.encode()))
+            agent_doors.record("writer", "export", started, counts)
         elif command == "import":
-            for line in await import_answers(session, json.loads(sys.stdin.read())):
+            answers = json.loads(sys.stdin.read())
+            lines = await import_answers(session, answers)
+            for line in lines:
                 print(line)
+            counts = agent_doors.writer_import(answers, lines)
+            agent_doors.record("writer", "import", started, counts)
         elif command == "status":
             out = await export(session)
             print(f"jobs={len(out['jobs'])} resumes={len(out['resumes'])}")
         else:
             raise SystemExit("usage: python -m pipeline.claude_writer export|import|status")
+    agent_doors.done()
 
 
 if __name__ == "__main__":

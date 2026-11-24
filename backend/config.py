@@ -116,6 +116,11 @@ class Settings(BaseSettings):
     # Sentry's free plan (O15): empty means off. Only redacted errors are sent.
     sentry_dsn: str = ""
 
+    # The trace service for AI work (PRD 1.33, O22, O23): off unless both are set. Numbers,
+    # ids and names from fixed lists only, never text (observability/trace.py).
+    jap_trace_endpoint: str = ""
+    jap_trace_headers: str = ""
+
     # The UI dev server is the only allowed browser origin.
     cors_origins: list[str] = ["http://localhost:5173"]
 

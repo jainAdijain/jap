@@ -320,6 +320,14 @@ class LlmCall(Timestamps, Base):
     error: Mapped[str | None] = mapped_column(Text)
     run_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     application_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    # PRD 1.33, O19: the posting it belongs to, who served it, which try it was, the token
+    # detail, and how it ended (observability/trace.py OUTCOMES).
+    posting_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    provider: Mapped[str | None] = mapped_column(Text)
+    attempt: Mapped[int | None]
+    tokens_cached: Mapped[int | None]
+    tokens_reasoning: Mapped[int | None]
+    outcome: Mapped[str | None] = mapped_column(Text)
 
 
 class FormCheck(Timestamps, Base):
