@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""The trace of JAP's AI work on a harness (PRD 1.33, O16 to O21): numbers only.
+"""The trace of JAP's AI work on a harness (PRD 1.33, O16 to O21; 1.34, O24): numbers only.
 
 A harness session is traced at two of the PRD's three levels here (level 1, JAP's own export
 and import commands, belongs to the backend):
 
   level 2  the runner (agent/run.sh) times each export, session and import. `session` turns
            that into the session's trace.json: start, end, exit, a cause when it failed, the
-           size of what went in and came out, and what the import said was saved
+           size of what went in and came out, what the import said was saved, how many jobs
+           were left out, and why, in the codes the writer or checker gave (reasons.json)
   level 3  the harness's own record of its session (a JSON event stream on its output, or
            Devin's export file). `read` keeps each model request and each tool call with its
            time and tokens, and drops everything else
@@ -14,6 +15,7 @@ and import commands, belongs to the backend):
     trace.py read <harness> [--record FILE --ended T] [--out steps.json] [--final FILE]
     trace.py session --dir <batch folder> --job .. --role .. --harness .. ...    run.sh
     trace.py run --run-dir <run folder> ... --out <data>/agent/traces/<run>.json run.sh
+    trace.py reasons <session trace.json>     why jobs were left out, held or fixed  run.sh
     trace.py last <run trace file>                                               schedule.sh
 
 What a trace may hold (O16): numbers, ids, and names from short sets (a harness, a model, a
@@ -21,7 +23,9 @@ tool, the files of a batch folder, a cause). Never text. A harness's record is f
 (the prompt, job descriptions, the resume, answers), so nothing is copied from it: every
 string taken from a record passes name() or file_of(), which accept a short identifier or a
 file name on a fixed list and nothing else. The text a harness says at the end goes only to
---final, the batch folder's harness.log, as before 1.33.
+--final, the batch folder's harness.log, as before 1.33. reasons.json, which a writer or
+checker writes itself, is read the same way: a value is kept only when it equals a code on
+OUTCOMES, WHY or FACTS, for an id that was in the export (O24).
 
 Level 3 is proven per harness with make agent-check (AH7). A record this cannot read costs
 level 3 only: nothing here may stop or fail a run, so every command swallows its own errors.
@@ -80,6 +84,38 @@ NOT_SAVED = (
     ("pair already", "pair_gone"),
     ("needs a pair id", "bad_pair"),
 )
+# What a writer or checker may say in reasons.json (PRD 1.34, O24): what happened to a job or
+# a resume, why, and which kind of fact only the person knows the answer bank did not give.
+# The job prompts (agent/jobs/writer.md, checker.md) list the same codes, and so does the
+# sender's allow-list (backend/observability/trace.py); a test keeps the three in step.
+OUTCOMES = ("ok", "fixed", "held", "left_out")
+WHY = (
+    "fact_not_in_bank",
+    "not_in_resume",
+    "no_option_fits",
+    "unclear_question",
+    "unsupported_claim",
+    "missing_answer",
+    "bad_option",
+    "too_long",
+    "cover_letter_rule",
+    "placeholder",
+    "ai_banned",
+    "other",
+)
+FACTS = (
+    "salary",
+    "notice_period",
+    "grades",
+    "travel",
+    "nationality",
+    "work_permit",
+    "gender",
+    "ethnicity",
+    "disability",
+    "other",
+)
+RESUME = "resume:"
 PATH_KEYS = ("file_path", "path", "absolute_path", "filePath", "notebook_path", "filename")
 
 
@@ -609,11 +645,71 @@ def reader_items(folder):
     return items
 
 
+def listed(value):
+    """A value of reasons.json as a list: one code, or a list of them."""
+    if isinstance(value, str):
+        return [value]
+    return value if isinstance(value, list) else []
+
+
+def on_list(values, allowed):
+    """The values that are codes on that list, each once, in the list's order."""
+    return [code for code in allowed if any(isinstance(v, str) and v == code for v in values)]
+
+
+def reasons_of(folder, known):
+    """O24: reasons.json as the writer or checker wrote it, keeping only what is on the lists.
+
+    known: the ids of the export (application ids, and "resume:<id>"). An entry for any other
+    key, or with an outcome that is not on OUTCOMES, is dropped; so is each reason or kind of
+    fact that is not a code on WHY or FACTS. Values are compared with the codes, never copied,
+    so whatever else a harness wrote there (a sentence, a company, a question) stays out.
+    """
+    data = load(os.path.join(folder, "reasons.json"))
+    out = {
+        "given": isinstance(data, dict),
+        "outcomes": {},
+        "why": {},
+        "facts": {},
+        "dropped": 0,
+        "items": [],
+    }
+    for key, said in data.items() if isinstance(data, dict) else ():
+        said = said if isinstance(said, dict) else {}
+        outcome = next((o for o in OUTCOMES if said.get("outcome") == o), None)
+        if key not in known or outcome is None:
+            out["dropped"] += 1
+            continue
+        why, facts = listed(said.get("why")), listed(said.get("facts"))
+        kept = {"why": on_list(why, WHY), "facts": on_list(facts, FACTS)}
+        out["dropped"] += sum(not (isinstance(v, str) and v in WHY) for v in why)
+        out["dropped"] += sum(not (isinstance(v, str) and v in FACTS) for v in facts)
+        out["outcomes"][outcome] = out["outcomes"].get(outcome, 0) + 1
+        for part in ("why", "facts"):
+            for code in kept[part]:
+                out[part][code] = out[part].get(code, 0) + 1
+        out["items"].append({"id": key, "outcome": outcome, **kept})
+    return out
+
+
+def missing(given, wrote):
+    """How many of the jobs handed out have no entry in what came back."""
+    return sum(1 for key in given if key not in wrote)
+
+
 def writer_items(folder, role):
     given = load(os.path.join(folder, "in.json"))
     wrote = load(os.path.join(folder, "out.json" if role == "checker" else "draft.json"))
     wrote = wrote if isinstance(wrote, dict) else {}
-    jobs = {k: v for k, v in wrote.items() if not k.startswith("resume:")}
+    jobs = {k: v for k, v in wrote.items() if not k.startswith(RESUME)}
+    if role == "checker":  # the checker is handed the writer's draft: what did it not pass on
+        drafted = load(os.path.join(folder, "draft.json"))
+        drafted = drafted if isinstance(drafted, dict) else {}
+        handed = [k for k in drafted if not k.startswith(RESUME)]
+    else:
+        handed = [j.get("application_id") for j in rows(given, "jobs") if isinstance(j, dict)]
+    known = set(ids(rows(given, "jobs"), "application_id"))
+    known |= {RESUME + r for r in ids(rows(given, "resumes"), "resume_id")}
     items = {
         "jobs": len(rows(given, "jobs")),
         "questions": sum(len(rows(j, "questions")) for j in rows(given, "jobs")),
@@ -621,6 +717,9 @@ def writer_items(folder, role):
         "written": len(jobs),
         "held": sum(isinstance(v, dict) and "_review" in v for v in jobs.values()),
         "resumes_written": len(wrote) - len(jobs),
+        # Counted here, not taken from the harness: what went in and did not come back.
+        "left_out": missing(handed, jobs),
+        "reasons": reasons_of(folder, known),
         "application_ids": ids(rows(given, "jobs"), "application_id"),
     }
     if role == "checker":
@@ -703,8 +802,25 @@ def line_of(trace):
     return " · " + " · ".join(parts)
 
 
+def versions(folder):
+    """O20: the version the job prompt carries under its title ("... · version 1.3, 24 Nov
+    2026") and the contract version of the export, or None where one is not there."""
+    head = ""
+    try:
+        with open(os.path.join(folder, "prompt.md"), encoding="utf-8", errors="replace") as f:
+            head = f.read(600)
+    except OSError:
+        pass
+    said = re.search(r"· version (\d+(?:\.\d+){0,2}),", head)
+    given = load(os.path.join(folder, "in.json"))
+    contract = given.get("contract_version") if isinstance(given, dict) else None
+    ok = isinstance(contract, int) and not isinstance(contract, bool) and 0 <= contract < 1000
+    return (said.group(1) if said else None), (contract if ok else None)
+
+
 def cmd_session(a):
     folder = a.dir
+    prompt, contract = versions(folder)
     spans = {step: stamp(folder, step) for step in ("export", "session", "import")}
     steps = load(os.path.join(folder, "steps.json"))
     steps = steps if isinstance(steps, dict) and steps.get("level") == 3 else None
@@ -730,6 +846,8 @@ def cmd_session(a):
         "harness": name(a.harness, "other"),
         "harness_version": (steps or {}).get("harness_version"),
         "model": name((steps or {}).get("model")) or name(a.model) or "default",
+        "prompt_version": prompt,
+        "contract_version": contract,
         "shard": a.shard if re.fullmatch(r"\d+/\d+", a.shard or "") else None,
         "batch": int(a.batch) if (a.batch or "").isdigit() else None,
         "level": 3 if steps else 2,
@@ -782,8 +900,20 @@ def summary(run):
             parts.append(f"{plural(t['sessions'] - t['traced'], 'session')} gave no record")
     else:
         parts.append(f"{took(t['seconds'])} in sessions, no record from the harness")
+    if t.get("left_out"):  # O24: by the writer or the checker; the run log says why
+        parts.append(f"{plural(t['left_out'], 'job')} left out")
     parts.append(run["model"])
     return " · ".join(parts)
+
+
+def added(sessions, part):
+    """The reason codes of every session of a run, counted together (part: why or facts)."""
+    out = {}
+    for s in sessions:
+        said = (s["items"].get("reasons") or {}).get(part) or {}
+        for code, n in said.items():
+            out[code] = out.get(code, 0) + int(num(n))
+    return out
 
 
 def cmd_run(a):
@@ -824,6 +954,12 @@ def cmd_run(a):
             for s in sessions
             if s["role"] == "reader"
         ),
+        "left_out": sum(int(num(s["items"].get("left_out"))) for s in sessions),
+        "why": added(sessions, "why"),
+        "facts": added(sessions, "facts"),
+        "reasons_dropped": sum(
+            int(num((s["items"].get("reasons") or {}).get("dropped"))) for s in sessions
+        ),
     }
     cause = tail(os.path.join(a.run_dir, "cause"), 40).strip()
     run = {
@@ -849,6 +985,28 @@ def cmd_run(a):
     write_json(a.out, run)
     if sessions:
         print(f"Trace: {summary(run)} · kept in {a.out}")
+    return 0
+
+
+def cmd_reasons(a):
+    """O24, for the run log: one line per job or resume that was left out, held or fixed,
+    in the codes kept in the session's trace, and how many were left out with none given."""
+    trace = load(a.file)
+    items = trace.get("items") if isinstance(trace, dict) and trace.get("v") == VERSION else None
+    if not isinstance(items, dict):
+        return 0
+    explained = 0
+    for one in (items.get("reasons") or {}).get("items") or []:
+        if one["outcome"] == "ok":
+            continue
+        explained += one["outcome"] == "left_out"
+        detail = ", ".join(one["why"]) or "no reason given"
+        if one["facts"]:
+            detail += f"; the answer bank lacks: {', '.join(one['facts'])}"
+        print(f"{one['id']}: {one['outcome'].replace('_', ' ')} ({detail})")
+    unexplained = int(num(items.get("left_out"))) - explained
+    if unexplained > 0:
+        print(f"{plural(unexplained, 'job')} left out with no reason given")
     return 0
 
 
@@ -880,13 +1038,18 @@ def main(argv):
         run.add_argument(flag, required=True)
     for flag in ("--model", "--checker", "--stamp", "--shards", "--batch"):
         run.add_argument(flag, default="")
-    last = sub.add_parser("last")
-    last.add_argument("file")
+    for command in ("reasons", "last"):
+        sub.add_parser(command).add_argument("file")
     a = p.parse_args(argv)
+    commands = {
+        "read": cmd_read,
+        "session": cmd_session,
+        "run": cmd_run,
+        "reasons": cmd_reasons,
+        "last": cmd_last,
+    }
     try:
-        return {"read": cmd_read, "session": cmd_session, "run": cmd_run, "last": cmd_last}[
-            a.command
-        ](a)
+        return commands[a.command](a)
     except Exception as exc:  # a trace is never worth a run
         print(f"trace.py {a.command}: {type(exc).__name__}: {exc}", file=sys.stderr)
         return 0

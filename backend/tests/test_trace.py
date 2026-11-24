@@ -1,6 +1,7 @@
 """The trace of AI work that leaves JAP (PRD 1.33, O16, O17 level 1, O19, O22, O23): off
 unless set, numbers and names only, never text, never in the way of the work, and sent by
-one module."""
+one module. From 1.34 the runner's trace of a run goes out too, as one trace of many spans,
+with the writer's and checker's reasons as codes (O24)."""
 
 import io
 import json
@@ -23,7 +24,7 @@ from database.session import get_sessionmaker
 from llm import PersonalDataBlocked, SpendCapReached, call
 from llm.redact import Redaction, Sensitive
 from observability import context, trace, writer
-from pipeline import agent_doors, claude_reader, claude_writer
+from pipeline import agent_doors, agent_run_trace, claude_reader, claude_writer
 from schemas.resume import ParsedResume
 from tests.test_llm_call import GOOD, RESUME
 from tests.test_redact import ME
@@ -32,6 +33,11 @@ BACKEND = Path(__file__).resolve().parent.parent
 URL = "https://trace.example/otel/v1/traces"
 # Nothing of the resume, of me, or of a reply may be in what is sent.
 TEXT = [b"asha", b"rao", b"example.com", b"98765", b"FastAPI", b"Backend", b"python", b"Acme"]
+# Two run traces as agent/trace.py writes them, a reader run and a writer run with its
+# checker: a copy made by agent/tests/run_test.sh, which fails when the runner writes
+# another shape than this.
+RUNS = BACKEND / "tests" / "traces" / "agent_runs.json"
+M = trace.META
 
 
 def _varint(data: bytes, i: int) -> tuple[int, int]:
@@ -88,6 +94,18 @@ def spans(body: bytes) -> list[tuple[str, dict[str, Any], bool]]:
                     top = dict(_fields(span))
                     assert len(top[1]) == 16 and len(top[2]) == 8  # trace id, span id
                     out.append((top[5].decode(), _attrs(span), dict(_fields(top[15]))[3] == 1))
+    return out
+
+
+def links(body: bytes) -> list[tuple[str, bytes, bytes, bytes | None]]:
+    """Each span of an OTLP request: its name, its trace, itself and its parent."""
+    out = []
+    for _, resource_spans in _fields(body):
+        for number, scope_spans in _fields(resource_spans):
+            for inner, span in _fields(scope_spans) if number == 2 else []:
+                if inner == 2:
+                    top = dict(_fields(span))
+                    out.append((top[5].decode(), top[1], top[2], top.get(4)))
     return out
 
 
@@ -457,3 +475,153 @@ async def test_each_export_and_import_is_counted_at_the_door(
     body = service.sent().lower()
     for text in TEXT:
         assert text.lower() not in body, f"{text!r} reached the trace"
+
+
+def _runs() -> tuple[dict[str, Any], dict[str, Any]]:
+    reader, written = json.loads(RUNS.read_text())
+    return reader, written
+
+
+def _hand_over(run: Any, monkeypatch: pytest.MonkeyPatch) -> int:
+    """make agent-trace-send: the run's trace file on the command's standard input."""
+    monkeypatch.setattr(sys, "stdin", io.StringIO(json.dumps(run)))
+    return agent_run_trace.main()
+
+
+def test_a_run_of_the_runner_goes_out_as_one_trace(
+    service: Service, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """O22, from 1.34: the run, its session with export and import, and each model request
+    and tool call, as parents and children of one trace."""
+    reader, _ = _runs()
+    assert _hand_over(reader, monkeypatch) == 0
+    assert capsys.readouterr().out == "sent 9 spans\n"
+    ((url, headers, body),) = service.requests
+    assert url == URL and headers["x-api-key"] == "k-123"
+    got = {name: attrs for name, attrs, _ in spans(body)}
+    assert sorted(name for name, _, _ in spans(body)) == [
+        "model.request",
+        "model.request",
+        "model.request",
+        "run.reader",
+        "session.reader",
+        "step.export",
+        "step.import",
+        "tool.Read",
+        "tool.Write",
+    ]
+    tied = links(body)
+    assert len({trace_id for _, trace_id, _, _ in tied}) == 1  # one trace
+    ids = {name: span_id for name, _, span_id, _ in tied}
+    parents = {name: parent for name, _, _, parent in tied}
+    assert parents["run.reader"] is None
+    assert parents["session.reader"] == ids["run.reader"]
+    for name in ("step.export", "step.import", "model.request", "tool.Read", "tool.Write"):
+        assert parents[name] == ids["session.reader"]
+    run, session = got["run.reader"], got["session.reader"]
+    assert run["langsmith.span.kind"] == "chain" and run[M + "mode"] == "agent"
+    assert run[M + "run_stamp"] == reader["stamp"]
+    assert (run[M + "unread_before"], run[M + "unread_after"]) == (1, 0)
+    assert run[M + "sessions"] == 1 and run[M + "saved"] == 1
+    assert run[M + "total_tokens_in"] == 6300
+    # O20: who did the work, on which prompt and contract.
+    assert session[M + "harness"] == "fake" and session["gen_ai.request.model"] == "fake-1"
+    assert session[M + "prompt_version"] == reader["sessions"][0]["prompt_version"]
+    assert session[M + "contract_version"] == 1
+    assert session[M + "level"] == 3 and session[M + "shards"] == 1
+    assert session[M + "loaded_tools"] == 2
+    # Tokens are usage on a model request only, so a service that adds a trace up counts
+    # them once; the session and the run carry totals under names of their own.
+    asked = [a for name, a, _ in spans(body) if name == "model.request"]
+    assert sorted(a["gen_ai.usage.input_tokens"] for a in asked) == [1100, 2100, 3100]
+    assert all(a["langsmith.span.kind"] == "llm" for a in asked)
+    assert not any(k.startswith("gen_ai.usage") for k in {**run, **session})
+    used = got["tool.Read"]
+    assert used["langsmith.span.kind"] == "tool" and used[M + "file"] == "in.json"
+    # Sent again (a run's trace that waited): the same trace and the same spans, not new ones.
+    assert _hand_over(reader, monkeypatch) == 0
+    assert sorted(links(service.requests[1][2])) == sorted(tied)
+
+
+def test_reasons_go_out_as_codes_and_every_field_of_a_run_trace_is_allowed(
+    service: Service, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O24: why the writer left a job out and what the checker fixed, as counts of codes.
+    And the door builds no field the allow-list would drop, for a file the runner wrote."""
+    reader, written = _runs()
+    assert _hand_over(written, monkeypatch) == 0
+    got = spans(service.sent())
+    by_name = {name: attrs for name, attrs, _ in got}
+    tops = [name for name, _, _ in got if name.startswith(("run.", "session."))]
+    assert tops == ["run.writer", "session.writer", "session.checker"]
+    wrote, checked = by_name["session.writer"], by_name["session.checker"]
+    run = by_name["run.writer"]
+    assert wrote[M + "left_out"] == 1 and wrote[M + "jobs"] == 2
+    assert wrote[M + "why_fact_not_in_bank"] == 1
+    assert wrote[M + "fact_salary"] == 1 and wrote[M + "fact_notice_period"] == 1
+    assert wrote[M + "reasons_dropped"] == 4 and wrote[M + "answered"] == 1
+    assert checked[M + "why_unsupported_claim"] == 1 and checked[M + "checked_ok"] == 1
+    assert run[M + "left_out"] == 1 and run[M + "jobs_before"] == 2
+    assert run[M + "why_unsupported_claim"] == 1
+    # No id of an application goes out, only counts.
+    assert b"11111111-1111-4111-8111-111111111111" not in service.sent()
+    for one in (reader, written):
+        built = agent_run_trace.tree(one)
+        assert built is not None
+        for node in built[1]:
+            given = {k: v for k, v in node.fields.items() if v is not None}
+            dropped = [k for k, v in given.items() if not trace.clean({k: v})]
+            assert not dropped, f"{node.name}: {dropped} would not be sent"
+
+
+def test_text_in_a_run_trace_file_is_never_sent(
+    service: Service, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The test O16 asks for, at the runner's door: the file is written on the Mac, and
+    whatever is in it, only what the allow-list knows goes out."""
+    words = "Asha Rao asha.rao@example.com wrote Backend services in Python and FastAPI at Acme"
+
+    def stuffed(value: Any, key: str = "") -> Any:
+        if isinstance(value, dict):
+            inner = {k: stuffed(v, k) for k, v in value.items()}
+            return {**inner, "company": words, "answer": words, words: 1}
+        if isinstance(value, list):
+            return [stuffed(v, key) for v in value] + ([words] if key != "sessions" else [])
+        keep = key in ("job", "role", "kind")  # so that there still are spans to look at
+        return value if keep or not isinstance(value, str) else words
+
+    _, written = _runs()
+    assert _hand_over(stuffed(written), monkeypatch) == 0
+    names = sorted({name for name, _, _ in service.spans()})
+    assert names == ["model.request", "run.writer", "session.checker", "session.writer",
+                     "step.export", "step.import", "tool.other"]  # fmt: skip
+    body = service.sent().lower()
+    for text in TEXT:
+        assert text.lower() not in body, f"{text!r} reached the trace"
+
+
+def test_a_run_trace_that_cannot_be_sent_is_said_so_the_runner_keeps_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """O22: "not sent" and exit code 1 keep the file marked for the next run; "off" and
+    "not a run trace" do not, since trying again would change nothing."""
+    reader, _ = _runs()
+    stub = Service(status=401)
+    monkeypatch.setattr(httpx, "post", stub)
+    _set(monkeypatch, URL, "x-api-key=k-123")
+    assert _hand_over(reader, monkeypatch) == 1
+    said = capsys.readouterr()
+    assert said.out == "not sent (RuntimeError: the trace service answered 401)\n"
+    assert "k-123" not in said.out + said.err and len(stub.requests) == 1
+    monkeypatch.setattr(httpx, "post", Service(error=OSError("no route to k-123.example")))
+    assert _hand_over(reader, monkeypatch) == 1
+    assert capsys.readouterr().out.startswith("not sent (OSError")
+    for not_a_run in ({}, [1, 2], {**reader, "job": "Senior Engineer at Acme"}, "words"):
+        assert _hand_over(not_a_run, monkeypatch) == 0
+        assert capsys.readouterr().out == "not a run trace\n"
+    monkeypatch.setattr(sys, "stdin", io.StringIO("not JSON"))
+    assert agent_run_trace.main() == 0 and capsys.readouterr().out == "not a run trace\n"
+    _set(monkeypatch, "", "")
+    assert _hand_over(reader, monkeypatch) == 0
+    assert capsys.readouterr().out == "off\n" and len(stub.requests) == 1
+    get_settings.cache_clear()

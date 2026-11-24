@@ -4,7 +4,9 @@
 # pass, writer answers checked and imported, a usage limit stops the run with exit 75, and an
 # unknown harness is refused. Then the trace (agent/trace.py, PRD 1.33 O16 to O21): a trace per
 # run and per session with model requests, tool calls and tokens, a cause for each kind of
-# failure, no text in any of it, and each harness's record read from a fixture.
+# failure, no text in any of it, and each harness's record read from a fixture. Then what
+# 1.34 adds: each run's trace handed to JAP to send, kept and handed over again when that
+# fails (O22), and the writer's and checker's reasons in codes (O24).
 # Needs bash and python3 only. Run with make test-agent.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -78,6 +80,13 @@ check "run log: tokens per batch and a run summary" 'grep -q "saved 4 of 4 · .*
 check "writer run: writer and checker sessions, findings counted" '[ "$(trace "$(ls "$TRACES"/*-writer.json | head -1)" "[(s[\"role\"], s[\"items\"].get(\"findings\", s[\"items\"].get(\"answered\"))) for s in t[\"sessions\"]]")" = "[('"'"'writer'"'"', {'"'"'ready_for_review'"'"': 2}), ('"'"'checker'"'"', {'"'"'ok'"'"': 2, '"'"'fixed'"'"': 0, '"'"'held'"'"': 0, '"'"'left_out'"'"': 0})]" ]'
 check "no text in any trace file" '! grep -rq "SECRET\|quota\|fake harness done" "$TRACES" "$TMP"/work/*/*/*/trace.json "$TMP"/work/*/*/*/steps.json "$TMP"/work/*/writer/trace.json "$TMP"/work/*/writer/check/trace.json'
 check "the batch did hold that text" 'grep -q "SECRET-POSTING-TEXT" "$(ls -d "$TMP"/work/*-reader/reader-1-of-3/batch-1 | head -1)/in.json"'
+version_of() { sed -n 's/.*· version \([0-9.]*\),.*/\1/p' "$ROOT/agent/jobs/$1.md" | head -1; }
+versions=$(trace "$first" "sorted(set((s['prompt_version'], s['contract_version']) for s in t['sessions']))")
+versions_w=$(trace "$(ls "$TRACES"/*-writer.json | head -1)" "[s['prompt_version'] for s in t['sessions']]")
+check "session trace: the job prompt's version and the contract version (O20)" '[ -n "$(version_of reader)" ] && [ "$versions" = "[('"'"'$(version_of reader)'"'"', 1)]" ] && [ "$versions_w" = "['"'"'$(version_of writer)'"'"', '"'"'$(version_of checker)'"'"']" ]'
+# O22: every run so far handed its trace to JAP, once, and none is left marked as unsent.
+handed() { for f in "$TRACES"/*.json; do grep -qx "$(basename "$f")" "$FAKE_STATE.sent" || return 1; done; }
+check "each run's trace is handed to JAP once, and the run log says it was sent" 'handed && [ -z "$(sort "$FAKE_STATE.sent" | uniq -d)" ] && [ -z "$(ls "$TRACES" | grep -v "\.json$")" ] && grep -q "Trace sent to the trace service (10 spans)" "$TMP/reader.out"'
 
 # One fresh data folder per case, so each case's trace is the only one there.
 case_run() { # case_run <name> <state> <job> [VAR=value ...]
@@ -128,6 +137,46 @@ check "a harness that changes its in.json is named, and the checker gets the exp
 printf '#!/bin/sh\nexit 0\n' >"$TMP/dead-jap.sh" && chmod +x "$TMP/dead-jap.sh"
 case_run noanswer "$ONE" reader JAP_MAKE="$TMP/dead-jap.sh"
 check "JAP not answering is a run with no session and a cause" '[ "$rc" = 1 ] && [ "$(trace "$got" "t[\"cause\"], t[\"totals\"][\"sessions\"]")" = "no_answer 0" ]'
+check "its trace waits, marked unsent" '[ -e "${got%.json}.unsent" ] && grep -q "Trace not sent: it is kept" "$TMP/noanswer.out"'
+
+# O22: a trace JAP could not take is kept and handed over again at the start of the next run.
+unsent() { ls "$TMP/$1/agent/traces" | grep -c "\.unsent$"; }
+case_run senddown "$ONE" reader FAKE_TRACE=down
+check "a trace that cannot be sent is kept, and the run ends as it would have" '[ "$rc" = 0 ] && [ "$(unsent senddown)" = 1 ] && [ "$(state "[\"unread\"]")" = "[]" ] && grep -q "Trace not sent (RuntimeError: the trace service answered 401): it is kept and handed over again at the start of the next run" "$TMP/senddown.out"'
+case_run senddown "$ONE" reader
+check "a mark under two minutes old is left alone: another run may be handing that trace over" '[ "$rc" = 0 ] && [ "$(unsent senddown)" = 1 ] && ! grep -q "earlier run" "$TMP/senddown.out"'
+touch -t 202601010000 "$TMP"/senddown/agent/traces/*.unsent
+waiting=$(basename "$(ls "$TMP"/senddown/agent/traces/*.unsent)" .unsent)
+case_run senddown "$ONE" reader FAKE_TRACE=down
+check "while JAP still cannot send, the earlier trace goes on waiting" '[ "$rc" = 0 ] && [ "$(unsent senddown)" = 2 ] && grep -q "The trace of an earlier run still cannot be sent (RuntimeError: the trace service answered 401); it waits" "$TMP/senddown.out"'
+touch -t 202601010000 "$TMP"/senddown/agent/traces/*.unsent
+case_run senddown "$ONE" reader
+check "the next run hands the waiting traces over first, then its own" '[ "$rc" = 0 ] && [ "$(unsent senddown)" = 0 ] && grep -qx "$waiting.json" "$FAKE_STATE.sent" && [ "$(grep -c "The trace of an earlier run is sent" "$TMP/senddown.out")" = 2 ] && [ "$(ls "$TMP"/senddown/agent/traces | wc -l | tr -d " ")" = 4 ]'
+case_run sendoff "$ONE" reader FAKE_TRACE=off
+check "no trace service set: nothing kept, nothing said" '[ "$rc" = 0 ] && [ "$(unsent sendoff)" = 0 ] && ! grep -q "Trace sent\|Trace not sent" "$TMP/sendoff.out"'
+started=$(date +%s)
+case_run sendhang "$ONE" reader FAKE_TRACE=hang JAP_AGENT_SEND_S=1
+check "a JAP that never answers holds the run a second, not for ever" '[ "$rc" = 0 ] && [ "$(unsent sendhang)" = 1 ] && [ $(($(date +%s) - started)) -lt 60 ]'
+
+# O24: why the writer and the checker left a job out, held it or fixed it, in codes.
+J1=11111111-1111-4111-8111-111111111111 J2=22222222-2222-4222-8222-222222222222
+TWO="{'unread': [], 'pairs': [], 'jobs': ['$J1', '$J2']}"
+PER_SESSION="[(s['role'], s['items']['left_out'], s['items']['reasons']['given'], s['items']['reasons']['outcomes'], s['items']['reasons']['why'], s['items']['reasons']['facts'], s['items']['reasons']['dropped']) for s in t['sessions']]"
+case_run reasons "$TWO" writer FAKE_REASONS=1
+w=$(ls -d "$TMP"/work/*-writer/writer | tail -1)
+said=$(trace "$got" "$PER_SESSION")
+want="[('writer', 1, True, {'left_out': 1}, {'fact_not_in_bank': 1}, {'salary': 1, 'notice_period': 1}, 4), ('checker', 0, True, {'fixed': 1}, {'unsupported_claim': 1}, {}, 0)]"
+check "reasons.json: codes on the lists are kept, for ids of the export; the rest is dropped and counted" '[ "$rc" = 0 ] && [ "$said" = "$want" ]'
+said=$(trace "$got" "t['totals']['left_out'], t['totals']['why'], t['totals']['facts'], t['totals']['reasons_dropped']")
+want="1 {'fact_not_in_bank': 1, 'unsupported_claim': 1} {'salary': 1, 'notice_period': 1} 4"
+check "the run's trace adds them up" '[ "$said" = "$want" ]'
+check "the run log says why, a line per job, and how many were left out" 'grep -q "  why (writer): $J1: left out (fact_not_in_bank; the answer bank lacks: salary, notice_period)$" "$TMP/reasons.out" && grep -q "  why (checker): $J2: fixed (unsupported_claim)$" "$TMP/reasons.out" && grep -q "Trace: 2 sessions · .* · 1 job left out · " "$TMP/reasons.out"'
+check "words in reasons.json reach neither a trace nor the run log" 'grep -q "SECRET reason" "$w/reasons.json" && ! grep -rq SECRET "$TMP/reasons/agent" "$w/trace.json" "$w/check/trace.json" "$TMP/reasons.out"'
+check "the job left out stays at Needs you" '[ "$(state "[\"jobs\"]")" = "[\"$J1\"]" ]'
+case_run noreasons "$TWO" writer FAKE_REASONS=silent
+said=$(trace "$got" "$PER_SESSION")
+want="[('writer', 1, False, {}, {}, {}, 0), ('checker', 0, False, {}, {}, {}, 0)]"
+check "a harness that gives no reasons loses nothing: the runner still counts the job left out" '[ "$rc" = 0 ] && [ "$said" = "$want" ] && grep -q "  why (writer): 1 job left out with no reason given$" "$TMP/noreasons.out"'
 
 # Each harness's own record of a session, read from a fixture (tests/fixtures; which were
 # recorded from a run and which were built from documents is said in each reader).
@@ -174,6 +223,79 @@ rm -rf "$TMP/read" && mkdir "$TMP/read" && echo prompt >"$TMP/read/prompt.md"
 (cd "$TMP/read" && FAKE_SEEN="$TMP/devin-config-seen" JAP_DEVIN_BIN="$TMP/devin-tool" JAP_AGENT_TRACE=0 "$ROOT/agent/harnesses/devin.sh" prompt.md >/dev/null)
 check "Devin: the tool gets a copy of JAP's settings, and what it writes there never reaches the file in git" '[ "$?" = 0 ] && cmp -s "$TMP/devin-config-seen" "$TMP/devin-config-before" && cmp -s "$ROOT/agent/harnesses/devin.config.json" "$TMP/devin-config-before"'
 check "Devin: the settings in git hold nothing the tool wrote (no organisation)" 'python3 -c "import json, sys; sys.exit(bool(set(json.load(open(sys.argv[1]))) & {\"devin\", \"shell\", \"theme_mode\"}))" "$ROOT/agent/harnesses/devin.config.json"'
+# The backend turns a run's trace file into spans (pipeline/agent_run_trace.py) and is
+# tested in its container, which cannot run the runner. Its test reads a copy of two trace
+# files made here, a reader run and a writer run; this check fails when the runner writes a
+# file of another shape than that copy, so the two ends cannot drift apart unseen.
+# JAP_WRITE_FIXTURE=1 make test-agent writes the copy again.
+same_shape() {
+	python3 - "$ROOT/backend/tests/traces/agent_runs.json" "$TMP"/quota/agent/traces/*.json \
+		"$TMP"/reasons/agent/traces/*.json <<'PY'
+import json, os, sys
+
+def shape(x, at=""):
+    """Every path of keys in it; a list counts once, whatever its length."""
+    if isinstance(x, dict):
+        return {at}.union(*(shape(v, f"{at}.{k}") for k, v in x.items()))
+    if isinstance(x, list):
+        return {f"{at}[]"}.union(*(shape(v, f"{at}[]") for v in x))
+    return {at}
+
+copy, made = sys.argv[1], [json.load(open(f)) for f in sys.argv[2:]]
+if os.environ.get("JAP_WRITE_FIXTURE") == "1":
+    json.dump(made, open(copy, "w"), indent=1)
+    print(f"wrote {copy}")
+kept = json.load(open(copy))
+diff = sorted(shape(kept) ^ shape(made))
+print("\n".join(diff[:20]), end="")
+sys.exit(bool(diff))
+PY
+}
+check "the backend's copy of a run trace has the shape the runner writes today" same_shape
+
+# O24: the codes are written in four places (the two prompts, the runner, the sender's
+# allow-list in the backend). A code offered by a prompt and dropped by the runner, or kept
+# by the runner and dropped by the sender, would be lost without a word.
+codes_agree() {
+	python3 - "$ROOT" <<'PY'
+import ast, importlib.util, re, sys
+
+root = sys.argv[1]
+spec = importlib.util.spec_from_file_location("runner_trace", f"{root}/agent/trace.py")
+runner = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(runner)
+sender = {}
+for node in ast.parse(open(f"{root}/backend/observability/trace.py").read()).body:
+    if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name):
+        if node.targets[0].id in ("WHY", "FACTS", "CHECKED", "CAUSES", "FILES", "ROLES"):
+            sender[node.targets[0].id] = ast.literal_eval(node.value)
+problems = []
+def same(what, a, b):
+    if a != b:
+        problems.append(f"{what}: {sorted(set(a) ^ set(b))}")
+same("why, runner and sender", runner.WHY, sender["WHY"])
+same("facts, runner and sender", runner.FACTS, sender["FACTS"])
+same("outcomes, runner and sender", runner.OUTCOMES, sender["CHECKED"])
+same("causes", set(runner.CAUSES) | {"no_answer"}, set(sender["CAUSES"]))
+same("files", set(runner.FILES) | {"other", "outside"}, set(sender["FILES"]))
+offered = {"outcome": set(), "why": set(), "facts": set()}
+not_codes = {"answer_bank", "resume", "max_chars"}
+for prompt in ("writer", "checker"):
+    text = open(f"{root}/agent/jobs/{prompt}.md").read()
+    bullets = re.findall(r"^- `(outcome|why|facts)`(.*?)(?=\n- `|\n\n|\Z)", text, re.S | re.M)
+    if {part for part, _ in bullets} != set(offered):
+        problems.append(f"{prompt}.md: no outcome, why and facts lists found")
+    for part, said in bullets:
+        offered[part] |= set(re.findall(r"`([a-z_]+)`", said)) - not_codes
+offered["facts"].discard("fact_not_in_bank")  # named there as the reason the list goes with
+same("outcomes, prompts and runner", offered["outcome"], set(runner.OUTCOMES))
+same("why, prompts and runner", offered["why"], set(runner.WHY))
+same("facts, prompts and runner", offered["facts"], set(runner.FACTS))
+print("\n".join(problems), end="")
+sys.exit(bool(problems))
+PY
+}
+check "the reason codes are the same in the prompts, the runner and the sender's allow-list" codes_agree
 check "python3 compiles trace.py" 'python3 -m py_compile "$ROOT/agent/trace.py"'
 
 for f in "$ROOT"/agent/*.sh "$ROOT"/agent/harnesses/*.sh "$ROOT"/agent/tests/*.sh; do

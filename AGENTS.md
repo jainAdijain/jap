@@ -70,6 +70,12 @@ make errors                 # last 20 warnings and errors from log_event
 calling a change done. A single test:
 `docker compose -p jap exec app pytest -q tests/test_matching.py -k remote`.
 
+On the local stack `make test-app` ends with 6 failed submit tests (in `test_apply`,
+`test_cover_letter`, `test_hardening` and `test_pacing`): they inherit the stack's
+`JAP_SUBMIT_ENABLED=false`. They pass in CI, and here with
+`docker compose -p jap exec -T app env -u JAP_SUBMIT_ENABLED pytest -q tests/test_apply.py ...`.
+Any other failure is from your change.
+
 Ollama is **not** in Docker — it runs natively on the machine that runs Docker (the VM today),
 reached at `http://host.docker.internal:11434`. `/api/health` says whether the stack's Ollama is
 up with `nomic-embed-text` pulled; `make ollama-check` asks the machine it is run on.
@@ -119,7 +125,11 @@ still passes locally.
   (PRD 1.33; `tests/test_trace.py` checks it), and a trace never holds text: numbers, JAP's
   ids, values from fixed lists and short identifiers only. A new field goes on `FIELDS` there
   with the check its value must pass; never send a prompt, job text, an answer, a company or
-  a title. The service's key (`JAP_TRACE_HEADERS`) is never given to a harness.
+  a title. The service's key (`JAP_TRACE_HEADERS`) is never given to a harness. The runner's
+  trace file of a run passes the same list (`pipeline/agent_run_trace.py`, PRD 1.34). The
+  codes a writer or checker may give in `reasons.json` (O24) are written in four places: the
+  two job prompts, `agent/trace.py` and that allow-list; `make test-agent` fails when they
+  differ, so add a code to all four.
 - **Prompts are versioned files** in `backend/llm/prompts/<name>.v<N>.md`. Changing a prompt's
   behaviour means a new version file, not an edit in place. Each purpose has a `max_tokens` cap
   in `llm/call.py`.
