@@ -306,9 +306,15 @@ async def import_answers(session: AsyncSession, answers: dict[str, Any]) -> list
                 if app is not None:
                     app.hold_reason = f"Checker: {held}"[:500]
                     await session.commit()
-            body = AnswerQuestionsIn(answers=restore_answers(given, values), save_to_bank=False)
+            restored = restore_answers(given, values)
+            body = AnswerQuestionsIn(answers=restored, save_to_bank=False)
             done = await answer(uuid.UUID(app_id), body, session)
             out.append(f"{app_id}: {done.status}")
+            # O26: as the writer gave them, to count later those I changed before sending.
+            app = await session.get(Application, uuid.UUID(app_id))
+            if app is not None:
+                app.writer_answers = dict(restored)
+                await session.commit()
         except (ApiError, ValueError) as exc:
             await session.rollback()
             out.append(f"{app_id}: not answered ({getattr(exc, 'detail', exc)})")

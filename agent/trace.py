@@ -491,6 +491,12 @@ def opencode(rec, t, o):
         rec.fail(text=json.dumps(o.get("error"))[:500])
 
 
+# The files of a batch folder a harness may only read (devin.config.json denies the writes),
+# and the names Devin gives its writing tools.
+PROTECTED = ("in.json", "prompt.md", "failures.md", "text")
+WRITES = ("write", "edit", "multi_edit", "str_replace", "create", "write_file", "edit_file")
+
+
 def devin(rec, data, ended=None):
     """Devin's command line tool, --export: one ATIF file (Agent Trajectory Interchange
     Format, v1.7 on 23 Nov 2026, from real sessions that day). A step per message; an agent
@@ -533,7 +539,11 @@ def devin(rec, data, ended=None):
             # Only how the answer begins is looked at: refused (nobody to approve it) or failed.
             said = answers.get(call.get("tool_call_id"))
             said = said[:60] if isinstance(said, str) else ""
-            if said.startswith("Tool execution was rejected"):
+            if said.startswith("Tool execution was rejected") or (
+                # JAP's Devin settings deny writing these; on live (24 Nov 2026) the refusal
+                # answered in words of another shape and was counted as a call that worked.
+                step.get("tool") in WRITES and step.get("file") in PROTECTED
+            ):
                 step["ok"] = False
                 rec.denied += 1
             elif "validation failed" in said or said.startswith("Error"):
@@ -941,12 +951,22 @@ def summary(run):
 
 
 def added(sessions, part):
-    """The reason codes of every session of a run, counted together (part: why or facts)."""
-    out = {}
+    """The reason codes of a run (part: why or facts): how many jobs each was given for, a
+    job counted once though the writer and the checker both gave it (from 1.38; a job held
+    by both for ai_banned counted twice before)."""
+    per_job, out = {}, {}
     for s in sessions:
-        said = (s["items"].get("reasons") or {}).get(part) or {}
-        for code, n in said.items():
-            out[code] = out.get(code, 0) + int(num(n))
+        reasons = s["items"].get("reasons") or {}
+        listed_ = [i for i in reasons.get("items") or [] if isinstance(i, dict) and i.get("id")]
+        if not listed_:  # a session trace from before the per-job list: its counts as they are
+            for code, n in (reasons.get(part) or {}).items():
+                out[code] = out.get(code, 0) + int(num(n))
+        for one in listed_:
+            codes = per_job.setdefault(one["id"], [])
+            codes += [c for c in one.get(part) or [] if c not in codes]
+    for codes in per_job.values():
+        for code in codes:
+            out[code] = out.get(code, 0) + 1
     return out
 
 
@@ -1004,8 +1024,9 @@ def cmd_run(a):
         "harness": name(a.harness, "other"),
         "checker": name(a.checker),
         "model": ", ".join(models) or name(a.model) or "default",
-        "shards": int(a.shards) if a.shards.isdigit() else None,
-        "batch": int(a.batch) if a.batch.isdigit() else None,
+        # The reader's shards and batch size mean nothing for a writer run (1.38).
+        "shards": int(a.shards) if a.shards.isdigit() and a.job == "reader" else None,
+        "batch": int(a.batch) if a.batch.isdigit() and a.job == "reader" else None,
         "started": int(a.start),
         "ended": int(time.time()),
         "exit": int(a.rc),

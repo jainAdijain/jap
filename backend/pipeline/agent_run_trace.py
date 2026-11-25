@@ -220,6 +220,16 @@ def _session(path: str, base: dict[str, Any], s: dict[str, Any], room: int) -> l
         **_reasons(reasons),
         "reasons_dropped": reasons.get("dropped"),
     }
+    # O26 (1.38): what one item cost, and the input not read from a cache.
+    handed = sum(
+        n for n in (_whole(items.get(k)) for k in ("postings", "pairs", "jobs", "resumes"))
+        if isinstance(n, int) and not isinstance(n, bool)
+    )  # fmt: skip
+    took = _whole(tokens.get("in"))
+    if isinstance(took, int) and not isinstance(took, bool) and tokens.get("estimate") is not True:
+        fields["tokens_per_item"] = took // handed if handed else None
+        cached = _whole(tokens.get("cache_read"))
+        fields["uncached_tokens_in"] = took - cached if isinstance(cached, int) else None
     if role == "reader":
         codes = _dict(items.get("not_saved"))
         fields["not_saved"] = _total(codes)
@@ -233,6 +243,13 @@ def _session(path: str, base: dict[str, Any], s: dict[str, Any], room: int) -> l
         *doors,
         *inside,
     ]
+
+
+def _uncached(totals: dict[str, Any]) -> int | None:
+    took, cached = _whole(totals.get("tokens_in")), _whole(totals.get("cache_read"))
+    if isinstance(took, int) and isinstance(cached, int) and took >= cached:
+        return took - cached
+    return None
 
 
 def tree(run: Any) -> tuple[str, list[trace.Node]] | None:
@@ -260,6 +277,7 @@ def tree(run: Any) -> tuple[str, list[trace.Node]] | None:
         "total_tokens_out": _whole(totals.get("tokens_out")),
         "total_cache_read": _whole(totals.get("cache_read")),
         "total_cache_write": _whole(totals.get("cache_write")),
+        "uncached_tokens_in": _uncached(totals),
         **_pick(totals, RUN_TOTALS),
         **_named(totals.get("causes"), "cause_{}"),
         **_reasons(totals),

@@ -92,6 +92,10 @@ async def test_export_and_import_through_needs_input(
     assert events[-1] == ("application/answered", {"application_id": app_id})
     row = sql.execute("SELECT answers FROM application WHERE id = %s", (app_id,)).fetchone()
     assert row is not None and row[0]["why"] == "I'm Asha Rao and I build payment APIs."
+    kept = sql.execute("SELECT writer_answers FROM application WHERE id = %s", (app_id,))
+    assert kept.fetchone() == (
+        {"why": "I'm Asha Rao and I build payment APIs.", "notice": "30 days"},
+    )  # O26: as the writer gave them
     assert sql.execute("SELECT count(*) FROM answer_bank").fetchone() == (3,)  # drafts not kept
 
     async with get_sessionmaker()() as session:  # not waiting any more: refused, nothing changed

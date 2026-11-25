@@ -1,9 +1,10 @@
 # agent/: JAP's AI work on any harness
 
-Version 1.7, 25 Nov 2026 · follows PRD 1.37 (AH1 to AH10, O16 to O25, W8, W13) · code v0.32.0
+Version 1.8, 25 Nov 2026 · follows PRD 1.38 (AH1 to AH10, O16 to O26, W8, W13) · code v0.33.0
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.8 | 25 Nov 2026 | O26: every export and import is called with `RUN=<stamp>`, so JAP puts its span inside the run's trace. A run's `why` and `facts` count each job once across the writer and the checker; a writer run has no `shards` or `batch`; a Devin write to a file its settings protect counts in `denied` whatever it answered |
 | 1.7 | 25 Nov 2026 | Less work (PRD 1.37): `draft.py` skips the checker session for a draft of choices only (`JAP_CHECKER_WHEN=always` to check every draft) and adds `"_handed_out"` to the writer's import, so JAP stops handing out a job left out until its inputs change (W13). The reader is given only postings in my target roles (R3, JAP's side) |
 | 1.6 | 25 Nov 2026 | Every text read whole (AH10): `wrap.py` moves each string of `in.json` over 600 characters into `text/`, wrapped at 100 characters, leaving `"@text/<file>"`; prompts reader 1.1, writer and checker 1.4. The trace adds `sizes.longest_line`, and `items.fields` and `items.unknown` for a reader |
 | 1.5 | 25 Nov 2026 | Runs that finish (PRD 1.35). Every call to JAP has a time limit (`JAP_AGENT_CALL_S`, 120 s) and one that did not reach JAP is tried again (3 tries, 30 s apart); a call that never reached it is `slept` or `unreachable`, not `export_failed` or `import_failed`. The schedule tries each job every hour until 22:00 until one run has finished that day (`JAP_AGENT_SCHEDULED=1`, `data*/agent/<job>.done`), does not start in a dark wake, and keeps the Mac awake on power. JAP emails when a run broke (O25) |

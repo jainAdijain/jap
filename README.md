@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.32.0 (The AI reads and writes less: my roles only, no repeat of a job it left out, a checker only for free text), 25 Nov 2026.**
+**Version 0.33.0 (Traces that answer what the AI costs, what fails, and how good its answers are), 25 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -708,6 +708,22 @@ redacted errors to Sentry (`SENTRY_DSN`), and numbers about AI work to a trace s
     request only, so the service adds a run up once; a session with no record from its
     harness carries its estimate under a name that says it is one.
 
+  - from v0.33.0 (PRD 1.38, O26), what answers the three questions a trace is for.
+    **Cost**: each session's `tokens_per_item` (input tokens over the postings, pairs, jobs
+    and resumes it was given) and `uncached_tokens_in`, and the run's `uncached_tokens_in`.
+    An export or import the runner calls (`make ... RUN=<stamp>`) sends its span inside
+    that run's trace, under the run, so one run is one trace and the doors no longer spend
+    the free plan's traces; one called by hand is still a trace of its own. **Failures**:
+    an application that fails sends `apply.failed` with its job site (`ats`), `apply_mode`,
+    whether Submit was `pressed`, and a `failure` code (`form_403`, `no_form`,
+    `no_confirmation`, `outcome_unknown`, `option_missing`, `fill_error`, `expired`,
+    `sending_off`, `other`), never the error. **Quality**: JAP keeps the AI writer's answers
+    as imported (`application.writer_answers`, migration 0016), and an application that is
+    sent sends `apply.sent` with its `answers`, the `writer_answers` and how many of those you
+    `edited` before it went. Fixed: a held job counted once in a run's reasons (it was
+    counted for the writer and again for the checker), no reader shards or batch size on a
+    writer run, and a write Devin's settings refuse counted in `denied`.
+
   Never text. The sender takes fields by name and keeps a value only when it is a number, one
   of JAP's ids, a value from a fixed list, or a short identifier such as a model name; a
   prompt, a job description, an answer, a company or a job title cannot pass, and a test
@@ -942,6 +958,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.33.0 | 25 Nov 2026 | Traces that answer cost, failures and quality (PRD 1.38, O26). `tokens_per_item` and `uncached_tokens_in` on sessions and runs (`agent_run_trace.py`). Door spans inside their run's trace when the runner calls them: `run.sh` passes `RUN=<stamp>`, the Makefile hands it to the container as `JAP_RUN_STAMP`, `agent_doors.py` sends the span with `trace.within()`. New `pipeline/apply_trace.py`: `apply.failed` (ats, apply_mode, pressed, failure code) from `flow.fail()`, and `apply.sent` (answers, writer_answers, edited) when a submit is confirmed; the writer's answers are kept at import (migration 0016). `agent/trace.py`: reasons counted once per job across writer and checker, no shards or batch on a writer run, Devin's refused writes to `in.json`, `prompt.md`, `failures.md` or `text/` counted. `make test-agent`: 107 checks. |
 | 0.32.0 | 25 Nov 2026 | The AI reads and writes less (PRD 1.37: R3, W8, W13). **Reader**: only postings in your target roles are given out when your match rule needs a role in every combination (`JAP_READER_SCOPE`, default `roles`); `reader-status` says `unread` and `unread_all`; the export adds `unread_to_read` and `scope`. **Writer**: the runner sends `_handed_out` with the answers, and JAP notes each job left out with a hash of its inputs (migration 0015, `application.writer_left_out_at` and `writer_left_out_inputs`), skips it until they change or 7 days pass, says so on its questions, and counts it as `waiting_on_you`. **Checker**: `agent/draft.py` skips the checker session for a draft of choices only (`JAP_CHECKER_WHEN`, default `text`). Contract stays 1 (fields added). `make test-agent`: 103 checks. |
 | 0.31.0 | 25 Nov 2026 | The AI reads every description and the resume whole (PRD 1.36, AH10; prompts reader 1.1, writer 1.4, checker 1.4). `agent/wrap.py`, called by the runner after each export, moves every string over 600 characters into `text/` beside `in.json`, wrapped at 100 characters, with a pointer left in `in.json`; the import is unchanged. The prompts say to read those files to the end and to leave out what could not be read whole. Devin may not write under `text/`. The trace gains `longest_line` per session, `fields` and `unknown` for a reader, and the file `text` for a tool call; the sender's allow-list and the backend's copy of a run trace follow. `make test-agent`: 100 checks. |
 | 0.30.0 | 25 Nov 2026 | AI runs that finish, and an email when one does not (PRD 1.35: AH4, AH6, O18, O25). Found from the runs of 21 to 25 Nov 2026 and the Mac's power log: the runner ran on a Mac asleep on battery, woken 20 seconds every 10 minutes, and every export hung half an hour on a dead ssh connection. **Calls to JAP**: `agent/run.sh` stops each status, export and import after 2 minutes (`JAP_AGENT_CALL_S`) and tries one that did not reach JAP again, 3 tries 30 seconds apart (`JAP_AGENT_CALL_TRIES`, `JAP_AGENT_RETRY_S`); one JAP answered is not retried. **Causes**: `unreachable` is new, and a call that never reached JAP is `slept` (the Mac woke after it began) or `unreachable`, no longer `export_failed` or `import_failed`. **Schedule**: `agent/schedule.sh` tries each job every hour until 22:00 until one run of it has finished that day, a scheduled run does not start in a dark wake, and runs keep the Mac awake on power (`caffeinate -is`); reinstall with `make ENV=live agent-schedule`. **Alert** (O25): `backend/pipeline/agent_run_alert.py`, called by the trace door, emails when a run failed, hit the usage limit, or read nothing, once a day per job. `make test-agent` grows from 84 to 96 checks; new backend tests in `test_agent_run_alert.py`. |

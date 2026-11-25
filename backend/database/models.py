@@ -289,6 +289,8 @@ class Application(Timestamps, Base):
     # given then; the export skips the job while that is unchanged, 7 days at most.
     writer_left_out_at: Mapped[datetime | None]
     writer_left_out_inputs: Mapped[str | None] = mapped_column(Text)
+    # O26 (PRD 1.38): the AI writer's answers as imported, to count those I changed.
+    writer_answers: Mapped[dict[str, Any] | None] = mapped_column(JSONB)
 
 
 class AnswerBank(Timestamps, Base):
