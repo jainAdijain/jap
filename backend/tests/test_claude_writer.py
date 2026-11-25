@@ -99,6 +99,53 @@ async def test_export_and_import_through_needs_input(
     assert again[0].startswith(f"{app_id}: not answered")
 
 
+async def test_a_job_left_out_is_not_handed_out_again_unchanged(
+    db: str, sql: psycopg.Connection[Any], tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+    api: httpx.AsyncClient, events: list[tuple[str, dict[str, Any]]],
+) -> None:  # fmt: skip
+    """W13 (PRD 1.37): handed out and left out, the job waits until what the writer would be
+    given changes (here the answer bank), or 7 days pass."""
+    from tests.test_apply import _listing, _profile, _resume
+
+    _profile(sql)
+    _resume(sql, tmp_path)
+    listing = _listing(sql)
+    _fake_form(monkeypatch, [*FORM, WHY, NOTICE])
+    monkeypatch.setattr(client, "chat", _no_credit)
+    app_id = await _prepare(listing)
+
+    async def status() -> str:
+        async with get_sessionmaker()() as session:
+            out = await claude_writer.export(session)
+        return f"jobs={len(out['jobs'])} waiting_on_you={out['left_out_unchanged']}"
+
+    assert await status() == "jobs=1 waiting_on_you=0"
+    async with get_sessionmaker()() as session:
+        lines = await claude_writer.import_answers(session, {"_handed_out": [app_id]})
+    assert lines == [
+        "left out: 1 job not handed out again until the answer bank, the resume or its "
+        "questions change (7 days at most)"
+    ]
+    assert await status() == "jobs=0 waiting_on_you=1"
+    row = sql.execute("SELECT pending_questions FROM application WHERE id = %s", (app_id,))
+    reasons = {q.get("reason") for q in row.fetchone()[0]}  # type: ignore[index]
+    assert claude_writer.LEFT_OUT in reasons and "Waiting for the AI writer" not in reasons
+
+    sql.execute(
+        "INSERT INTO answer_bank (question_pattern, question_norm, answer) VALUES"
+        " ('What is your notice period?', 'what is your notice period', 'Immediate')"
+    )
+    assert await status() == "jobs=1 waiting_on_you=0"  # the bank changed: handed out again
+    async with get_sessionmaker()() as session:
+        await claude_writer.import_answers(session, {"_handed_out": [app_id]})
+    assert await status() == "jobs=0 waiting_on_you=1"
+    sql.execute(
+        "UPDATE application SET writer_left_out_at = now() - interval '8 days' WHERE id = %s",
+        (app_id,),
+    )
+    assert await status() == "jobs=1 waiting_on_you=0"  # a week on: handed out again
+
+
 async def _no_credit(*args: Any, **kwargs: Any) -> Any:
     raise client.OutOfCredits("OpenRouter 402: out of credits")
 

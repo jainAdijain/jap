@@ -51,7 +51,7 @@ def reader_export(out: dict[str, Any], size: int) -> dict[str, int]:
     return {
         "postings": len(out["postings"]),
         "pairs": len(out["pairs"]),
-        "unread": int(out["unread_total"]),
+        "unread": int(out.get("unread_to_read", out["unread_total"])),
         "shard": int(i),
         "shards": int(n),
         "bytes": size,
@@ -92,6 +92,7 @@ def writer_import(answers: Any, lines: list[str]) -> dict[str, int]:
     """The lines of import_answers (one per job or resume) as counts; held is how many jobs
     came with the checker's "_review" (V6)."""
     given = answers.values() if isinstance(answers, dict) else []
+    lines = [line for line in lines if not line.startswith("left out:")]  # W13's one line
     counts: Counter[str] = Counter(
         items=len(lines), held=sum(isinstance(a, dict) and bool(a.get("_review")) for a in given)
     )

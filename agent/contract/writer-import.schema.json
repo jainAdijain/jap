@@ -2,8 +2,16 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "jap/writer-import/1",
   "title": "JAP writer import, contract 1 (make writer-import FILE=...)",
-  "description": "One object keyed by application_id, each holding an answer for every open question of that job (all at once), plus resume:<resume_id> for each resume read. Placeholders are filled back in by JAP. PRD 1.22 W6, 1.28 W12. A job may also hold \"_review\": \"<reason>\" (PRD 1.29 V6): JAP keeps its answers but holds it at Ready for review and never sends it on its own.",
+  "description": "One object keyed by application_id, each holding an answer for every open question of that job (all at once), plus resume:<resume_id> for each resume read. Placeholders are filled back in by JAP. PRD 1.22 W6, 1.28 W12. A job may also hold \"_review\": \"<reason>\" (PRD 1.29 V6): JAP keeps its answers but holds it at Ready for review and never sends it on its own. From PRD 1.37 (W13) the runner adds \"_handed_out\": the application ids of the export, so JAP notes those the answers leave out and does not hand them out again until their inputs change.",
   "type": "object",
+  "properties": {
+    "_handed_out": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    }
+  },
   "patternProperties": {
     "^resume:": {
       "type": "object",

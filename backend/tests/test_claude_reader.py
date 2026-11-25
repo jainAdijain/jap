@@ -9,6 +9,7 @@ import psycopg
 import pytest
 
 import llm.client as client
+from config import get_settings
 from database.session import get_sessionmaker
 from functions.fetch_board import fetch_step
 from llm.redact import PersonalDataBlocked, Sensitive
@@ -136,6 +137,8 @@ async def test_unread_postings_go_through_export_and_import(
 async def test_export_comes_in_batches_my_roles_first_and_in_shards(
     db: str, sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.setenv("JAP_READER_SCOPE", "all")
+    get_settings.cache_clear()
     sql.execute("INSERT INTO profile (target_roles) VALUES ('{backend engineer}')")
     titles = ["Commercial Policy Lead", "Account Executive", "Senior Backend Engineer"]
     jobs = [
@@ -156,3 +159,33 @@ async def test_export_comes_in_batches_my_roles_first_and_in_shards(
     assert claude_reader.parse_shard("3/8") == (3, 8)
     with pytest.raises(SystemExit):
         claude_reader.parse_shard("9/8")
+
+
+async def test_only_my_roles_are_read_when_nothing_else_could_be_listed(
+    db: str, sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """1.37 (R3): with a role in every combination of my match rule, a posting outside my
+    roles is not given out; it is still unread, and given out once my roles take it in."""
+    sql.execute("INSERT INTO profile (target_roles) VALUES ('{backend engineer}')")
+    titles = ["Commercial Policy Lead", "Account Executive", "Senior Backend Engineer"]
+    jobs = [
+        b.job(b.GREENHOUSE_JOB, id=8806482000 + i, title=t, offices=[])
+        for i, t in enumerate(titles)
+    ]
+    b.fake_boards(monkeypatch, {f"{GH}/discord/jobs": b.greenhouse(*jobs)})
+    await fetch_step(await _board())
+    async with get_sessionmaker()() as session:
+        out = await claude_reader.export(session, limit=10)
+        said = await claude_reader.status(session)
+    assert [p["title"] for p in out["postings"]] == ["Senior Backend Engineer"]
+    assert (out["scope"], out["unread_to_read"], out["unread_total"]) == ("roles", 1, 3)
+    assert said == "run_active=0 unread=1 pairs=0 unread_all=3"
+    sql.execute("UPDATE profile SET target_roles = '{backend engineer, account executive}'")
+    async with get_sessionmaker()() as session:
+        out = await claude_reader.export(session, limit=10)
+    assert sorted(p["title"] for p in out["postings"]) == ["Account Executive",
+                                                          "Senior Backend Engineer"]  # fmt: skip
+    sql.execute("""UPDATE profile SET match_rule = '[["role", "location"], ["location"]]'""")
+    async with get_sessionmaker()() as session:
+        out = await claude_reader.export(session, limit=10)
+    assert out["scope"] == "all" and len(out["postings"]) == 3  # a job could match by place

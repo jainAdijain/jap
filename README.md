@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.31.0 (The AI reads every description and the resume whole), 25 Nov 2026.**
+**Version 0.32.0 (The AI reads and writes less: my roles only, no repeat of a job it left out, a checker only for free text), 25 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -390,6 +390,14 @@ Automatic mode does not send it.
   answer each under `"pair:<pair id>": {"same": true or false, "reason": "..."}` in the same
   import. Same merges into the older job, not same keeps them apart, as before.
 
+**Only my roles are read** (PRD 1.37, R3, from v0.32.0). When every combination of your match
+rule needs a role (the default, job title and location), a posting whose title is not one of
+your target roles can never be listed, so the reader is not given it: it stays unread and is
+read once your roles take it in. On 20 Nov 2026 that was 239 of 1,531 unread postings.
+`JAP_READER_SCOPE=all` reads every posting, your roles first, as before. `make reader-status`
+says `unread` (to be read) and `unread_all` (unread in all); the export says
+`unread_to_read` and `scope`.
+
 The runner starts 8 workers, one per shard (`JAP_AGENT_SHARDS`), and asks for 10 postings a
 batch (`JAP_AGENT_BATCH`), not the 50 a `make reader-export` by hand gives; each worker
 repeats export, read, import until its batch is empty or saves nothing, and one more pass
@@ -424,7 +432,18 @@ Reading until then). With both settings on `agent`, JAP makes no OpenRouter call
   same step as the Needs you panel, so it is prepared again and reaches Ready for review.
   Every open question of a job must be answered at once; drafts are not saved to the
   answer bank. Nothing is approved or sent.
-- `make writer-status` prints one line (`jobs=3 resumes=0`) for the runner.
+- `make writer-status` prints one line (`jobs=3 resumes=0 waiting_on_you=1`) for the runner.
+- **A job left out is not handed out again unchanged** (PRD 1.37, W13, from v0.32.0). The
+  runner adds `"_handed_out"` (the application ids of the export) to what it imports; JAP
+  notes each of those the answers leave out with a hash of what the writer was given (the
+  resume, the answer bank, the job's open questions and description) and skips it in the
+  export until one of them changes, or for 7 days at most. Its open questions then say the
+  writer left it out, and it counts as `waiting_on_you`: usually it needs a fact only you
+  know, so add it to the answer bank and the next run takes the job again (migration 0015).
+- **A checker session only for free text** (W8, from v0.32.0): a draft whose answers are all
+  chosen from options goes in without one, since the import refuses an answer that is not
+  one of the options; a job the writer held stays held. `JAP_CHECKER_WHEN=always` checks
+  every draft.
 
 ## AI harness
 
@@ -923,6 +942,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.32.0 | 25 Nov 2026 | The AI reads and writes less (PRD 1.37: R3, W8, W13). **Reader**: only postings in your target roles are given out when your match rule needs a role in every combination (`JAP_READER_SCOPE`, default `roles`); `reader-status` says `unread` and `unread_all`; the export adds `unread_to_read` and `scope`. **Writer**: the runner sends `_handed_out` with the answers, and JAP notes each job left out with a hash of its inputs (migration 0015, `application.writer_left_out_at` and `writer_left_out_inputs`), skips it until they change or 7 days pass, says so on its questions, and counts it as `waiting_on_you`. **Checker**: `agent/draft.py` skips the checker session for a draft of choices only (`JAP_CHECKER_WHEN`, default `text`). Contract stays 1 (fields added). `make test-agent`: 103 checks. |
 | 0.31.0 | 25 Nov 2026 | The AI reads every description and the resume whole (PRD 1.36, AH10; prompts reader 1.1, writer 1.4, checker 1.4). `agent/wrap.py`, called by the runner after each export, moves every string over 600 characters into `text/` beside `in.json`, wrapped at 100 characters, with a pointer left in `in.json`; the import is unchanged. The prompts say to read those files to the end and to leave out what could not be read whole. Devin may not write under `text/`. The trace gains `longest_line` per session, `fields` and `unknown` for a reader, and the file `text` for a tool call; the sender's allow-list and the backend's copy of a run trace follow. `make test-agent`: 100 checks. |
 | 0.30.0 | 25 Nov 2026 | AI runs that finish, and an email when one does not (PRD 1.35: AH4, AH6, O18, O25). Found from the runs of 21 to 25 Nov 2026 and the Mac's power log: the runner ran on a Mac asleep on battery, woken 20 seconds every 10 minutes, and every export hung half an hour on a dead ssh connection. **Calls to JAP**: `agent/run.sh` stops each status, export and import after 2 minutes (`JAP_AGENT_CALL_S`) and tries one that did not reach JAP again, 3 tries 30 seconds apart (`JAP_AGENT_CALL_TRIES`, `JAP_AGENT_RETRY_S`); one JAP answered is not retried. **Causes**: `unreachable` is new, and a call that never reached JAP is `slept` (the Mac woke after it began) or `unreachable`, no longer `export_failed` or `import_failed`. **Schedule**: `agent/schedule.sh` tries each job every hour until 22:00 until one run of it has finished that day, a scheduled run does not start in a dark wake, and runs keep the Mac awake on power (`caffeinate -is`); reinstall with `make ENV=live agent-schedule`. **Alert** (O25): `backend/pipeline/agent_run_alert.py`, called by the trace door, emails when a run failed, hit the usage limit, or read nothing, once a day per job. `make test-agent` grows from 84 to 96 checks; new backend tests in `test_agent_run_alert.py`. |
 | 0.29.0 | 24 Nov 2026 | The trace of AI work, third of three releases (PRD 1.34: O22, O24, and O20 completed). **The runner's trace is sent**: after each run `agent/run.sh` hands the run's trace file to JAP (`make agent-trace-send`, `backend/pipeline/agent_run_trace.py`), which sends it as one trace: the run, each session with its export and import, each model request and tool call. It passes the same allow-list as every other span, so a trace file with text in it sends none of it, and no application or posting id goes out. The runner never holds the service's key. A trace that could not be sent stays marked `.unsent` beside its file and is handed over again at the start of the next run; handing over is stopped after a minute and never changes how a run ends. `observability/trace.py` gains `send_tree` (parents and children, ids worked out from the run's stamp, so a second send carries the same ids) and the fields of a run on its allow-list. **Why a job was left out, in codes**: the writer and checker prompts (version 1.3) ask for `reasons.json`, what happened to each job, why, and which kind of fact the answer bank lacked, from fixed lists; the runner keeps only those codes for ids of the export, counts the jobs left out itself, and writes a line per job to the run log. **O20**: a session's trace names the job prompt's version and the contract version. `make test-agent` grows from 67 to 84 checks, one of which keeps the codes the same in the prompts, the runner and the sender. Tried against LangSmith from the local stack with the tests' two stand-in runs (accepted, 9 and 15 spans); not yet by a run with a real harness. |

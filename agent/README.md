@@ -1,9 +1,10 @@
 # agent/: JAP's AI work on any harness
 
-Version 1.6, 25 Nov 2026 · follows PRD 1.36 (AH1 to AH10, O16 to O25) · code v0.31.0
+Version 1.7, 25 Nov 2026 · follows PRD 1.37 (AH1 to AH10, O16 to O25, W8, W13) · code v0.32.0
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.7 | 25 Nov 2026 | Less work (PRD 1.37): `draft.py` skips the checker session for a draft of choices only (`JAP_CHECKER_WHEN=always` to check every draft) and adds `"_handed_out"` to the writer's import, so JAP stops handing out a job left out until its inputs change (W13). The reader is given only postings in my target roles (R3, JAP's side) |
 | 1.6 | 25 Nov 2026 | Every text read whole (AH10): `wrap.py` moves each string of `in.json` over 600 characters into `text/`, wrapped at 100 characters, leaving `"@text/<file>"`; prompts reader 1.1, writer and checker 1.4. The trace adds `sizes.longest_line`, and `items.fields` and `items.unknown` for a reader |
 | 1.5 | 25 Nov 2026 | Runs that finish (PRD 1.35). Every call to JAP has a time limit (`JAP_AGENT_CALL_S`, 120 s) and one that did not reach JAP is tried again (3 tries, 30 s apart); a call that never reached it is `slept` or `unreachable`, not `export_failed` or `import_failed`. The schedule tries each job every hour until 22:00 until one run has finished that day (`JAP_AGENT_SCHEDULED=1`, `data*/agent/<job>.done`), does not start in a dark wake, and keeps the Mac awake on power. JAP emails when a run broke (O25) |
 | 1.4 | 24 Nov 2026 | The run's trace is handed to JAP, which sends it to the trace service; one that could not be sent waits as `<run>.unsent` and goes at the start of the next run (O22). The writer and checker say why in codes (`reasons.json`, O24; prompts 1.3): kept in the trace, a line per job in the run log, and the runner counts the jobs left out itself. A session's trace names the prompt's and the contract's version (O20) |
@@ -33,8 +34,9 @@ make agent-run JOB=reader
 make agent-run JOB=writer
   run.sh ── writer-export > in.json, then wrap.py (text/, also given to the checker)
             harness  jobs/writer.md  → draft.json + reasons.json
-            checker  jobs/checker.md → out.json + findings.txt + reasons.json   (W8)
-            writer-import FILE=out.json
+            checker  jobs/checker.md → out.json + findings.txt + reasons.json   (W8; from
+                     1.7 only for free text, a cover letter or a resume read: draft.py)
+            writer-import FILE=out.json   (with "_handed_out": the export's ids, W13)
             the same trace files, and agent-trace-send, as the reader
 ```
 
