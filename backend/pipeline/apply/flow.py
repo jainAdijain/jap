@@ -631,6 +631,9 @@ async def wait_before_submit(
         board = await pacing.ats_wait(session, await pacing.ats_of(session, app), now, but=app.id)
         if board is not None:
             return board
+        company = await pacing.company_of(session, app)  # its own site refused JAP (PRD 1.39)
+        if (held := await pacing.company_hold_until(session, company, now)) is not None:
+            return held
     others = select(func.max(pacing.SENT_AT))
     if app is not None:  # its own earlier press is not a submit before it
         others = others.where(Application.id != app.id)
@@ -648,20 +651,42 @@ def _file_letters(app: Application) -> list[str]:
 
 
 class BoardBlocked(Exception):
-    """The board answered 429 or 403 while the form was read (V5): hold it and wait."""
+    """The board, or the company's own site, answered 429 or 403 while the form was read
+    (V5): hold whoever refused and wait. `host` is the site whose page refused."""
+
+    def __init__(self, message: str, host: str | None = None) -> None:
+        super().__init__(message)
+        self.host = host
 
 
-async def board_hold(session: AsyncSession, app_id: str, reason: str | None = None) -> str | None:
-    """The end of the hold on this job's board as an ISO time, or None when it is free.
-    With a reason, the board has just refused us: start (or extend) its hold first."""
+async def board_hold(
+    session: AsyncSession, app_id: str, reason: str | None = None, host: str | None = None
+) -> str | None:
+    """The end of the hold on this job's board or its company as an ISO time, or None when
+    both are free. With a reason, the page at `host` has just refused us: start (or extend)
+    the hold on whoever that was first (PRD 1.39)."""
     app = await _app(session, app_id)
-    ats = await pacing.ats_of(session, app)
     if reason is not None:
-        until = await pacing.record_block(session, ats, reason)
+        until = await pacing.record_refusal(session, app, host, reason)
         await session.commit()
         return until.isoformat()
-    held = await pacing.hold_until(session, ats, datetime.now(UTC))
+    held = await pacing.held_until(session, app, datetime.now(UTC))
     return held.isoformat() if held else None
+
+
+async def refused(session: AsyncSession, app_id: str) -> None:
+    """Every wait for a hold ran out and the page still refused JAP (V5): the attempt fails,
+    naming the company when it was the company's own site (PRD 1.39)."""
+    app = await _app(session, app_id, lock=True)
+    company_id = await pacing.company_of(session, app)
+    company = await session.get(Company, company_id) if company_id else None
+    reason = "The job board kept refusing JAP (429 or 403): Retry later"
+    if company and await pacing.company_hold_until(session, company.id, datetime.now(UTC)):
+        reason = (
+            f"{company.name}'s own careers site kept refusing JAP (429 or 403): Retry later, "
+            "or apply yourself from the posting"
+        )
+    await fail(session, app, reason)
 
 
 class CompanyLimit(Exception):
@@ -744,10 +769,10 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
         await to_finish(session, app)
         return {"status": "needs_input"}
     if pacing.is_blocked(result.error) and (not result.clicked or result.rejected):
-        # V5: the board throttled or refused us before anything was sent. Hold the board and
-        # try this job again when the hold ends, instead of failing it.
-        until = await pacing.record_block(session, await pacing.ats_of(session, app),
-                                          str(result.error))  # fmt: skip
+        # V5: the board throttled or refused us before anything was sent. Hold the board, or
+        # the company when its own site refused (PRD 1.39), and try this job again when the
+        # hold ends, instead of failing it.
+        until = await pacing.record_refusal(session, app, result.host, str(result.error))
         app.submit_started_at = None
         app.screenshot_path = str(shot) if result.screenshot else app.screenshot_path
         await session.commit()
@@ -779,7 +804,9 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     )
     if app.run_id:
         await bump(session, app.run_id, "applied")
-    await pacing.clear_strikes(session, await pacing.ats_of(session, app))
+    await pacing.clear_strikes(
+        session, await pacing.ats_of(session, app), await pacing.company_of(session, app)
+    )
     await session.commit()
     event(log, "apply.submitted", "Submitted and confirmed", keep=True)
     await apply_trace.sent(session, app)  # O26
@@ -819,7 +846,7 @@ async def read_and_save(session: AsyncSession, app_id: str, url: str) -> int:
         read = await read_form(url, shot)
     except FormError as exc:
         if pacing.is_blocked(str(exc)):
-            raise BoardBlocked(str(exc)) from exc
+            raise BoardBlocked(str(exc), exc.host) from exc
         if shot.exists():
             app = await _app(session, app_id)
             app.screenshot_path = str(shot)
@@ -857,9 +884,10 @@ async def pick(session: AsyncSession, run_id: str) -> list[str]:
 
     Automatic at volume (V2 to V7, PRD 1.29): the jobs come in random order, not newest
     first, at most JAP_PER_COMPANY_DAY a day at one company and JAP_PER_ATS_DAY a day on one
-    ATS, none on an ATS that is on hold, and up to JAP_AUTO_EXTRA_PICKS past the cap (less
-    what is still in flight) so jobs held for review or a puzzle do not leave the day short;
-    submit still stops at the cap. Review mode keeps newest first and the plain cap."""
+    ATS, none on an ATS or at a company that is on hold, and up to JAP_AUTO_EXTRA_PICKS past
+    the cap (less what is still in flight) so jobs held for review or a puzzle do not leave
+    the day short; submit still stops at the cap. Review mode keeps newest first and the
+    plain cap."""
     run = await session.get(Run, uuid.UUID(run_id))
     profile = await session.scalar(select(Profile))
     if run is None or run.mode != "find_and_apply":
@@ -902,11 +930,13 @@ async def pick(session: AsyncSession, run_id: str) -> list[str]:
     )
     today: dict[str, dict[str, int]] = {"companies": {}, "boards": {}}
     held: dict[str, datetime] = {}
+    held_at: dict[str, str] = {}
     full = await pacing.companies_at_limit(session, now)  # JAP-13, in either mode
     if automatic:
         random.shuffle(rows)  # V2: spread the day across companies
         today = await pacing.started_today(session, now)
         held = await pacing.held_boards(session, now)
+        held_at = await pacing.held_companies(session, now)
     companies, boards = today["companies"], today["boards"]
     matcher = role_matcher((run.scope or {}).get("roles"))
     out: list[str] = []
@@ -918,6 +948,7 @@ async def pick(session: AsyncSession, run_id: str) -> list[str]:
             continue
         if automatic and (
             str(ats) in held
+            or company in held_at
             or companies.get(company, 0) >= settings.jap_per_company_day
             or boards.get(str(ats), 0) >= settings.jap_per_ats_day
         ):

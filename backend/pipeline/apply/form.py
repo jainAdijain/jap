@@ -21,6 +21,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 from playwright.async_api import Error, FilePayload, Page, async_playwright
 
@@ -185,10 +186,21 @@ class SubmitResult:
     needs_code: bool = False
     # The form shows a CAPTCHA (before or after Submit): nothing was sent, skip the job
     captcha: bool = False
+    # The site the page came from at the end, after any redirect: who refused, if one did (V5)
+    host: str | None = None
 
 
 class FormError(Exception):
-    """The form could not be opened, read or filled (a site change or a timeout)."""
+    """The form could not be opened, read or filled (a site change or a timeout). `host` is
+    the site whose page answered, when it refused JAP (V5: the board, or the company)."""
+
+    def __init__(self, message: str, host: str | None = None) -> None:
+        super().__init__(message)
+        self.host = host
+
+
+def host_of(url: str | None) -> str | None:
+    return urlsplit(url or "").hostname or None
 
 
 class CaptchaFound(FormError):
@@ -221,7 +233,7 @@ async def _open_page(page: Page, url: str) -> Page:
     page.set_default_timeout(SETTLE_TIMEOUT_MS)
     resp = await page.goto(url, wait_until="domcontentloaded", timeout=NAV_TIMEOUT_MS)
     if resp is not None and resp.status >= 400:
-        raise FormError(f"The form page answered {resp.status}")
+        raise FormError(f"The form page answered {resp.status}", host=host_of(resp.url))
     try:
         await page.wait_for_load_state("networkidle", timeout=SETTLE_TIMEOUT_MS)
     except Error:
@@ -692,6 +704,7 @@ async def submit_form(
                     clicked=True,
                     rejected=True,
                     error=f'The employer\'s site turned the submission away: "{said}"',
+                    host=host_of(page.url),
                 )
             return SubmitResult(
                 confirmed=False,
@@ -714,6 +727,7 @@ async def submit_form(
                 clicked=clicked,
                 error=message,
                 captcha=isinstance(exc, CaptchaFound),
+                host=(exc.host if isinstance(exc, FormError) else None) or host_of(page.url),
             )
         finally:
             try:

@@ -141,6 +141,7 @@ export type RunCounts = {
   spend_cap_reached?: boolean
   daily_cap_reached?: boolean
   boards_on_hold?: string[]
+  companies_on_hold?: string[]
 }
 export type Run = {
   id: string

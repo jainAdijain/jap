@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.33.0 (Traces that answer what the AI costs, what fails, and how good its answers are), 25 Nov 2026.**
+**Version 0.34.0 (A refusal from a company's own site holds that company, not the whole board), 25 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -347,6 +347,15 @@ so that no job board rate-limits or flags you:
   hold for 1 hour, then 4, then 24 on repeats (table `ats_hold`). Nothing is read or submitted
   there until the hold ends; the job waits instead of failing, and the Runs history says
   "On hold after a rate limit". A confirmed submit there clears the strikes.
+- **A company's own site holds only that company** (PRD 1.39, V5). Some companies list their
+  jobs on Greenhouse but send applicants to a form on their own careers site. A refusal from a
+  page that is not on the board's own domain (`greenhouse.io`, `lever.co`, `ashbyhq.com`) puts
+  that company on hold instead, with the same 1, 4 and 24 hours (table `company_hold`, with
+  the site that refused), and the board's other companies go on.
+  The page's address after any redirect decides, else the job's apply link. A company on hold
+  gets no read, no submit and, in Automatic mode, no pick; the Runs history says "On hold after
+  their own site refused JAP"; a confirmed submit there clears its strikes. A job that is still
+  refused after every wait fails with "<Company>'s own careers site kept refusing JAP".
 - **The AI writer answers Automatic jobs too.** `writer-export` now includes Automatic jobs
   at Needs you, with a `review_rule`: a job its checker flags comes back with
   `"_review": "<reason>"`, which is kept as the application's `hold_reason`, so it stops at
@@ -958,6 +967,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.34.0 | 25 Nov 2026 | A refusal holds only who refused (PRD 1.39, V5). A 429 or 403 from a company's own careers site puts that company on hold (`company_hold`, migration `0017_company_hold`), not the whole ATS; a refusal from the board's own pages (`greenhouse.io`, `lever.co`, `ashbyhq.com`) still holds the ATS. Which one is told by the page's address after redirects (`FormError.host`, `SubmitResult.host`), else the apply link. Pick passes over a company on hold, submit waits for it, the Runs history names it, and a job refused through every wait fails naming the company's site. Also logs JAP-15 (fixed in 0.33.0) |
 | 0.33.0 | 25 Nov 2026 | Traces that answer cost, failures and quality (PRD 1.38, O26). `tokens_per_item` and `uncached_tokens_in` on sessions and runs (`agent_run_trace.py`). Door spans inside their run's trace when the runner calls them: `run.sh` passes `RUN=<stamp>`, the Makefile hands it to the container as `JAP_RUN_STAMP`, `agent_doors.py` sends the span with `trace.within()`. New `pipeline/apply_trace.py`: `apply.failed` (ats, apply_mode, pressed, failure code) from `flow.fail()`, and `apply.sent` (answers, writer_answers, edited) when a submit is confirmed; the writer's answers are kept at import (migration 0016). `agent/trace.py`: reasons counted once per job across writer and checker, no shards or batch on a writer run, Devin's refused writes to `in.json`, `prompt.md`, `failures.md` or `text/` counted. `make test-agent`: 107 checks. |
 | 0.32.0 | 25 Nov 2026 | The AI reads and writes less (PRD 1.37: R3, W8, W13). **Reader**: only postings in your target roles are given out when your match rule needs a role in every combination (`JAP_READER_SCOPE`, default `roles`); `reader-status` says `unread` and `unread_all`; the export adds `unread_to_read` and `scope`. **Writer**: the runner sends `_handed_out` with the answers, and JAP notes each job left out with a hash of its inputs (migration 0015, `application.writer_left_out_at` and `writer_left_out_inputs`), skips it until they change or 7 days pass, says so on its questions, and counts it as `waiting_on_you`. **Checker**: `agent/draft.py` skips the checker session for a draft of choices only (`JAP_CHECKER_WHEN`, default `text`). Contract stays 1 (fields added). `make test-agent`: 103 checks. |
 | 0.31.0 | 25 Nov 2026 | The AI reads every description and the resume whole (PRD 1.36, AH10; prompts reader 1.1, writer 1.4, checker 1.4). `agent/wrap.py`, called by the runner after each export, moves every string over 600 characters into `text/` beside `in.json`, wrapped at 100 characters, with a pointer left in `in.json`; the import is unchanged. The prompts say to read those files to the end and to leave out what could not be read whole. Devin may not write under `text/`. The trace gains `longest_line` per session, `fields` and `unknown` for a reader, and the file `text` for a tool call; the sender's allow-list and the backend's copy of a run trace follow. `make test-agent`: 100 checks. |

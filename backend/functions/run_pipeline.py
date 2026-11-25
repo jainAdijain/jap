@@ -83,16 +83,20 @@ async def limits_step() -> dict[str, Any]:
     """The caps that held this run back, for the Runs card: spend_cap_reached when this
     month's model spend is at the cap (model steps stop), daily_cap_reached when today's
     applications are at the daily cap (A1; nothing more is submitted until midnight), and
-    boards_on_hold for a job board that answered 429 or 403 (V5)."""
+    boards_on_hold for a job board that answered 429 or 403 (V5), and companies_on_hold for
+    a company whose own careers site did (PRD 1.39)."""
     async with get_sessionmaker()() as session:
         spend = await month_spend(session)
         profile = await session.scalar(select(Profile))
         cap = profile.daily_cap if profile else 20
         today = await applied_today(session, datetime.now(UTC))
         held = await pacing.held_boards(session, datetime.now(UTC))
+        held_at = await pacing.held_companies(session, datetime.now(UTC))
     out: dict[str, Any] = {}
     if held:  # V5: a board that answered 429 or 403 gets nothing until its hold ends
         out["boards_on_hold"] = [ats.capitalize() for ats in sorted(held)]
+    if held_at:
+        out["companies_on_hold"] = sorted(held_at.values())
     if spend.reached:
         out["spend_cap_reached"] = True
     if today >= cap:

@@ -12,7 +12,11 @@ abuse checks look for. So:
   days), gets no submit and no pick past that cap until the window has room (JAP-13);
 - a 429 or 403 from an ATS, or a page saying too many requests, puts that ATS on hold for 1,
   then 4, then 24 hours (V5). Nothing is read or submitted there until the hold ends, and the
-  job waits instead of failing. A confirmed submit on that ATS clears the strikes.
+  job waits instead of failing. A confirmed submit on that ATS clears the strikes;
+- the same refusal from a company's own careers site, where some companies on Greenhouse
+  send applicants, holds that company only, so one site that refuses the browser does not
+  stop every other company on the board (PRD 1.39). The page's address says which: the
+  board's own domain, or anywhere else.
 
 Days are counted from local midnight in JAP_TZ, like the daily cap.
 """
@@ -23,18 +27,22 @@ import re
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from sqlalchemy import func, or_, select, true
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from config import get_settings
-from database.models import Application, AtsHold, Company, Listing, Posting
+from database.models import Application, AtsHold, Company, CompanyHold, Listing, Posting
 from observability.logs import event
 
 log = logging.getLogger(__name__)
 
 HOLDS = (timedelta(hours=1), timedelta(hours=4), timedelta(hours=24))
+
+# Each board's own pages (V5). A page on any other site is the company's own careers site.
+ATS_DOMAINS = {"greenhouse": "greenhouse.io", "lever": "lever.co", "ashby": "ashbyhq.com"}
 
 # "The form page answered 429" (form._open_page), or what a board prints when it throttles.
 BLOCKED = re.compile(
@@ -66,6 +74,20 @@ async def ats_of(session: AsyncSession, app: Application) -> str | None:
     return await session.scalar(select(Posting.source).where(Posting.id == app.posting_id))
 
 
+async def company_of(session: AsyncSession, app: Application) -> uuid.UUID | None:
+    return await session.scalar(select(Listing.company_id).where(Listing.id == app.listing_id))
+
+
+def on_board(ats: str | None, host: str | None) -> bool:
+    """Whether a page from `host` is the board's own, so that a refusal there holds the board
+    rather than the company (PRD 1.39). An unknown site or board counts as the board."""
+    domain = ATS_DOMAINS.get(ats or "")
+    if not host or domain is None:
+        return True
+    host = host.lower().rstrip(".")
+    return host == domain or host.endswith("." + domain)
+
+
 async def hold_until(session: AsyncSession, ats: str | None, now: datetime) -> datetime | None:
     """When the hold on this ATS ends, or None when it is not on hold."""
     if ats is None:
@@ -81,6 +103,50 @@ async def held_boards(session: AsyncSession, now: datetime) -> dict[str, datetim
     return {h.ats: h.until for h in rows}
 
 
+async def company_hold_until(
+    session: AsyncSession, company_id: uuid.UUID | None, now: datetime
+) -> datetime | None:
+    """When the hold on this company ends (PRD 1.39), or None when it is not on hold."""
+    if company_id is None:
+        return None
+    hold = await session.get(CompanyHold, company_id)
+    if hold is None or hold.until <= now:
+        return None
+    return hold.until
+
+
+async def held_companies(session: AsyncSession, now: datetime) -> dict[str, str]:
+    """The companies on hold now, by id, with their names (PRD 1.39)."""
+    rows = await session.execute(
+        select(CompanyHold.company_id, Company.name)
+        .join(Company, Company.id == CompanyHold.company_id)
+        .where(CompanyHold.until > now)
+    )
+    return {str(company_id): name for company_id, name in rows.all()}
+
+
+async def held_until(session: AsyncSession, app: Application, now: datetime) -> datetime | None:
+    """When this job may be read or sent again: the later of the holds on its board and on
+    its company, or None when neither is on hold."""
+    ends = [
+        await hold_until(session, await ats_of(session, app), now),
+        await company_hold_until(session, await company_of(session, app), now),
+    ]
+    return max((t for t in ends if t is not None), default=None)
+
+
+def _strike(hold: AtsHold | CompanyHold, now: datetime, reason: str) -> bool:
+    """Start a hold, longer for each strike in a row. False when it was still on: a second
+    job hit it before it ended, and the hold stays as it is."""
+    if hold.until > now:
+        return False
+    hold.strikes = int(hold.strikes or 0) + 1
+    hold.until = now + HOLDS[min(hold.strikes, len(HOLDS)) - 1]
+    hold.reason = reason[:300]
+    hold.updated_at = now
+    return True
+
+
 async def record_block(session: AsyncSession, ats: str | None, reason: str) -> datetime:
     """Put the ATS on hold after a 429 or 403 (V5) and return when the hold ends. The caller
     commits."""
@@ -91,24 +157,59 @@ async def record_block(session: AsyncSession, ats: str | None, reason: str) -> d
     if hold is None:
         hold = AtsHold(ats=ats, until=now, strikes=0)
         session.add(hold)
-    if hold.until > now:  # already on hold: a second job hit it before it ended
-        return hold.until
-    hold.strikes = int(hold.strikes or 0) + 1
-    hold.until = now + HOLDS[min(hold.strikes, len(HOLDS)) - 1]
-    hold.reason = reason[:300]
-    hold.updated_at = now
-    event(log, "apply.board_hold", f"{ats} is on hold until {hold.until.isoformat()}: {reason}",
-          level=logging.WARNING, keep=True, ats=ats, strikes=hold.strikes)  # fmt: skip
+    if _strike(hold, now, reason):
+        event(log, "apply.board_hold", f"{ats} is on hold until {hold.until.isoformat()}: {reason}",
+              level=logging.WARNING, keep=True, ats=ats, strikes=hold.strikes)  # fmt: skip
     return hold.until
 
 
-async def clear_strikes(session: AsyncSession, ats: str | None) -> None:
-    """A confirmed submit on this ATS: the next block starts again at 1 hour."""
-    if ats is None:
-        return
-    hold = await session.get(AtsHold, ats)
-    if hold is not None and hold.strikes:
-        hold.strikes = 0
+async def record_company_block(
+    session: AsyncSession, company_id: uuid.UUID, host: str | None, reason: str
+) -> datetime:
+    """Put one company on hold after its own careers site answered 429 or 403 (PRD 1.39) and
+    return when the hold ends. The board and its other companies stay free. The caller
+    commits."""
+    now = datetime.now(UTC)
+    hold = await session.get(CompanyHold, company_id, with_for_update=True)
+    if hold is None:
+        hold = CompanyHold(company_id=company_id, until=now, strikes=0)
+        session.add(hold)
+    if _strike(hold, now, reason):
+        hold.host = host
+        event(log, "apply.company_hold",
+              f"{host or 'The company site'} is on hold until {hold.until.isoformat()}: {reason}",
+              level=logging.WARNING, keep=True, company_id=str(company_id), host=host,
+              strikes=hold.strikes)  # fmt: skip
+    return hold.until
+
+
+async def record_refusal(
+    session: AsyncSession, app: Application, host: str | None, reason: str
+) -> datetime:
+    """This job's form page refused JAP (V5): hold whoever refused, and return when the hold
+    ends. `host` is the site of the page that answered, else the job's apply link is used;
+    the board's own site holds the board, any other site the company (PRD 1.39). The caller
+    commits."""
+    ats = await ats_of(session, app)
+    host = host or urlsplit(str((app.jd_snapshot or {}).get("apply_url") or "")).hostname
+    company = await company_of(session, app)
+    if company is not None and not on_board(ats, host):
+        return await record_company_block(session, company, host, reason)
+    return await record_block(session, ats, reason)
+
+
+async def clear_strikes(
+    session: AsyncSession, ats: str | None, company_id: uuid.UUID | None = None
+) -> None:
+    """A confirmed submit on this ATS, at this company: the next block of either starts
+    again at 1 hour."""
+    holds: list[AtsHold | CompanyHold | None] = [
+        await session.get(AtsHold, ats) if ats else None,
+        await session.get(CompanyHold, company_id) if company_id else None,
+    ]
+    for hold in holds:
+        if hold is not None and hold.strikes:
+            hold.strikes = 0
 
 
 # When Submit last went out on an attempt: the confirmation, or the press when none came.
