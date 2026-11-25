@@ -1,9 +1,10 @@
 # agent/: JAP's AI work on any harness
 
-Version 1.4, 24 Nov 2026 · follows PRD 1.34 (AH1 to AH9, O16 to O24) · code v0.29.0
+Version 1.5, 25 Nov 2026 · follows PRD 1.35 (AH1 to AH9, O16 to O25) · code v0.30.0
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.5 | 25 Nov 2026 | Runs that finish (PRD 1.35). Every call to JAP has a time limit (`JAP_AGENT_CALL_S`, 120 s) and one that did not reach JAP is tried again (3 tries, 30 s apart); a call that never reached it is `slept` or `unreachable`, not `export_failed` or `import_failed`. The schedule tries each job every hour until 22:00 until one run has finished that day (`JAP_AGENT_SCHEDULED=1`, `data*/agent/<job>.done`), does not start in a dark wake, and keeps the Mac awake on power. JAP emails when a run broke (O25) |
 | 1.4 | 24 Nov 2026 | The run's trace is handed to JAP, which sends it to the trace service; one that could not be sent waits as `<run>.unsent` and goes at the start of the next run (O22). The writer and checker say why in codes (`reasons.json`, O24; prompts 1.3): kept in the trace, a line per job in the run log, and the runner counts the jobs left out itself. A session's trace names the prompt's and the contract's version (O20) |
 | 1.3 | 23 Nov 2026 | Every run leaves a trace (PRD 1.33): `trace.py`, a `trace.json` per session and a file per run, a cause for each failed session, tokens and time in the run log and in `make agent-status`. An adapter for Devin. A usage limit is read from the harness's record or its failing last words, not searched for in everything it printed |
 | 1.2 | 23 Nov 2026 | The harness gets `failures.md` (a copy of `docs/failures.md`, the shared failures log) when one exists; scheduled runs keep the Mac awake (`caffeinate`) and keep `DOCKER_HOST` |
@@ -50,7 +51,15 @@ sets (harness, model, tool, a file of the batch folder, a cause, a reason code).
 | 3 | `trace.py read`, from the harness's own record | Each model request (time, tokens in and out, cached) and each tool call (tool, file, time, ok) |
 
 Causes: `not_logged_in`, `slept`, `timeout`, `usage_limit`, `no_output`, `export_failed`,
-`import_failed`. A run in which JAP did not answer has no session and the cause `no_answer`.
+`import_failed`, `unreachable`. A run in which JAP did not answer has no session and the
+cause `no_answer`, or `slept` or `unreachable` when its status call never reached JAP.
+
+From 1.5 every call to JAP goes through `jap()` in `run.sh`: stopped after `JAP_AGENT_CALL_S`,
+and tried again, `JAP_AGENT_CALL_TRIES` in all, when it did not reach JAP (it hit that limit,
+or its error output is ssh's or Docker's). `<step>.err.why` in the batch folder then says
+`slept` (the Mac's `kern.waketime` is after the call began) or `unreachable`, and that is the
+session's cause. A call JAP answered with an error is not retried and stays `export_failed`
+or `import_failed`.
 
 | File | Where | Kept |
 | --- | --- | --- |

@@ -25,6 +25,9 @@ This door does not rely on that. Nothing is copied from the file into a span exc
 observability.trace's allow-list, which keeps a value only when its name is on FIELDS and
 the value is what that name allows: a file that held text would send none of it
 (tests/test_trace.py). No id of an application or a posting is sent, only counts.
+
+From 1.35 this door is also where a run that broke or did nothing is noticed: before the
+trace goes out, pipeline/agent_run_alert.py emails the owner when the run calls for it (O25).
 """
 
 import json
@@ -33,6 +36,7 @@ from typing import Any
 
 from config import get_settings
 from observability import trace
+from pipeline import agent_run_alert
 
 VERSION = 1  # of the trace file (agent/trace.py)
 MAX_SPANS = 10_000
@@ -283,6 +287,7 @@ def main() -> int:
     if built is None:
         print("not a run trace")
         return 0
+    agent_run_alert.maybe(run)
     try:
         sent = trace.send_tree(*built)
     except trace.NotSent as exc:

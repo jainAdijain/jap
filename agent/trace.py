@@ -53,6 +53,9 @@ CAUSES = (
     "no_output",
     "export_failed",
     "import_failed",
+    # From 1.35: an export or import that never reached JAP and the Mac did not sleep (ssh to
+    # the VM or Docker failed). One the Mac slept through is slept.
+    "unreachable",
 )
 # The files of a batch folder; any other file a tool touches is "other" or "outside".
 FILES = frozenset(
@@ -750,7 +753,7 @@ def why_failed(folder, a, spans, steps):
     """O18: the one cause of a failed session, or None when it did its work."""
     ran, sent, back = spans["session"], spans["export"], spans["import"]
     if sent and sent["exit"] != 0:
-        return "export_failed"
+        return not_reached(folder, "export") or "export_failed"
     if os.path.exists(os.path.join(folder, "timed-out")):
         return "timeout"
     said = (steps or {}).get("error")
@@ -763,8 +766,15 @@ def why_failed(folder, a, spans, steps):
             return said_why(tail(os.path.join(folder, "harness.log"))) or "no_output"
         return "no_output"
     if back and back["exit"] != 0:
-        return "import_failed"
+        return not_reached(folder, "import") or "import_failed"
     return None
+
+
+def not_reached(folder, step):
+    """1.35: why an export or import never reached JAP, as the runner wrote it (slept or
+    unreachable), or None when JAP answered it, if with an error."""
+    said = tail(os.path.join(folder, f"{step}.err.why"), 40).strip()
+    return said if said in ("slept", "unreachable") else None
 
 
 def count(n):

@@ -90,6 +90,7 @@ CAUSES = (
     "export_failed",
     "import_failed",
     "no_answer",
+    "unreachable",
 )
 FILES = (
     "in.json",

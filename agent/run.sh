@@ -29,6 +29,13 @@
 # The writer and the checker also say why they left a job out, held it or fixed it, in codes
 # from fixed lists (reasons.json, O24): the trace keeps them and the run log gets a line each.
 #
+# Runs that finish (PRD 1.35, AH4, AH6). JAP is on the VM and the runner on the Mac, so every
+# call to JAP crosses ssh. Each has a time limit and one that did not reach JAP is tried again;
+# the trace then names why (slept, unreachable) instead of export_failed. A scheduled run does
+# not start in a dark wake, and one that has finished today does not run again: the schedule
+# tries each job every hour until it has. Three of five mornings (21 to 25 Nov 2026) broke on
+# a Mac asleep on battery that woke for 20 seconds every 10 minutes.
+#
 # Settings (from the environment's .env file through make, or the environment):
 #   JAP_HARNESS            claude (default), codex, gemini, opencode, or any adapter's name
 #   JAP_HARNESS_MODEL      model for that harness; empty = the harness's own default
@@ -47,6 +54,11 @@
 #                          docs/failures.md in this checkout (not in git)
 #   JAP_AGENT_SEND_S       seconds JAP may take over one run's trace before the runner
 #                          stops waiting and keeps it for the next run (60)
+#   JAP_AGENT_CALL_S       seconds one call to JAP may take before it is stopped (120)
+#   JAP_AGENT_CALL_TRIES   tries for a call that did not reach JAP (3), JAP_AGENT_RETRY_S
+#                          apart (30); a call JAP answered, even with an error, is not retried
+#   JAP_AGENT_SCHEDULED    1 when the schedule started the run: not in a dark wake, and not
+#                          again on a day one has finished (agent/schedule.sh sets it)
 #   MAX_BATCHES            stop each shard after this many batches; 0 = until done (0)
 # Exit code: 0 done or nothing to do, 75 usage limit reached, 1 something failed.
 set -u
@@ -68,6 +80,10 @@ SHARDS="${JAP_AGENT_SHARDS:-8}"
 BATCH="${JAP_AGENT_BATCH:-10}"
 TIMEOUT_MIN="${JAP_AGENT_TIMEOUT_MIN:-20}"
 SEND_S="${JAP_AGENT_SEND_S:-60}"
+CALL_S="${JAP_AGENT_CALL_S:-120}"
+CALL_TRIES="${JAP_AGENT_CALL_TRIES:-3}"
+RETRY_S="${JAP_AGENT_RETRY_S:-30}"
+SCHEDULED="${JAP_AGENT_SCHEDULED:-0}"
 MAX_BATCHES="${MAX_BATCHES:-0}"
 DATA="${JAP_DATA_HOST_DIR:-data}"
 case "$DATA" in /*) ;; *) DATA="$ROOT/$DATA" ;; esac
@@ -82,6 +98,29 @@ for h in "$HARNESS" "$CHECKER"; do
 		exit 2
 	fi
 done
+
+# asleep: the Mac is in a dark wake, awake for a few seconds with no display to check the
+# network, and back to sleep before a harness session could finish (AH6). The capabilities
+# then lack Graphics. JAP_AGENT_ASLEEP=1 or 0 says it instead (the test).
+asleep() {
+	[ -n "${JAP_AGENT_ASLEEP:-}" ] && { [ "$JAP_AGENT_ASLEEP" = 1 ]; return; }
+	[ "$(uname -s)" = Darwin ] || return 1
+	local caps
+	caps=$(pmset -g systemstate 2>/dev/null | sed -n 's/^Current System Capabilities are: //p')
+	[ -n "$caps" ] && ! echo "$caps" | grep -qw Graphics
+}
+
+# A scheduled run, tried every hour (AH6), runs once a day it finishes, and never in a dark
+# wake. Neither leaves a run log: they would be one an hour.
+TODAY=$(date +%F)
+DONE="$DATA/agent/$JOB.done"
+if [ "$SCHEDULED" = 1 ]; then
+	[ "$(cat "$DONE" 2>/dev/null)" = "$TODAY" ] && exit 0
+	if asleep; then
+		echo "$(date '+%F %H:%M:%S') The Mac is in a dark wake: no $JOB run now; the schedule tries again within the hour"
+		exit 0
+	fi
+fi
 
 STAMP="$(date +%Y%m%d-%H%M%S)-$$"
 WORK="${JAP_AGENT_WORK_DIR:-${TMPDIR:-/tmp}/jap-agent-$ENV_NAME}"
@@ -149,8 +188,7 @@ bounded() {
 	"$@" &
 	pid=$!
 	(
-		sleep "$s"
-		kill_tree "$pid"
+		sleep "$s" && kill_tree "$pid" # && as in call_harness (JAP-14)
 	) >/dev/null 2>&1 &
 	wd=$!
 	wait "$pid"
@@ -158,6 +196,49 @@ bounded() {
 	kill_tree "$wd"
 	wait "$wd" 2>/dev/null
 	return "$rc"
+}
+
+# woke_at: when the Mac last woke from sleep, in clock seconds; 0 where that is not known.
+# JAP_AGENT_WOKE_AT says it instead (the test).
+woke_at() {
+	local s
+	if [ -n "${JAP_AGENT_WOKE_AT:-}" ]; then
+		echo "$JAP_AGENT_WOKE_AT"
+		return
+	fi
+	[ "$(uname -s)" = Darwin ] && s=$(sysctl -n kern.waketime 2>/dev/null | sed -n 's/^{ sec = \([0-9]*\),.*/\1/p')
+	echo "${s:-0}"
+}
+
+# What a call that never reached JAP prints: ssh to the VM, or Docker, failed.
+UNREACHED='dial-stdio|ssh_dispatch|client_loop|Connection (timed out|refused|reset|closed)|Operation timed out|Broken pipe|Could not resolve hostname|No route to host|Network is unreachable|Cannot connect to the Docker daemon|error during connect'
+
+# jap <out> <err> <target> [VAR=value ...]: one call to JAP (AH4), each try stopped after
+# CALL_S seconds. A try that did not reach JAP (stopped at its limit, or ssh or Docker
+# failed) is made again, CALL_TRIES in all, RETRY_S apart; one JAP answered, even with an
+# error, is not. On a failure that never reached JAP, <err>.why says why: slept (the Mac
+# slept during the call) or unreachable. Returns the last try's code.
+jap() {
+	local out=$1 err=$2 n=0 rc t
+	shift 2
+	rm -f "$err.why"
+	while :; do
+		n=$((n + 1))
+		t=$(date +%s)
+		bounded "$CALL_S" $JAP_MAKE "$@" >"$out" 2>"$err"
+		rc=$?
+		[ "$rc" = 0 ] && {
+			rm -f "$err.why"
+			return 0
+		}
+		[ $(($(date +%s) - t)) -ge "$CALL_S" ] && rc=124
+		[ "$rc" = 124 ] || grep -qE "$UNREACHED" "$err" 2>/dev/null || return "$rc"
+		if [ "$(woke_at)" -gt "$t" ]; then echo slept >"$err.why"; else echo unreachable >"$err.why"; fi
+		[ "$n" -ge "$CALL_TRIES" ] && return "$rc"
+		# On stderr: a status call's output is read as the status line.
+		log "$1 did not reach JAP ($(cat "$err.why"), try $n of $CALL_TRIES); trying again in ${RETRY_S} s" >&2
+		sleep "$RETRY_S"
+	done
 }
 
 # send_trace <run trace file>: hand it to JAP, which sends it to the trace service when one
@@ -213,10 +294,14 @@ call_harness() {
 		"$ROOT/agent/harnesses/$name.sh" prompt.md) \
 		>"$dir/harness.log" 2>&1 &
 	pid=$!
+	# Only a sleep that ran its full time stops the session. kill_tree stops the watchdog's
+	# sleep before the watchdog itself, and without the && the watchdog went on to mark a
+	# session that had worked as timed out (JAP-14: about one run in two on Linux).
 	(
-		sleep $((TIMEOUT_MIN * 60))
-		echo timeout >"$dir/timed-out"
-		kill_tree "$pid"
+		sleep $((TIMEOUT_MIN * 60)) && {
+			echo timeout >"$dir/timed-out"
+			kill_tree "$pid"
+		}
 	) >/dev/null 2>&1 &
 	wd=$!
 	wait "$pid"
@@ -244,12 +329,12 @@ reader_worker() {
 		b="$RUN/reader-$i-of-$n/batch-$k"
 		mkdir -p "$b"
 		t=$(date +%s)
-		$JAP_MAKE reader-export SHARD="$i/$n" LIMIT="$BATCH" >"$b/in.json" 2>"$b/export.err"
+		jap "$b/in.json" "$b/export.err" reader-export SHARD="$i/$n" LIMIT="$BATCH"
 		rc=$?
 		stamp "$b" export "$t" "$rc"
 		if [ "$rc" -ne 0 ]; then
 			session "$b" reader "$HARNESS" "$MODEL" out.json "$i/$n" "$k" none
-			log "shard $i/$n: export failed: $(tail -1 "$b/export.err")"
+			log "shard $i/$n: export failed$(not_reached "$b/export.err"): $(tail -1 "$b/export.err")"
 			return 1
 		fi
 		has "$b/in.json" posting_id || has "$b/in.json" pair_id || return 0
@@ -267,8 +352,9 @@ reader_worker() {
 			return 1
 		fi
 		t=$(date +%s)
-		$JAP_MAKE reader-import FILE="$b/out.json" >"$b/import.txt" 2>&1
+		jap "$b/import.txt" "$b/import.err" reader-import FILE="$b/out.json"
 		stamp "$b" import "$t" "$?"
+		cat "$b/import.err" >>"$b/import.txt"
 		saved=$(sed -n 's/^saved \([0-9][0-9]*\) of [0-9][0-9]*$/\1/p' "$b/import.txt" | tail -1)
 		# The total line, not whatever came last: the import may add a line on stderr.
 		said=$(grep '^saved [0-9]* of [0-9]*$' "$b/import.txt" | tail -1 | grep . || tail -1 "$b/import.txt")
@@ -278,15 +364,37 @@ reader_worker() {
 	done
 }
 
-reader_status() { $JAP_MAKE reader-status 2>/dev/null | tail -1; }
+reader_status() {
+	jap "$RUN/status.out" "$RUN/status.err" reader-status
+	tail -1 "$RUN/status.out"
+}
+writer_status() {
+	jap "$RUN/status.out" "$RUN/status.err" writer-status
+	tail -1 "$RUN/status.out"
+}
+
+# not_reached <err>: what the run log adds when a call never reached JAP.
+not_reached() {
+	case "$(cat "$1.why" 2>/dev/null)" in
+	slept) echo " (JAP was not reached: the Mac slept)" ;;
+	unreachable) echo " (JAP was not reached: ssh to the stack or Docker failed)" ;;
+	esac
+}
+
+# no_answer: JAP's status did not come back. The run's cause says why, where it is known.
+no_answer() {
+	local why
+	why=$(cat "$RUN/status.err.why" 2>/dev/null)
+	echo "${why:-no_answer}" >"$RUN/cause"
+	log "JAP did not answer$(not_reached "$RUN/status.err") (is the $ENV_NAME stack up?)"
+}
 field() { echo "$1" | sed -n "s/.*$2=\([0-9][0-9]*\).*/\1/p"; }
 
 run_reader() {
 	local st tries=0 i failed=0
 	st=$(reader_status)
 	[ -n "$st" ] || {
-		echo no_answer >"$RUN/cause"
-		log "JAP did not answer (is the $ENV_NAME stack up?)"
+		no_answer
 		return 1
 	}
 	send_waiting
@@ -327,10 +435,9 @@ run_reader() {
 
 run_writer() {
 	local st b="$RUN/writer" rc t why
-	st=$($JAP_MAKE writer-status 2>/dev/null | tail -1)
+	st=$(writer_status)
 	[ -n "$st" ] || {
-		echo no_answer >"$RUN/cause"
-		log "JAP did not answer (is the $ENV_NAME stack up?)"
+		no_answer
 		return 1
 	}
 	send_waiting
@@ -342,12 +449,12 @@ run_writer() {
 	fi
 	mkdir -p "$b"
 	t=$(date +%s)
-	$JAP_MAKE writer-export >"$b/in.json" 2>"$b/export.err"
+	jap "$b/in.json" "$b/export.err" writer-export
 	rc=$?
 	stamp "$b" export "$t" "$rc"
 	if [ "$rc" -ne 0 ]; then
 		session "$b" writer "$HARNESS" "$MODEL" draft.json "" "" none
-		log "export failed: $(tail -1 "$b/export.err")"
+		log "export failed$(not_reached "$b/export.err"): $(tail -1 "$b/export.err")"
 		return 1
 	fi
 	# The checker gets the export as JAP gave it, not the copy the writer's session could
@@ -394,13 +501,14 @@ run_writer() {
 		reasons "$b/check" checker
 	fi
 	t=$(date +%s)
-	$JAP_MAKE writer-import FILE="$b/out.json" >"$b/import.txt" 2>&1
+	jap "$b/import.txt" "$b/import.err" writer-import FILE="$b/out.json"
 	stamp "$b" import "$t" "$?"
+	cat "$b/import.err" >>"$b/import.txt"
 	sed 's/^/  import: /' "$b/import.txt" | tee -a "$LOG"
 	why=$(session "$b" writer "$HARNESS" "$MODEL" draft.json "" "" line)
 	[ -n "$why" ] && log "writer session$why"
 	reasons "$b" writer
-	st=$($JAP_MAKE writer-status 2>/dev/null | tail -1)
+	st=$(writer_status)
 	echo "$st" >"$RUN/after.txt"
 	log "Done. $st"
 }
@@ -422,6 +530,9 @@ if [ -s "$KEPT" ]; then
 		log "Trace not sent${SAID:+ ($SAID)}: it is kept and handed over again at the start of the next run"
 	fi
 fi
+# AH6: a scheduled job that finished today (done, nothing to do, or the usage limit) is not
+# tried again until tomorrow; one that failed is tried again within the hour.
+[ "$SCHEDULED" = 1 ] && { [ "$rc" = 0 ] || [ "$rc" = 75 ]; } && echo "$TODAY" >"$DONE"
 cp "$LOG" "$DATA/agent/last-$JOB.log"
 cp "$LOG" "$DATA/agent/runs/$STAMP-$JOB.log"
 exit "$rc"

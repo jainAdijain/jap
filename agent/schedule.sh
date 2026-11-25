@@ -7,8 +7,12 @@
 #                                run's trace (sessions, time in the model, tokens, causes)
 #
 # Started by make ENV=live agent-schedule / agent-unschedule / agent-status. Each job runs
-# `make ENV=<env> agent-run JOB=<job>` under /usr/bin/caffeinate -i, so the Mac cannot idle
-# sleep while a run is going (a sleep mid-run broke the ssh to the live VM; PRD 1.30, AH).
+# `make ENV=<env> agent-run JOB=<job>` under /usr/bin/caffeinate -is, so the Mac cannot idle
+# sleep while a run is going, nor sleep at all while it is on power (a sleep mid-run broke
+# the ssh to the live VM; PRD 1.30, AH6). From 1.35 each job is also tried every hour, at the
+# same minute, until 22:00 (LAST_TRY), with JAP_AGENT_SCHEDULED=1: the runner then does
+# nothing on a day a run of that job has finished, and does not start in a dark wake. So a
+# morning lost to a sleeping Mac is made up the first hour it is properly awake.
 # The command runs in a login shell, so the harness's command line tool is found on the
 # same PATH as in Terminal. A DOCKER_HOST set in the scheduling environment is written into
 # each plist, so the jobs reach the live stack on its VM when it lives there. The harness
@@ -31,6 +35,7 @@ if [ "$(uname -s)" != Darwin ]; then
 	exit 1
 fi
 
+LAST_TRY=22
 label() { echo "com.jap.$ENV_NAME.agent-$1"; }
 plist() { echo "$AGENTS/$(label "$1").plist"; }
 
@@ -51,7 +56,14 @@ install_one() {
 	esac
 	hour=$((10#${at%%:*}))
 	minute=$((10#${at##*:}))
-	local envvars=""
+	local envvars="" times="" h
+	h=$hour
+	while [ "$h" -le "$LAST_TRY" ] || [ "$h" = "$hour" ]; do
+		times="$times
+		<dict><key>Hour</key><integer>$h</integer><key>Minute</key><integer>$minute</integer></dict>"
+		h=$((h + 1))
+		[ "$h" -le 23 ] || break
+	done
 	if [ -n "${DOCKER_HOST:-}" ]; then
 		envvars=$(printf '\n\t<key>EnvironmentVariables</key>\n\t<dict><key>DOCKER_HOST</key><string>%s</string></dict>' "$DOCKER_HOST")
 	fi
@@ -65,10 +77,11 @@ install_one() {
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/zsh</string><string>-lc</string>
-		<string>cd '$ROOT' &amp;&amp; /usr/bin/caffeinate -i make ENV=$ENV_NAME agent-run JOB=$job</string>
+		<string>cd '$ROOT' &amp;&amp; JAP_AGENT_SCHEDULED=1 /usr/bin/caffeinate -is make ENV=$ENV_NAME agent-run JOB=$job</string>
 	</array>
 	<key>StartCalendarInterval</key>
-	<dict><key>Hour</key><integer>$hour</integer><key>Minute</key><integer>$minute</integer></dict>$envvars
+	<array>$times
+	</array>$envvars
 	<key>StandardOutPath</key><string>$DATA/agent/launchd-$job.log</string>
 	<key>StandardErrorPath</key><string>$DATA/agent/launchd-$job.log</string>
 </dict>
@@ -76,7 +89,7 @@ install_one() {
 PLIST
 	launchctl bootout "$DOMAIN" "$(plist "$job")" 2>/dev/null
 	launchctl bootstrap "$DOMAIN" "$(plist "$job")" &&
-		echo "$job: every day at $at (Mac time), $(label "$job")"
+		echo "$job: every day at $at (Mac time), tried again hourly until $LAST_TRY:$(printf %02d "$minute") until one run has finished, $(label "$job")"
 }
 
 remove_one() {
@@ -89,8 +102,11 @@ status_one() {
 	local job=$1 last
 	if launchctl print "$DOMAIN/$(label "$job")" >/dev/null 2>&1; then
 		echo "$job: scheduled daily at $(at_for "$job") (installed time: $(
-			/usr/libexec/PlistBuddy -c 'Print :StartCalendarInterval:Hour' "$(plist "$job")"
-		):$(printf %02d "$(/usr/libexec/PlistBuddy -c 'Print :StartCalendarInterval:Minute' "$(plist "$job")")"))"
+			/usr/libexec/PlistBuddy -c 'Print :StartCalendarInterval:0:Hour' "$(plist "$job")" 2>/dev/null ||
+				/usr/libexec/PlistBuddy -c 'Print :StartCalendarInterval:Hour' "$(plist "$job")"
+		):$(printf %02d "$(/usr/libexec/PlistBuddy -c 'Print :StartCalendarInterval:0:Minute' "$(plist "$job")" 2>/dev/null ||
+			/usr/libexec/PlistBuddy -c 'Print :StartCalendarInterval:Minute' "$(plist "$job")")"))"
+		[ "$(cat "$DATA/agent/$job.done" 2>/dev/null)" = "$(date +%F)" ] && echo "  today: finished, no more tries until tomorrow"
 	else
 		echo "$job: not scheduled"
 	fi

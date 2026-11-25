@@ -6,7 +6,9 @@
 # run and per session with model requests, tool calls and tokens, a cause for each kind of
 # failure, no text in any of it, and each harness's record read from a fixture. Then what
 # 1.34 adds: each run's trace handed to JAP to send, kept and handed over again when that
-# fails (O22), and the writer's and checker's reasons in codes (O24).
+# fails (O22), and the writer's and checker's reasons in codes (O24). Then 1.35: calls to JAP
+# tried again when they did not reach it, the causes slept and unreachable, and the
+# schedule's hourly tries (AH4, AH6).
 # Needs bash and python3 only. Run with make test-agent.
 set -u
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -131,6 +133,77 @@ case_run noexport "$ONE" reader JAP_MAKE="$TMP/broken-jap.sh"
 check "cause export_failed" '[ "$rc" = 1 ] && [ "$(causes)" = "[('"'"'export_failed'"'"', 1)] [2]" ]'
 case_run noimport "$ONE" writer JAP_MAKE="$TMP/broken-jap.sh"
 check "cause import_failed" '[ "$(trace "$got" "[(s[\"role\"], s[\"cause\"]) for s in t[\"sessions\"]]")" = "[('"'"'writer'"'"', '"'"'import_failed'"'"'), ('"'"'checker'"'"', None)]" ]'
+# 1.35 (AH4): a call that did not reach JAP is tried again; the trace says why it failed.
+cat >"$TMP/far-jap.sh" <<EOF
+#!/bin/sh
+# Fails the first FAR_FAILS calls of target FAR_TARGET as a lost ssh to the VM does, or hangs.
+n=\$(cat "$TMP/far.count" 2>/dev/null || echo 0)
+if [ "\$1" = "\$FAR_TARGET" ] && [ "\$n" -lt "\${FAR_FAILS:-99}" ]; then
+	echo \$((n + 1)) >"$TMP/far.count"
+	[ "\${FAR_HANG:-0}" = 1 ] && sleep 30
+	echo "ssh_dispatch_run_fatal: Connection to 192.0.2.1 port 22: Operation timed out" >&2
+	echo "make[1]: *** [\$1] Error 1" >&2
+	exit 2
+fi
+exec "$HERE/fake-jap.sh" "\$@"
+EOF
+chmod +x "$TMP/far-jap.sh"
+export JAP_AGENT_RETRY_S=0
+rm -f "$TMP/far.count"
+case_run farflaky "$ONE" reader JAP_MAKE="$TMP/far-jap.sh" FAR_TARGET=reader-export FAR_FAILS=1
+check "an export that did not reach JAP is tried again, and the run goes on" '[ "$rc" = 0 ] && [ "$(state "[\"unread\"]")" = "[]" ] && [ "$(cat "$TMP/far.count")" = 1 ] && grep -q "reader-export did not reach JAP (unreachable, try 1 of 3)" "$TMP/farflaky.out" && [ "$(causes)" = "[] [3]" ]'
+rm -f "$TMP/far.count"
+case_run fardown "$ONE" reader JAP_MAKE="$TMP/far-jap.sh" FAR_TARGET=reader-export
+check "cause unreachable: never reached after 3 tries, and the log says so" '[ "$rc" = 1 ] && [ "$(cat "$TMP/far.count")" = 3 ] && [ "$(causes)" = "[('"'"'unreachable'"'"', 1)] [2]" ] && grep -q "export failed (JAP was not reached: ssh to the stack or Docker failed)" "$TMP/fardown.out"'
+rm -f "$TMP/far.count"
+case_run farslept "$ONE" reader JAP_MAKE="$TMP/far-jap.sh" FAR_TARGET=reader-export JAP_AGENT_WOKE_AT=4000000000
+check "cause slept: the Mac woke after the call began" '[ "$rc" = 1 ] && [ "$(causes)" = "[('"'"'slept'"'"', 1)] [2]" ]'
+rm -f "$TMP/far.count"
+started=$(date +%s)
+case_run farhang "$ONE" reader JAP_MAKE="$TMP/far-jap.sh" FAR_TARGET=reader-export FAR_HANG=1 JAP_AGENT_CALL_S=1 JAP_AGENT_CALL_TRIES=2
+check "a call that hangs is stopped at its limit and tried again, not waited on" '[ "$rc" = 1 ] && [ "$(cat "$TMP/far.count")" = 2 ] && [ "$(causes)" = "[('"'"'unreachable'"'"', 1)] [2]" ] && [ $(($(date +%s) - started)) -lt 25 ]'
+rm -f "$TMP/far.count"
+case_run farimport "$ONE" writer JAP_MAKE="$TMP/far-jap.sh" FAR_TARGET=writer-import FAR_FAILS=1
+check "an import that did not reach JAP is tried again" '[ "$rc" = 0 ] && [ "$(state "[\"jobs\"]")" = "[]" ] && [ "$(cat "$TMP/far.count")" = 1 ]'
+rm -f "$TMP/far.count"
+case_run farstatus "$ONE" writer JAP_MAKE="$TMP/far-jap.sh" FAR_TARGET=writer-status
+check "a run whose status never came back says why: unreachable" '[ "$rc" = 1 ] && [ "$(trace "$got" "t[\"cause\"], t[\"totals\"][\"sessions\"]")" = "unreachable 0" ] && grep -q "JAP did not answer (JAP was not reached: ssh to the stack or Docker failed)" "$TMP/farstatus.out"'
+rm -f "$TMP/far.count"
+cat >"$TMP/count-jap.sh" <<EOF
+#!/bin/sh
+case "\$1" in reader-export) echo x >>"$TMP/answered.count"; echo "Traceback: KeyError" >&2; exit 2 ;; esac
+exec "$HERE/fake-jap.sh" "\$@"
+EOF
+chmod +x "$TMP/count-jap.sh"
+case_run answered "$ONE" reader JAP_MAKE="$TMP/count-jap.sh"
+check "an export JAP answered with an error is not tried again, and stays export_failed" '[ "$rc" = 1 ] && [ "$(wc -l <"$TMP/answered.count" | tr -d " ")" = 1 ] && [ "$(causes)" = "[('"'"'export_failed'"'"', 1)] [2]" ]'
+
+# 1.35 (AH6): a scheduled run does not start in a dark wake, runs once on a day it finishes,
+# and one that failed is tried again by the next hour's try.
+SCHED="$TMP/sched"
+sched() { # sched <name> [VAR=value ...]
+	local name=$1
+	shift
+	env JAP_DATA_HOST_DIR="$SCHED" JAP_AGENT_SHARDS=1 JAP_AGENT_SCHEDULED=1 JAP_AGENT_ASLEEP=0 "$@" \
+		"$ROOT/agent/run.sh" reader >"$TMP/$name.out" 2>&1
+	rc=$?
+}
+runs() { ls "$SCHED/agent/runs" 2>/dev/null | wc -l | tr -d " "; }
+python3 -c "import json; json.dump($ONE, open('$FAKE_STATE', 'w'))"
+sched dark JAP_AGENT_ASLEEP=1
+check "a scheduled run in a dark wake does not start and leaves no run log" '[ "$rc" = 0 ] && grep -q "dark wake" "$TMP/dark.out" && [ "$(runs)" = 0 ] && [ "$(state "[\"unread\"]")" = "[\"1\"]" ]'
+rm -f "$TMP/far.count"
+sched schedfail JAP_MAKE="$TMP/far-jap.sh" FAR_TARGET=reader-status
+check "a scheduled run that failed is not marked done" '[ "$rc" = 1 ] && [ ! -e "$SCHED/agent/reader.done" ] && [ "$(runs)" = 1 ]'
+sched schedok
+check "the next try runs, and marks the day done" '[ "$rc" = 0 ] && [ "$(cat "$SCHED/agent/reader.done")" = "$(date +%F)" ] && [ "$(state "[\"unread\"]")" = "[]" ] && [ "$(runs)" = 2 ]'
+python3 -c "import json; json.dump($ONE, open('$FAKE_STATE', 'w'))"
+sched schedagain
+check "a scheduled try on a day already done does nothing, quietly" '[ "$rc" = 0 ] && [ ! -s "$TMP/schedagain.out" ] && [ "$(runs)" = 2 ] && [ "$(state "[\"unread\"]")" = "[\"1\"]" ]'
+env JAP_DATA_HOST_DIR="$SCHED" JAP_AGENT_SHARDS=1 "$ROOT/agent/run.sh" reader >"$TMP/byhand.out" 2>&1
+check "a run by hand is not held back by the day being done" '[ "$?" = 0 ] && [ "$(state "[\"unread\"]")" = "[]" ]'
+unset JAP_AGENT_RETRY_S
+
 case_run edited "$ONE" writer FAKE_EDIT_INPUT=1
 edited=$(ls -d "$TMP"/work/*-writer/writer | tail -1)
 check "a harness that changes its in.json is named, and the checker gets the export as JAP gave it" '[ "$rc" = 0 ] && grep -q edited_by_the_harness "$edited/in.json" && ! grep -q edited_by_the_harness "$edited/check/in.json" && grep -q "The writer changed its in.json" "$TMP/edited.out" && [ "$(trace "$got" "[(s[\"role\"], s[\"input_changed\"]) for s in t[\"sessions\"]], t[\"totals\"][\"input_changed\"]")" = "[('"'"'writer'"'"', True), ('"'"'checker'"'"', False)] 1" ]'
