@@ -29,6 +29,7 @@ commit that fixes them.
 | [JAP-12](#jap-12--bug--applications-waiting-across-the-v0230-deploy-failed-with-int-is-not-iterable) | Bug | Fixed (v0.24.1) | Applications waiting across the v0.23.0 deploy failed with "'int' is not iterable" |
 | [JAP-13](#jap-13--bug--supabase-silently-dropped-applications-past-its-own-limit) | Bug | Fixed (v0.25.0) | Supabase silently dropped applications past its own limit |
 | [JAP-14](#jap-14--bug--a-runner-check-on-the-run-log-fails-now-and-then) | Bug | Fixed (v0.30.0) | A runner check on the run log fails now and then |
+| [JAP-15](#jap-15--bug--a-job-held-by-the-writer-and-the-checker-counted-twice-in-the-runs-reasons) | Bug | Fixed (v0.33.0) | A job held by the writer and the checker counted twice in the run's reasons |
 
 ---
 
@@ -456,3 +457,23 @@ early) were wrong: the lines were whole and the tokens were there.
 
 Files: `agent/tests/run_test.sh`, `agent/run.sh` (`log`, `reader_worker`), `agent/trace.py`
 (`line_of`, `cmd_session`, `cmd_run`).
+
+---
+
+## JAP-15 — Bug — A job held by the writer and the checker counted twice in the run's reasons
+
+**Status:** Fixed (v0.33.0). Found 24 Nov 2026 in the trace of the Devin writer run on live;
+called a bug by Aditya on 25 Nov 2026.
+
+The run's trace said `totals.why` = `ai_banned: 4` for 2 jobs. Both jobs were held by the
+writer and held again, for the same reason, by the checker, and `added()` in `agent/trace.py`
+summed each session's counts. The run's other totals did not double: `saved` counts the
+readers only, and `left_out` is counted from what went into and came out of each session.
+`totals.facts` doubled the same way whenever the checker repeated the writer's facts.
+
+Fix (PRD 1.38, v0.33.0): `added()` builds one list of codes per job id from each session's
+`items.reasons.items` and counts a code once per job; a session trace from before the per-job
+list is counted as it is. `agent/tests/run_test.sh` checks "a job held by the writer and the
+checker counts once in the run".
+
+Files: `agent/trace.py` (`added`, `cmd_run`), `agent/tests/run_test.sh`.
