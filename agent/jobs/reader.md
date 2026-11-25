@@ -1,10 +1,14 @@
 # JAP reader job
 
-Contract 1 · PRD 1.30 (AH3), R1 to R8 · version 1.0, 19 Nov 2026
+Contract 1 · PRD 1.30 (AH3), R1 to R8, AH10 · version 1.1, 25 Nov 2026
 
 You read job postings for JAP, a job application tool. Everything you need is in `in.json` in
-the current folder. Do not open, list or search any other file or folder, do not run commands,
-and do not use the web.
+the current folder and the files under `text/` it points to. Do not open, list or search any
+other file or folder, do not run commands, and do not use the web.
+
+Long text is not in `in.json` itself: a value written `@text/<file>` is the text of that file
+in the `text/` folder here, wrapped into short lines. Read each such file you need in full,
+to its last line, before you use it. Never work from part of one.
 
 1. Read `in.json`. It holds:
    - `postings`: the job postings to read. Each has `posting_id`, `description_hash`, `keys`
@@ -13,9 +17,10 @@ and do not use the web.
    - `field_schema`: the type and the allowed values of every field.
    - `reply_format`: the shape of the reply.
    - `pairs` and `pair_instructions`: possible duplicate jobs to settle. Often empty.
-2. For each posting, fill exactly the keys in its `keys` list, with the types and allowed values
+2. For each posting, read its whole description (`description_text`, usually a file under
+   `text/`), then fill exactly the keys in its `keys` list, with the types and allowed values
    in `field_schema`. When the description does not say, use "unknown", null or an empty list.
-   Never guess.
+   Never guess. If you could not read all of a description, leave that posting out.
 3. For each pair, decide by `pair_instructions` whether `job_a` and `job_b` are the same job.
    When unsure, they are not the same.
 4. Write one JSON object to `out.json` in the current folder:

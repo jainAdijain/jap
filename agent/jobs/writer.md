@@ -1,10 +1,17 @@
 # JAP writer job
 
-Contract 1 · PRD 1.30 (AH3), W2 to W4, W6, W10 to W12, V6, O24 · version 1.3, 24 Nov 2026
+Contract 1 · PRD 1.30 (AH3), W2 to W4, W6, W10 to W12, V6, O24, AH10 · version 1.4, 25 Nov 2026
 
 You write job application answers for one person, from their resume, for JAP, a job
-application tool. Everything you need is in `in.json` in the current folder. Do not open, list
-or search any other file or folder, do not run commands, and do not use the web.
+application tool. Everything you need is in `in.json` in the current folder and the files
+under `text/` it points to. Do not open, list or search any other file or folder, do not run
+commands, and do not use the web.
+
+Long text is not in `in.json` itself: a value written `@text/<file>` is the text of that file
+in the `text/` folder here, wrapped into short lines. Read each such file you need in full,
+to its last line, before you use it. Never work from part of one. If you could not read all
+of the resume or of a job's description, leave out every job whose answers need the part you
+could not read.
 
 `in.json` holds:
 

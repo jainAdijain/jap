@@ -133,10 +133,13 @@ def num(value):
 
 
 def file_of(path, cwd):
-    """Which file of the batch folder a tool touched: its name, "other", or "outside"."""
+    """Which file of the batch folder a tool touched: its name, "text" (a file of text/, the
+    long text of in.json, AH10), "other", or "outside"."""
     if not isinstance(path, str) or not path:
         return None
     full = os.path.realpath(os.path.join(cwd, path))
+    if os.path.dirname(full) == os.path.realpath(os.path.join(cwd, "text")):
+        return "text"
     if os.path.dirname(full) != os.path.realpath(cwd):
         return "outside"
     base = os.path.basename(full)
@@ -644,6 +647,18 @@ def reader_items(folder):
             saved[said.replace(" ", "_")] += 1
     items.update(saved)
     items["not_saved"] = not_saved
+    # AH10: how many fields the reader filled, and how many of them it said the description
+    # does not state ("unknown", null, empty). Many unknowns from one session is the sign of
+    # a reader that saw only part of each description.
+    fields = unknown = 0
+    for key, value in (got.items() if isinstance(got, dict) else []):
+        if key.startswith("pair:") or not isinstance(value, dict):
+            continue
+        for field, said in value.items():
+            if field != "description_hash":
+                fields += 1
+                unknown += said in ("unknown", "", None, [])
+    items.update({"fields": fields, "unknown": unknown})
     items["posting_ids"] = ids(rows(given, "postings"), "posting_id")
     return items
 
@@ -828,6 +843,11 @@ def versions(folder):
     return (said.group(1) if said else None), (contract if ok else None)
 
 
+def longest_line(folder):
+    said = tail(os.path.join(folder, "longest"), 20).strip()
+    return int(said) if said.isdigit() else None
+
+
 def cmd_session(a):
     folder = a.dir
     prompt, contract = versions(folder)
@@ -837,9 +857,13 @@ def cmd_session(a):
     ran = spans["session"]
     fed = ["prompt.md", "in.json", "failures.md"] + (["draft.json"] if a.role == "checker" else [])
     made = [a.expects] + (["findings.txt"] if a.role == "checker" else [])
+    text = os.path.join(folder, "text")
     sizes = {
-        "in_bytes": sum(size(os.path.join(folder, f)) for f in fed),
+        "in_bytes": sum(size(os.path.join(folder, f)) for f in fed)
+        + sum(size(os.path.join(text, f)) for f in (os.listdir(text) if os.path.isdir(text) else [])),
         "out_bytes": sum(size(os.path.join(folder, f)) for f in made),
+        # AH10: the longest line the harness was given, after wrap.py (None without it).
+        "longest_line": longest_line(folder),
     }
     totals = (steps or {}).get("totals") or {}
     if steps:

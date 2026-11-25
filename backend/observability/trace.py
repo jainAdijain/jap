@@ -100,6 +100,7 @@ FILES = (
     "reasons.json",
     "prompt.md",
     "failures.md",
+    "text",
     "other",
     "outside",
 )
@@ -192,6 +193,11 @@ COUNTS = (
     "not_answered",
     "reasons_dropped",
     "steps_not_sent",
+    # From 1.36 (AH10): the longest line a harness was given, and the reader's fields filled
+    # and said not to be stated.
+    "longest_line",
+    "fields",
+    "unknown",
 )
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "host.docker.internal")
 MAX_QUEUE = 1_000

@@ -5,6 +5,7 @@
 #   FAKE_TRACE=down  the trace service refuses: "not sent (why)", exit 1, as JAP says it
 #   FAKE_TRACE=off   no trace service is set
 #   FAKE_TRACE=hang  JAP never answers
+#   FAKE_LONG=1      descriptions and the resume as long as real ones, on one line (AH10)
 exec python3 - "$@" <<'PY'
 import fcntl, json, os, sys, time
 state_file = os.environ["FAKE_STATE"]
@@ -16,6 +17,13 @@ target, args = sys.argv[1], dict(a.split("=", 1) for a in sys.argv[2:])
 
 def save():
     json.dump(state, open(state_file, "w"))
+
+LONG = os.environ.get("FAKE_LONG") == "1"
+def text(what):
+    """A posting's text, or one of 9,000 characters ending in a word only the end has."""
+    if not LONG:
+        return f"SECRET-{what}-TEXT with a sales quota"
+    return ("SECRET " + what + " words " * 1500)[:8990] + " LAST-WORD"
 
 def in_shard(pid, shard):
     i, n = map(int, shard.split("/"))
@@ -29,7 +37,7 @@ elif target == "reader-export":
     pairs = state["pairs"][:limit] if shard.startswith("1/") else []
     print(json.dumps({"contract_version": 1, "postings": [
         {"posting_id": p, "description_hash": "h" + p, "keys": ["skills"],
-         "description_text": "SECRET-POSTING-TEXT with a sales quota"} for p in mine],
+         "description_text": text("POSTING")} for p in mine],
         "pairs": [{"pair_id": p} for p in pairs]}))
 elif target == "reader-import":
     given = json.load(open(args["FILE"]))
@@ -46,7 +54,7 @@ elif target == "reader-import":
 elif target == "writer-status":
     print(f"jobs={len(state['jobs'])} resumes=0")
 elif target == "writer-export":
-    print(json.dumps({"contract_version": 1, "resumes": [], "jobs": [
+    print(json.dumps({"contract_version": 1, "resumes": [], "resume": text("RESUME"), "jobs": [
         {"application_id": a, "questions": [{"key": "why", "label": "SECRET-QUESTION-TEXT"}]}
         for a in state["jobs"]]}))
 elif target == "writer-import":

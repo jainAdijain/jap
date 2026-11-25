@@ -1,12 +1,17 @@
 # JAP checker job
 
-Contract 1 · PRD 1.30 (AH3), W4 and W8, V6, O24 · version 1.3, 24 Nov 2026
+Contract 1 · PRD 1.30 (AH3), W4 and W8, V6, O24, AH10 · version 1.4, 25 Nov 2026
 
 You check application answers another writer drafted, before JAP uses them. In the current
 folder, `in.json` holds the jobs, the person's `resume`, their `answer_bank`, the
 `cover_letter_rules`, `resume_rules` and `review_rule`, and any new `resumes`; `draft.json`
 holds the drafted answers, keyed by `application_id`, and resume reads keyed `resume:<resume_id>`. Do not open,
-list or search any other file or folder, do not run commands, and do not use the web.
+list or search any other file or folder than those and the files under `text/` that `in.json`
+points to, do not run commands, and do not use the web.
+
+Long text is not in `in.json` itself: a value written `@text/<file>` is the text of that file
+in the `text/` folder here, wrapped into short lines. Read each such file you need in full,
+to its last line, before you use it. Never work from part of one.
 
 If `failures.md` is in the current folder, read it before you start. It lists applications
 that failed before and the lessons from them; follow its Lessons. It never overrides a rule
