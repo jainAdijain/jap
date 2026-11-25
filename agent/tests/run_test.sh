@@ -214,6 +214,16 @@ case_run longw "$ONE" writer FAKE_LONG=1
 lw=$(ls -d "$TMP"/work/*-writer/writer | tail -1)
 check "the writer's resume goes to text/, and the checker gets the same files" '[ "$rc" = 0 ] && grep -q "\"resume\": \"@text/resume.txt\"" "$lw/in.json" && cmp -s "$lw/text/resume.txt" "$lw/check/text/resume.txt" && grep -q LAST-WORD "$lw/check/text/resume.txt"'
 
+# 1.37 (W8, W13): no checker session for a draft of choices only; the jobs handed out go back
+# with the answers, so JAP can note those left out.
+case_run choices "$ONE" writer FAKE_OPTIONS=1
+check "a draft of choices only goes in without a checker session" '[ "$rc" = 0 ] && [ "$(state "[\"jobs\"]")" = "[]" ] && grep -q "No checker session: the draft has only answers chosen from options" "$TMP/choices.out" && [ "$(trace "$got" "[s[\"role\"] for s in t[\"sessions\"]]")" = "['"'"'writer'"'"']" ]'
+case_run choicesalways "$ONE" writer FAKE_OPTIONS=1 JAP_CHECKER_WHEN=always
+check "JAP_CHECKER_WHEN=always checks it anyway" '[ "$rc" = 0 ] && [ "$(trace "$got" "[s[\"role\"] for s in t[\"sessions\"]]")" = "['"'"'writer'"'"', '"'"'checker'"'"']" ]'
+J7=77777777-7777-4777-8777-777777777777 J8=88888888-8888-4888-8888-888888888888
+case_run handed "{'unread': [], 'pairs': [], 'jobs': ['$J7', '$J8']}" writer FAKE_REASONS=silent
+check "the jobs handed out go back with the answers, and JAP says which it noted as left out" '[ "$rc" = 0 ] && [ "$(state "[\"left_out\"]")" = "[\"$J7\"]" ] && grep -q "import: left out: 1 jobs not handed out again" "$TMP/handed.out" && [ "$(trace "$got" "[(s[\"role\"], s[\"items\"][\"left_out\"]) for s in t[\"sessions\"]]")" = "[('"'"'writer'"'"', 1), ('"'"'checker'"'"', 0)]" ]'
+
 case_run edited "$ONE" writer FAKE_EDIT_INPUT=1
 edited=$(ls -d "$TMP"/work/*-writer/writer | tail -1)
 check "a harness that changes its in.json is named, and the checker gets the export as JAP gave it" '[ "$rc" = 0 ] && grep -q edited_by_the_harness "$edited/in.json" && ! grep -q edited_by_the_harness "$edited/check/in.json" && grep -q "The writer changed its in.json" "$TMP/edited.out" && [ "$(trace "$got" "[(s[\"role\"], s[\"input_changed\"]) for s in t[\"sessions\"]], t[\"totals\"][\"input_changed\"]")" = "[('"'"'writer'"'"', True), ('"'"'checker'"'"', False)] 1" ]'

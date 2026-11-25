@@ -6,6 +6,7 @@
 #   FAKE_TRACE=off   no trace service is set
 #   FAKE_TRACE=hang  JAP never answers
 #   FAKE_LONG=1      descriptions and the resume as long as real ones, on one line (AH10)
+#   FAKE_OPTIONS=1   every writer question has options (PRD 1.37: no checker session)
 exec python3 - "$@" <<'PY'
 import fcntl, json, os, sys, time
 state_file = os.environ["FAKE_STATE"]
@@ -55,13 +56,19 @@ elif target == "writer-status":
     print(f"jobs={len(state['jobs'])} resumes=0")
 elif target == "writer-export":
     print(json.dumps({"contract_version": 1, "resumes": [], "resume": text("RESUME"), "jobs": [
-        {"application_id": a, "questions": [{"key": "why", "label": "SECRET-QUESTION-TEXT"}]}
+        {"application_id": a, "questions": [{"key": "why", "label": "SECRET-QUESTION-TEXT",
+          **({"options": ["ok", "no"]} if os.environ.get("FAKE_OPTIONS") == "1" else {})}]}
         for a in state["jobs"]]}))
 elif target == "writer-import":
     given = json.load(open(args["FILE"]))
+    handed = given.pop("_handed_out", [])
     for key in given:
         state["jobs"].remove(key)
         print(f"{key}: ready_for_review")
+    left = [a for a in handed if a not in given]
+    if left:
+        state.setdefault("left_out", []).extend(left)
+        print(f"left out: {len(left)} jobs not handed out again until the answer bank, the resume or its questions change (7 days at most)")
     save()
 elif target == "agent-trace-send":
     how = os.environ.get("FAKE_TRACE", "")

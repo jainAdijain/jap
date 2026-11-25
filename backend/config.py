@@ -41,6 +41,11 @@ class Settings(BaseSettings):
     # AH1): "agent", the outside AI writer through make writer-export / writer-import, so such a
     # question waits at Needs you, or "api", JAP's own model call (the fallback).
     jap_writer: Mode = "agent"
+    # Which unread postings the AI reader is given (PRD 1.37, R3): "roles", only those whose
+    # title is one of my target roles, when my match rule needs a role in every combination
+    # (the rest could never be listed, and are read once my roles take them in); "all", every
+    # unread posting, my roles first, as before 1.37.
+    jap_reader_scope: Literal["roles", "all"] = "roles"
 
     @field_validator("jap_reader", "jap_writer", mode="before")
     @classmethod

@@ -285,6 +285,10 @@ class Application(Timestamps, Base):
     hold_reason: Mapped[str | None] = mapped_column(Text)
     alert_sent_at: Mapped[datetime | None]
     inngest_run_id: Mapped[str | None] = mapped_column(Text)
+    # W13 (PRD 1.37): when the AI writer last left this job out, and a hash of what it was
+    # given then; the export skips the job while that is unchanged, 7 days at most.
+    writer_left_out_at: Mapped[datetime | None]
+    writer_left_out_inputs: Mapped[str | None] = mapped_column(Text)
 
 
 class AnswerBank(Timestamps, Base):

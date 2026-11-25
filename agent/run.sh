@@ -47,6 +47,8 @@
 #   JAP_CHECKER_HARNESS    harness for the writer's checker pass; default = JAP_HARNESS,
 #                          none = import the writer's answers unchecked (not recommended)
 #   JAP_CHECKER_MODEL      model for the checker; default = JAP_HARNESS_MODEL
+#   JAP_CHECKER_WHEN       text (default): a checker session only for a draft with free text,
+#                          a cover letter or a resume read (PRD 1.37, W8); always: every draft
 #   JAP_AGENT_SHARDS       reader shards run in parallel (8)
 #   JAP_AGENT_BATCH        postings per reader batch (10)
 #   JAP_AGENT_TIMEOUT_MIN  minutes one harness session may take before it is stopped (20)
@@ -81,6 +83,7 @@ HARNESS="${JAP_HARNESS:-claude}"
 MODEL="${JAP_HARNESS_MODEL:-}"
 CHECKER="${JAP_CHECKER_HARNESS:-$HARNESS}"
 CHECKER_MODEL="${JAP_CHECKER_MODEL:-$MODEL}"
+CHECK_WHEN="${JAP_CHECKER_WHEN:-text}"
 SHARDS="${JAP_AGENT_SHARDS:-8}"
 BATCH="${JAP_AGENT_BATCH:-10}"
 TIMEOUT_MIN="${JAP_AGENT_TIMEOUT_MIN:-20}"
@@ -329,6 +332,22 @@ wrap() {
 	return 0
 }
 
+# needs_check <writer folder>: whether the draft needs a checker session (W8, from 1.37 only
+# for free text, a cover letter or a resume read; agent/draft.py). Without python3, always.
+needs_check() {
+	[ "$CHECK_WHEN" = always ] && return 0
+	command -v python3 >/dev/null 2>&1 || return 0
+	python3 "$ROOT/agent/draft.py" needs-check "$RUN/export.json" "$1/draft.json" >"$1/check-why" 2>>"$RUN/trace.err"
+}
+
+# handed <file>: the export's application ids added to the answers JAP imports, so it notes
+# the jobs they leave out and does not hand those out again unchanged (W13, from 1.37).
+handed() {
+	command -v python3 >/dev/null 2>&1 || return 0
+	python3 "$ROOT/agent/draft.py" handed "$RUN/export.json" "$1" 2>>"$RUN/trace.err"
+	return 0
+}
+
 # has <file> <key>: the exported JSON holds at least one entry with that id key.
 has() { grep -q "\"$2\"" "$1"; }
 
@@ -492,6 +511,9 @@ run_writer() {
 	if [ "$CHECKER" = none ]; then
 		cp "$b/draft.json" "$b/out.json"
 		log "No checker (JAP_CHECKER_HARNESS=none): importing the draft as written"
+	elif ! needs_check "$b"; then
+		cp "$b/draft.json" "$b/out.json"
+		log "No checker session: the draft has $(cat "$b/check-why"), which JAP checks itself on import"
 	else
 		mkdir -p "$b/check"
 		[ -e "$b/input-changed" ] && log "The writer changed its in.json; the checker gets the export as JAP gave it"
@@ -518,6 +540,7 @@ run_writer() {
 		[ -n "$why" ] && log "checker session$why"
 		reasons "$b/check" checker
 	fi
+	handed "$b/out.json"
 	t=$(date +%s)
 	jap "$b/import.txt" "$b/import.err" writer-import FILE="$b/out.json"
 	stamp "$b" import "$t" "$?"

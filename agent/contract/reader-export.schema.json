@@ -43,6 +43,13 @@
     "unread_in_shard": {
       "type": "integer"
     },
+    "unread_to_read": {
+      "type": "integer",
+      "description": "Unread postings the reader is given at all: my roles' only when scope is roles (PRD 1.37)."
+    },
+    "scope": {
+      "enum": ["roles", "all"]
+    },
     "shard": {
       "type": "string",
       "pattern": "^[0-9]+/[0-9]+$"

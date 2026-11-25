@@ -23,6 +23,11 @@ It also settles Possible duplicates (R8, PRD 1.28): shard 1's export carries the
 prompt), and an import entry keyed "pair:<id>" with {"same": bool, "reason": "..."} merges
 the pair or keeps it apart through the same step as before (dedup.apply_same).
 
+From 1.37 (R3) the reader is given only postings whose title is one of my target roles, when
+my match rule needs a role in every combination: on 20 Nov 2026 that was 239 of 1,531 unread,
+and the other 1,292 could never be listed. They stay unread and are given out once my roles
+take them in. JAP_READER_SCOPE=all gives every unread posting, my roles first, as before.
+
     python -m pipeline.claude_reader export [--limit 50] [--shard 3/8]  > postings.json
     python -m pipeline.claude_reader import                < fields.json
     python -m pipeline.claude_reader status                (one line for agent/run.sh)
@@ -42,6 +47,7 @@ from pydantic import ValidationError
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from config import get_settings
 from database.models import PossibleDuplicate, Posting, Profile, Run, WatchedBoard
 from database.session import get_sessionmaker
 from llm.call import load_prompt
@@ -56,7 +62,7 @@ from pipeline.enrich import (
     wanted_fields,
     wanted_posting,
 )
-from pipeline.matching import refilter_from_profile
+from pipeline.matching import clean_rule, refilter_from_profile
 from pipeline.resume import sensitive_from_profile
 from pipeline.runs import in_scope, role_matcher
 from schemas.extract import FIELDS, from_output, output_model
@@ -158,12 +164,21 @@ def parse_shard(text: str) -> tuple[int, int]:
     return shard
 
 
+def roles_only(profile: Profile | None, matcher: Any) -> bool:
+    """1.37 (R3): only my roles' postings are read when JAP_READER_SCOPE is roles, I have
+    target roles, and every combination of my match rule needs a role, so a posting outside
+    them could never be listed."""
+    if get_settings().jap_reader_scope != "roles" or matcher is None or profile is None:
+        return False
+    return all("role" in combo for combo in clean_rule(profile.match_rule))
+
+
 async def export(
     session: AsyncSession, limit: int = BATCH, shard: tuple[int, int] = (1, 1)
 ) -> dict[str, Any]:
     """One batch from this shard. Postings whose title is one of my target roles come
     first, so the jobs I can be listed for are read in the first minutes of a big backlog
-    (R3); the rest follow, oldest first."""
+    (R3); the rest follow, oldest first, unless only my roles are read (roles_only)."""
     profile = await session.scalar(select(Profile))
     values = sensitive_from_profile(profile)
     run_active = (
@@ -179,7 +194,11 @@ async def export(
         )
     ).all()
     mine = {pid for pid, title in heads if matcher is not None and in_scope(title, matcher)}
-    order = [pid for pid, _ in heads if pid in mine] + [pid for pid, _ in heads if pid not in mine]
+    order = [pid for pid, _ in heads if pid in mine]
+    only_mine = roles_only(profile, matcher)
+    if not only_mine:
+        order += [pid for pid, _ in heads if pid not in mine]
+    to_read = len(order)
     order = [pid for pid in order if in_shard(pid, shard)]
     batch: list[dict[str, Any]] = []
     for start in range(0, len(order), limit):
@@ -206,6 +225,8 @@ async def export(
                 pairs.append(build_pair(dup, *both, values))
     out = build_export(batch, len(heads), run_active, values, pairs)
     out["unread_in_my_roles"] = len(mine)
+    out["unread_to_read"] = to_read
+    out["scope"] = "roles" if only_mine else "all"
     out["unread_in_shard"] = len(order)
     out["shard"] = f"{shard[0]}/{shard[1]}"
     return out
@@ -305,7 +326,11 @@ async def status(session: AsyncSession) -> str:
     out = await export(session, limit=1)
     pairs = len(await open_pairs(session))
     run_active = int(bool(out["run_active"]))
-    return f"run_active={run_active} unread={out['unread_total']} pairs={pairs}"
+    # unread is what the reader is to read (1.37); unread_all every unread posting.
+    return (
+        f"run_active={run_active} unread={out['unread_to_read']} pairs={pairs}"
+        f" unread_all={out['unread_total']}"
+    )
 
 
 async def _main(argv: list[str]) -> None:
