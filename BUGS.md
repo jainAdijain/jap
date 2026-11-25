@@ -28,7 +28,7 @@ commit that fixes them.
 | [JAP-11](#jap-11--bug--ashby-applications-were-sent-half-filled) | Bug | Fixed (v0.19.2) | Ashby applications were sent half filled |
 | [JAP-12](#jap-12--bug--applications-waiting-across-the-v0230-deploy-failed-with-int-is-not-iterable) | Bug | Fixed (v0.24.1) | Applications waiting across the v0.23.0 deploy failed with "'int' is not iterable" |
 | [JAP-13](#jap-13--bug--supabase-silently-dropped-applications-past-its-own-limit) | Bug | Fixed (v0.25.0) | Supabase silently dropped applications past its own limit |
-| [JAP-14](#jap-14--bug--a-runner-check-on-the-run-log-fails-now-and-then) | Bug | Open | A runner check on the run log fails now and then |
+| [JAP-14](#jap-14--bug--a-runner-check-on-the-run-log-fails-now-and-then) | Bug | Fixed (v0.30.0) | A runner check on the run log fails now and then |
 
 ---
 
@@ -406,8 +406,21 @@ about limits before sending, not only what it says after.
 
 ## JAP-14 — Bug — A runner check on the run log fails now and then
 
-**Status:** Open. Found 24 Nov 2026 in CI, on `main`, right after pull request 37 (v0.27.0)
-merged. Called a bug by Aditya the same day.
+**Status:** Fixed (v0.30.0). Found 24 Nov 2026 in CI, on `main`, right after pull request 37
+(v0.27.0) merged. Called a bug by Aditya the same day.
+
+**Found and fixed 25 Nov 2026.** It failed in about half the CI runs of pull requests 40 to 42,
+and in 11 of 25 runs of the reader case in a Linux container (0 of 25 on the Mac). The run
+log showed the summary line as `Trace: 9 sessions, 1 failed (timeout 1)`: a session that had
+worked was marked timed out, so `^[0-9:]* Trace: 9 sessions · ` did not match. Root cause:
+the watchdog in `call_harness` (`agent/run.sh`) was `( sleep N; echo timeout >timed-out;
+kill_tree pid ) &`, and when the session ended first the runner stopped it with `kill_tree`,
+which stops a process's children before the process. The `sleep` died, and the watchdog went
+on to write `timed-out` before its own stop arrived; `trace.py` then read the cause as
+`timeout`. Linux schedules the subshell in that gap often, macOS seldom. Fix: `sleep N && {
+... }`, so only a sleep that ran its full time marks and stops the session; the same `&&` in
+`bounded`. After the fix, 0 of 25 runs on Linux failed. On live this could have marked a
+real session timed out in its trace and run log; the work itself was imported as usual.
 
 `make test-agent` (`agent/tests/run_test.sh`) has the check "run log: tokens per batch and a
 run summary". It failed once, in the "agent runner" job of the push to `main` for commit
@@ -438,10 +451,8 @@ Root cause: not known. Things to look at first:
 - Whether any batch is certain to hold exactly 4 postings that all save: the stand-in JAP
   (`agent/tests/fake-jap.sh`) hands 29 postings to 3 shards in batches of 4.
 
-Fix: make the test keep the reader's output when a check fails (print it, so CI shows it),
-find which line was wrong, then fix the cause: one writer for the run log, or lines written
-whole. Until then a red "agent runner" job with only this check failing is this bug; re-run
-it.
+The first guesses (lines written together by three shards, a session's files read too
+early) were wrong: the lines were whole and the tokens were there.
 
 Files: `agent/tests/run_test.sh`, `agent/run.sh` (`log`, `reader_worker`), `agent/trace.py`
 (`line_of`, `cmd_session`, `cmd_run`).
