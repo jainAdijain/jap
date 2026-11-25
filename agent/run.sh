@@ -49,7 +49,8 @@
 #   JAP_CHECKER_MODEL      model for the checker; default = JAP_HARNESS_MODEL
 #   JAP_CHECKER_WHEN       text (default): a checker session only for a draft with free text,
 #                          a cover letter or a resume read (PRD 1.37, W8); always: every draft
-#   JAP_AGENT_SHARDS       reader shards run in parallel (8)
+#   JAP_AGENT_SHARDS       the most reader shards run in parallel (8); a run starts one
+#                          for each batch of postings to read, so 10 postings take one
 #   JAP_AGENT_BATCH        postings per reader batch (10)
 #   JAP_AGENT_TIMEOUT_MIN  minutes one harness session may take before it is stopped (20)
 #   JAP_AGENT_TRACE        0 = do not ask the harness for a record of its session (the
@@ -424,6 +425,19 @@ no_answer() {
 }
 field() { echo "$1" | sed -n "s/.*$2=\([0-9][0-9]*\).*/\1/p"; }
 
+# shards_for <status line>: how many shards to start (PRD 1.40, AH4): one for each batch of
+# postings to read, at least one (shard 1 carries the pairs), at most JAP_AGENT_SHARDS. Each
+# session pays the harness's setup and its own turns again: on 25 Nov 2026 eight shards
+# split 10 postings into six sessions of 1 to 3, at about 37,000 tokens a session before
+# counting the postings.
+shards_for() {
+	local n
+	n=$((($(field "$1" unread) + BATCH - 1) / BATCH))
+	[ "$n" -lt 1 ] && n=1
+	[ "$n" -gt "$SHARDS" ] && n=$SHARDS
+	echo "$n"
+}
+
 run_reader() {
 	local st tries=0 i failed=0
 	st=$(reader_status)
@@ -444,6 +458,9 @@ run_reader() {
 		log "Nothing to read"
 		return 0
 	fi
+	# The run's trace names the shards started, not the most there may be.
+	SHARDS=$(shards_for "$st")
+	log "$SHARDS shard$([ "$SHARDS" = 1 ] || echo s) of up to $BATCH postings a batch"
 	i=1
 	while [ "$i" -le "$SHARDS" ]; do
 		reader_worker "$i" "$SHARDS" &

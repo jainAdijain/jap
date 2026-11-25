@@ -35,6 +35,16 @@ check "reader settled every pair" '[ "$(state "[\"pairs\"]")" = "[]" ]'
 check "reader ran 3 shards" '[ "$(ls -d "$TMP"/work/*-reader/reader-*-of-3 | wc -l | tr -d " ")" = 3 ]'
 check "reader says what it saved" 'grep -q "Done. Saved 31" "$TMP/reader.out"'
 
+# 1.40 (AH4): one shard for each batch of postings to read, at least one, at most the setting.
+python3 -c "import json; json.dump({'unread': [str(i) for i in range(1, 6)], 'pairs': [],
+  'jobs': ['a1', 'a2']}, open('$FAKE_STATE', 'w'))"
+JAP_AGENT_WORK_DIR="$TMP/few" JAP_DATA_HOST_DIR="$TMP/few-data" "$ROOT/agent/run.sh" reader >"$TMP/few.out" 2>&1
+check "5 postings in batches of 4 start 2 shards, not 3, and read them all" '[ "$(ls -d "$TMP"/few/*-reader/reader-*-of-2 | wc -l | tr -d " ")" = 2 ] && [ ! -e "$(ls -d "$TMP"/few/*-reader | head -1)/reader-1-of-3" ] && [ "$(state "[\"unread\"]")" = "[]" ] && grep -q "2 shards of up to 4 postings a batch" "$TMP/few.out"'
+python3 -c "import json; json.dump({'unread': [], 'pairs': ['p3'], 'jobs': ['a1', 'a2']},
+  open('$FAKE_STATE', 'w'))"
+JAP_AGENT_WORK_DIR="$TMP/pairs" JAP_DATA_HOST_DIR="$TMP/pairs-data" "$ROOT/agent/run.sh" reader >"$TMP/pairs.out" 2>&1
+check "pairs only: one shard, which settles them" '[ "$(ls -d "$TMP"/pairs/*-reader/reader-*-of-* | wc -l | tr -d " ")" = 1 ] && [ -d "$(ls -d "$TMP"/pairs/*-reader | head -1)/reader-1-of-1" ] && [ "$(state "[\"pairs\"]")" = "[]" ]'
+
 "$ROOT/agent/run.sh" reader >"$TMP/reader2.out" 2>&1
 check "nothing to read" 'grep -q "Nothing to read" "$TMP/reader2.out"'
 check "run logs kept in the data folder" '[ -s "$TMP/data/agent/last-reader.log" ] && [ "$(ls "$TMP"/data/agent/runs | wc -l | tr -d " ")" = 2 ]'
@@ -59,7 +69,7 @@ echo "lessons" >"$JAP_FAILURES_FILE"
 python3 -c "import json; json.dump({'unread': ['9'], 'pairs': [], 'jobs': ['a4']},
   open('$FAKE_STATE', 'w'))"
 "$ROOT/agent/run.sh" reader >"$TMP/failures.out" 2>&1
-check "failures.md reaches the batch folder" '[ -f "$TMP"/work/*-reader/reader-*-of-3/batch-1/failures.md ]'
+check "failures.md reaches the batch folder" '[ -f "$TMP"/work/*-reader/reader-*-of-*/batch-1/failures.md ]'
 "$ROOT/agent/run.sh" writer >"$TMP/failures-w.out" 2>&1
 check "failures.md reaches the writer folder" '[ -f "$TMP"/work/*-writer/writer/failures.md ]'
 check "failures.md reaches the checker folder" '[ -f "$TMP"/work/*-writer/writer/check/failures.md ]'
