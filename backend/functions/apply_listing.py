@@ -48,22 +48,20 @@ async def snapshot_step(app_id: str) -> str:
 
 async def read_step(app_id: str, url: str) -> dict[str, Any]:
     """A FormError (site change, timeout) is retried by Inngest, then fails the attempt. A
-    429 or 403 from the board is not a form problem: the board goes on hold (V5) and the
-    step answers when to read again."""
+    429 or 403 is not a form problem: the board, or the company when its own site refused
+    (PRD 1.39), goes on hold (V5) and the step answers when to read again."""
     async with get_sessionmaker()() as session:
         try:
             return {"fields": await flow.read_and_save(session, app_id, url)}
         except flow.BoardBlocked as exc:
-            return {"wait_until": await flow.board_hold(session, app_id, str(exc))}
+            return {"wait_until": await flow.board_hold(session, app_id, str(exc), exc.host)}
         except flow.CompanyLimit as exc:  # JAP-13: failed with the reason, nothing sent
             return {"stopped": str(exc)}
 
 
 async def refused_step(app_id: str) -> None:
     async with get_sessionmaker()() as session:
-        await flow.fail_by_id(
-            session, app_id, "The job board kept refusing JAP (429 or 403): Retry later"
-        )
+        await flow.refused(session, app_id)
 
 
 def form_was_read(read: Any) -> bool:
@@ -74,7 +72,7 @@ def form_was_read(read: Any) -> bool:
 
 
 async def hold_step(app_id: str) -> str | None:
-    """When the hold on this job's board ends (V5), or None when it is free."""
+    """When the hold on this job's board or company ends (V5), or None when both are free."""
     async with get_sessionmaker()() as session:
         return await flow.board_hold(session, app_id)
 
@@ -184,7 +182,7 @@ async def apply_listing(ctx: inngest.Context) -> dict[str, Any]:
         return created
     app_id = str(created["application_id"])
     url = await ctx.step.run("snapshot", snapshot_step, app_id)
-    for i in range(BOARD_ROUNDS):  # V5: never open a form on a board that is on hold
+    for i in range(BOARD_ROUNDS):  # V5: never open a form on a board or company on hold
         held = await ctx.step.run(f"board-hold-{i}", hold_step, app_id)
         if held:
             await ctx.step.sleep_until(f"board-wait-{i}", datetime.fromisoformat(str(held)))

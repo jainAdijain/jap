@@ -70,7 +70,7 @@ make errors                 # last 20 warnings and errors from log_event
 calling a change done. A single test:
 `docker compose -p jap exec app pytest -q tests/test_matching.py -k remote`.
 
-On the local stack `make test-app` ends with 6 failed submit tests (in `test_apply`,
+On the local stack `make test-app` ends with 8 failed submit tests (in `test_apply`,
 `test_cover_letter`, `test_hardening` and `test_pacing`): they inherit the stack's
 `JAP_SUBMIT_ENABLED=false`. They pass in CI, and here with
 `docker compose -p jap exec -T app env -u JAP_SUBMIT_ENABLED pytest -q tests/test_apply.py ...`.

@@ -78,6 +78,7 @@ function problems(run: Run): [string, string] {
   if (c.spend_cap_reached) out.push('AI limit reached')
   if (c.daily_cap_reached) out.push('Daily sending limit reached')
   if (c.boards_on_hold?.length) out.push(`On hold after a rate limit: ${c.boards_on_hold.join(', ')}`)
+  if (c.companies_on_hold?.length) out.push(`On hold after their own site refused JAP: ${c.companies_on_hold.join(', ')}`)
   if (c.draft_failed) out.push(`${c.draft_failed} answers not written (AI model failed)`)
   return out.length ? [out.join('; '), 'warn-text'] : ['None', 'muted']
 }

@@ -458,3 +458,18 @@ class AtsHold(Base):
     strikes: Mapped[int] = mapped_column(Integer, server_default="0")
     reason: Mapped[str | None] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(server_default=func.now())
+
+
+class CompanyHold(Base):
+    """A company whose own careers site answered 429 or 403 (V5, PRD 1.39): nothing is read
+    or submitted at that company until `until`, while the board's other companies go on.
+    `host` is the site that refused."""
+
+    __tablename__ = "company_hold"
+
+    company_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    until: Mapped[datetime]
+    strikes: Mapped[int] = mapped_column(Integer, server_default="0")
+    host: Mapped[str | None] = mapped_column(Text)
+    reason: Mapped[str | None] = mapped_column(Text)
+    updated_at: Mapped[datetime] = mapped_column(server_default=func.now())

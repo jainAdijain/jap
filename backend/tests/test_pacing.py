@@ -1,6 +1,7 @@
 """Automatic at volume (V2 to V7, PRD 1.29): random picks spread across companies, limits
-per company and per board, a hold on a board that answers 429 or 403, and the jobs that
-Automatic mode must never send on its own (checker flags, forms that ban AI help)."""
+per company and per board, a hold on a board that answers 429 or 403 (or on the company
+alone when its own site did, PRD 1.39), and the jobs that Automatic mode must never send on
+its own (checker flags, forms that ban AI help)."""
 
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -11,7 +12,7 @@ import psycopg
 import pytest
 
 from config import get_settings
-from database.models import AtsHold
+from database.models import AtsHold, CompanyHold
 from database.session import get_sessionmaker
 from pipeline import claude_writer
 from pipeline.apply import flow, pacing
@@ -162,9 +163,19 @@ def test_blocked_messages() -> None:
     assert not pacing.is_blocked(None)
 
 
+def _on_board(sql: psycopg.Connection[Any], listing: str) -> None:
+    """The job's form on Greenhouse's own site, not on the company's."""
+    sql.execute(
+        "UPDATE posting SET apply_url = 'https://job-boards.greenhouse.io/acme/jobs/1'"
+        " WHERE listing_id = %s",
+        (listing,),
+    )
+
+
 async def test_a_429_at_submit_holds_the_board_and_the_job_waits(
     setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    _on_board(sql, setup["listing"])
     _fake_form(monkeypatch, FORM)
     app_id = await _prepare(setup["listing"])
     sql.execute("UPDATE application SET status = 'applying' WHERE id = %s", (app_id,))
@@ -187,21 +198,139 @@ async def test_a_429_at_submit_holds_the_board_and_the_job_waits(
     assert again["wait_until"] == result["wait_until"]
 
 
-async def test_a_429_while_reading_the_form_is_a_board_block(
-    setup: dict[str, Any], monkeypatch: pytest.MonkeyPatch
+async def test_a_403_from_the_company_site_at_submit_holds_that_company_only(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """PRD 1.39: the apply link is the company's own site (example.com in these tests), so a
+    refusal there holds Acme, and Beta on the same board can still be sent to."""
+    _fake_form(monkeypatch, FORM)
+    app_id = await _prepare(setup["listing"])
+    sql.execute("UPDATE application SET status = 'applying' WHERE id = %s", (app_id,))
+
+    async def refused(*args: Any, **kwargs: Any) -> SubmitResult:
+        return SubmitResult(
+            False, False, False, error="The form page answered 403", host="example.com"
+        )
+
+    monkeypatch.setattr(flow, "submit_form", refused)
+    async with get_sessionmaker()() as session:
+        result = await flow.submit(session, app_id)
+    assert "wait_until" in result
+    assert sql.execute("SELECT count(*) FROM ats_hold").fetchone() == (0,)
+    held = sql.execute(
+        "SELECT c.name, h.strikes, h.host FROM company_hold h JOIN company c ON c.id = h.company_id"
+    ).fetchall()
+    assert held == [("Acme", 1, "example.com")]
+    async with get_sessionmaker()() as session:  # the next try waits for Acme's hold
+        assert (await flow.submit(session, app_id))["wait_until"] == result["wait_until"]
+        assert await pacing.ats_wait(session, "greenhouse", datetime.now(UTC)) is None
+        runs = await pacing.held_companies(session, datetime.now(UTC))
+    assert list(runs.values()) == ["Acme"]
+
+
+async def test_a_page_on_the_board_holds_the_board_whatever_the_apply_link(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The site of the page that answered, after redirects, decides; the link comes second."""
+    _fake_form(monkeypatch, FORM)
+    app_id = await _prepare(setup["listing"])
+    sql.execute("UPDATE application SET status = 'applying' WHERE id = %s", (app_id,))
+
+    async def refused(*args: Any, **kwargs: Any) -> SubmitResult:
+        return SubmitResult(
+            False, False, False, error="The form page answered 429", host="boards.greenhouse.io"
+        )
+
+    monkeypatch.setattr(flow, "submit_form", refused)
+    async with get_sessionmaker()() as session:
+        await flow.submit(session, app_id)
+    assert sql.execute("SELECT ats FROM ats_hold").fetchall() == [("greenhouse",)]
+    assert sql.execute("SELECT count(*) FROM company_hold").fetchone() == (0,)
+
+
+@pytest.mark.parametrize(
+    ("host", "board"),
+    [("job-boards.greenhouse.io", True), ("careers.acme.com", False), (None, False)],
+)
+async def test_a_429_while_reading_the_form_holds_whoever_refused(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], monkeypatch: pytest.MonkeyPatch,
+    host: str | None, board: bool,
+) -> None:  # fmt: skip
+    """No host from the page: the apply link's (example.com, the company's) is used."""
+
     async def blocked(url: str, screenshot: Path | None = None) -> FormRead:
-        raise FormError("The form page answered 429")
+        raise FormError("The form page answered 429", host=host)
 
     monkeypatch.setattr(flow, "read_form", blocked)
     async with get_sessionmaker()() as session:
         app_id = await flow.create_attempt(session, setup["listing"], None)
         url = await flow.snapshot(session, app_id)
-        with pytest.raises(flow.BoardBlocked):
+        with pytest.raises(flow.BoardBlocked) as caught:
             await flow.read_and_save(session, app_id, url)
-        until = await flow.board_hold(session, app_id, "The form page answered 429")
+        assert caught.value.host == host
+        until = await flow.board_hold(session, app_id, str(caught.value), caught.value.host)
         assert until is not None
         assert await flow.board_hold(session, app_id) == until
+    boards = sql.execute("SELECT count(*) FROM ats_hold").fetchone()
+    companies = sql.execute("SELECT count(*) FROM company_hold").fetchone()
+    assert (boards, companies) == (((1,), (0,)) if board else ((0,), (1,)))
+
+
+def test_which_pages_are_the_boards_own() -> None:
+    assert pacing.on_board("greenhouse", "job-boards.greenhouse.io")
+    assert pacing.on_board("greenhouse", "job-boards.eu.greenhouse.io")
+    assert pacing.on_board("lever", "jobs.lever.co")
+    assert pacing.on_board("ashby", "jobs.ashbyhq.com")
+    assert pacing.on_board("greenhouse", None)  # not known: the board, as before 1.39
+    assert not pacing.on_board("greenhouse", "www.acme.com")
+    assert not pacing.on_board("greenhouse", "jobs.acme.co")
+    assert not pacing.on_board("greenhouse", "notgreenhouse.io")
+    assert not pacing.on_board("ashby", "jobs.lever.co")
+
+
+async def test_a_company_on_hold_is_not_picked_and_the_rest_of_the_board_is(
+    setup: dict[str, Any], sql: psycopg.Connection[Any], api: httpx.AsyncClient,
+    events: list[tuple[str, dict[str, Any]]],
+) -> None:  # fmt: skip
+    _listing(sql, "Engineer", ext="b1", company="Beta")
+    _automatic(sql)
+    sql.execute(
+        "INSERT INTO company_hold (company_id, until, strikes)"
+        " SELECT id, now() + interval '1 hour', 1 FROM company WHERE name = 'Acme'"
+    )
+    assert _companies(sql, await _pick(api)) == ["Beta"]
+
+
+async def test_a_company_hold_grows_and_a_confirmed_submit_clears_it(
+    setup: dict[str, Any], sql: psycopg.Connection[Any]
+) -> None:
+    row = sql.execute("SELECT id FROM company WHERE name = 'Acme'").fetchone()
+    assert row is not None
+    now = datetime.now(UTC)
+    async with get_sessionmaker()() as session:
+        first = await pacing.record_company_block(session, row[0], "www.acme.com", "403")
+        assert timedelta(minutes=59) < first - now < timedelta(minutes=61)
+        assert await pacing.record_company_block(session, row[0], "www.acme.com", "403") == first
+        hold = await session.get(CompanyHold, row[0])
+        assert hold is not None
+        hold.until = now - timedelta(seconds=1)
+        second = await pacing.record_company_block(session, row[0], "www.acme.com", "403")
+        assert timedelta(hours=3, minutes=59) < second - now < timedelta(hours=4, minutes=1)
+        await pacing.clear_strikes(session, "greenhouse", row[0])
+        assert hold.strikes == 0
+
+
+async def test_a_company_that_kept_refusing_fails_naming_its_site(
+    setup: dict[str, Any], sql: psycopg.Connection[Any]
+) -> None:
+    async with get_sessionmaker()() as session:
+        app_id = await flow.create_attempt(session, setup["listing"], None)
+        await flow.snapshot(session, app_id)
+        await flow.board_hold(session, app_id, "The form page answered 403", "www.acme.com")
+        await flow.refused(session, app_id)
+    row = sql.execute("SELECT status, error FROM application WHERE id = %s", (app_id,)).fetchone()
+    assert row is not None and row[0] == "failed"
+    assert row[1].startswith("Acme's own careers site kept refusing JAP (429 or 403)")
 
 
 AI_BAN = FormField(
