@@ -193,8 +193,7 @@ bounded() {
 	"$@" &
 	pid=$!
 	(
-		sleep "$s"
-		kill_tree "$pid"
+		sleep "$s" && kill_tree "$pid" # && as in call_harness (JAP-14)
 	) >/dev/null 2>&1 &
 	wd=$!
 	wait "$pid"
@@ -300,10 +299,14 @@ call_harness() {
 		"$ROOT/agent/harnesses/$name.sh" prompt.md) \
 		>"$dir/harness.log" 2>&1 &
 	pid=$!
+	# Only a sleep that ran its full time stops the session. kill_tree stops the watchdog's
+	# sleep before the watchdog itself, and without the && the watchdog went on to mark a
+	# session that had worked as timed out (JAP-14: about one run in two on Linux).
 	(
-		sleep $((TIMEOUT_MIN * 60))
-		echo timeout >"$dir/timed-out"
-		kill_tree "$pid"
+		sleep $((TIMEOUT_MIN * 60)) && {
+			echo timeout >"$dir/timed-out"
+			kill_tree "$pid"
+		}
 	) >/dev/null 2>&1 &
 	wd=$!
 	wait "$pid"
