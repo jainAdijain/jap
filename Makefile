@@ -162,19 +162,22 @@ email-test: ## Send one test email from the mailbox in .env: make email-test TO=
 code-mail-check: ## Log in to the mailbox over IMAP and count Greenhouse emails (security codes)
 	$(COMPOSE) exec app python -m pipeline.apply.security_code
 
+# RUN=<stamp>: the runner's run, so the door's span goes inside that run's trace (PRD 1.38, O26).
+RUN_STAMP = $(if $(RUN),-e JAP_RUN_STAMP=$(RUN))
+
 reader-export: ## One batch of unread postings for the AI reader, redacted, as JSON (PRD 1.25): LIMIT=50 SHARD=1/8
-	@$(COMPOSE) exec -T app python -m pipeline.claude_reader export --limit $(or $(LIMIT),50) --shard $(or $(SHARD),1/1)
+	@$(COMPOSE) exec -T $(RUN_STAMP) app python -m pipeline.claude_reader export --limit $(or $(LIMIT),50) --shard $(or $(SHARD),1/1)
 
 reader-import: ## The AI reader's fields back in, checked: make reader-import FILE=fields.json
 	@test -f "$(FILE)" || { echo "Usage: make reader-import FILE=fields.json"; exit 1; }
-	@$(COMPOSE) exec -T app python -m pipeline.claude_reader import < "$(FILE)"
+	@$(COMPOSE) exec -T $(RUN_STAMP) app python -m pipeline.claude_reader import < "$(FILE)"
 
 writer-export: ## Jobs at Needs you for the AI writer, redacted, as JSON (PRD 1.22)
-	@$(COMPOSE) exec -T app python -m pipeline.claude_writer export
+	@$(COMPOSE) exec -T $(RUN_STAMP) app python -m pipeline.claude_writer export
 
 writer-import: ## The AI writer's answers back in: make writer-import FILE=answers.json
 	@test -f "$(FILE)" || { echo "Usage: make writer-import FILE=answers.json"; exit 1; }
-	@$(COMPOSE) exec -T app python -m pipeline.claude_writer import < "$(FILE)"
+	@$(COMPOSE) exec -T $(RUN_STAMP) app python -m pipeline.claude_writer import < "$(FILE)"
 
 reader-status: ## One line for the runner: run_active, unread postings, open pairs (PRD 1.30)
 	@$(COMPOSE) exec -T app python -m pipeline.claude_reader status

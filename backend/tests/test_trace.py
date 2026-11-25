@@ -10,6 +10,7 @@ import sys
 import uuid
 from collections.abc import Iterator
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import httpx
@@ -24,7 +25,8 @@ from database.session import get_sessionmaker
 from llm import PersonalDataBlocked, SpendCapReached, call
 from llm.redact import Redaction, Sensitive
 from observability import context, trace, writer
-from pipeline import agent_doors, agent_run_trace, claude_reader, claude_writer
+from pipeline import agent_doors, agent_run_trace, apply_trace, claude_reader, claude_writer
+from pipeline.apply import pacing
 from schemas.resume import ParsedResume
 from tests.test_llm_call import GOOD, RESUME
 from tests.test_redact import ME
@@ -625,3 +627,103 @@ def test_a_run_trace_that_cannot_be_sent_is_said_so_the_runner_keeps_it(
     assert _hand_over(reader, monkeypatch) == 0
     assert capsys.readouterr().out == "off\n" and len(stub.requests) == 1
     get_settings.cache_clear()
+
+
+# 1.38 (O26) ------------------------------------------------------------------------------
+
+
+async def test_a_door_the_runner_called_sits_inside_its_runs_trace(
+    db: str,
+    sql: psycopg.Connection[Any],
+    service: Service,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """One run, one trace: the export's span is a child of the run's root span, not a trace
+    of its own. By hand, with no stamp, it stays a trace of its own."""
+    reader, _ = _runs()
+    stamp = reader["stamp"]
+    monkeypatch.setenv("JAP_RUN_STAMP", stamp)
+    await claude_writer._main("export")
+    monkeypatch.setenv("JAP_RUN_STAMP", "not a stamp")
+    await claude_writer._main("export")
+    capsys.readouterr()
+    doors = links(service.sent())
+    built = agent_run_trace.tree({**reader, "job": "writer"})
+    assert built is not None
+    key, _ = built
+    run_trace, run_span = trace._digest(f"jap:{key}", 16), trace._digest(f"jap:{key}/run", 8)
+    (name, trace_id, _, parent), (_, other_trace, _, no_parent) = doors
+    assert name == "door.writer.export"
+    assert (trace_id, parent) == (run_trace, run_span)
+    assert other_trace != run_trace and no_parent is None
+    attrs = [a for _, a, _ in service.spans()]
+    assert attrs[0][M + "run_stamp"] == stamp and M + "run_stamp" not in attrs[1]
+
+
+def test_a_session_says_what_an_item_cost_and_the_input_not_cached(
+    service: Service, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    reader, _ = _runs()
+    assert _hand_over(reader, monkeypatch) == 0
+    got = {name: attrs for name, attrs, _ in service.spans()}
+    session, run = got["session.reader"], got["run.reader"]
+    s = reader["sessions"][0]
+    handed = s["items"]["postings"] + s["items"]["pairs"]
+    assert session[M + "tokens_per_item"] == s["tokens"]["in"] // handed
+    assert session[M + "uncached_tokens_in"] == s["tokens"]["in"] - s["tokens"]["cache_read"]
+    totals = reader["totals"]
+    assert run[M + "uncached_tokens_in"] == totals["tokens_in"] - totals["cache_read"]
+
+
+@pytest.mark.parametrize(
+    ("error", "code"),
+    [
+        ("The form page answered 403", "form_403"),
+        ("No application form found on the page", "no_form"),
+        ("Submitted, but the page did not confirm the application", "no_confirmation"),
+        ("Submit outcome unknown", "outcome_unknown"),
+        ('No option "No experience" for "How would you describe..."', "option_missing"),
+        ("Locator.fill: Cannot type text into input[type=number]", "fill_error"),
+        ("No confirmation email within 14 days", "expired"),
+        ("argument of type 'int' is not iterable", "other"),
+        (None, "other"),
+    ],
+)
+def test_why_an_application_failed_is_a_code(error: str | None, code: str) -> None:
+    assert apply_trace.failure_code(error) == code
+    assert code in trace.FAILURES
+
+
+async def test_an_application_sent_or_failed_is_a_span_of_counts_and_codes(
+    service: Service, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """O26: why it failed as a code, never its error; and of the writer's answers, how many
+    were changed before it went."""
+
+    async def ats(session: Any, app: Any) -> str:
+        return "ashby"
+
+    monkeypatch.setattr(pacing, "ats_of", ats)
+    app = SimpleNamespace(
+        id=uuid.uuid4(), posting_id=uuid.uuid4(), run_id=None, mode="review", attempts=1,
+        submit_started_at=None, hold_reason=None, created_at=None,
+        error="Submitted, but Asha Rao's page at acme.example did not confirm",
+        answers={"why": "I build payment APIs at Acme.", "notice": "Immediately", "x": "1"},
+        writer_answers={"why": "I build payment APIs.", "notice": "Immediately"},
+    )  # fmt: skip
+    await apply_trace.failed(None, app)  # type: ignore[arg-type]
+    await apply_trace.sent(None, app)  # type: ignore[arg-type]
+    (failed, f, failed_ok), (sent, s, _) = service.spans()
+    assert (failed, failed_ok, f[M + "failure"], f[M + "ats"]) == (
+        "apply.failed",
+        False,
+        "no_confirmation",
+        "ashby",
+    )
+    assert f[M + "apply_mode"] == "review" and f[M + "pressed"] == 0
+    assert sent == "apply.sent"
+    assert (s[M + "answers"], s[M + "writer_answers"], s[M + "edited"]) == (3, 2, 1)
+    body = service.sent().lower()
+    for text in ("asha", "acme", "payment", "immediately", "did not confirm"):
+        assert text.encode() not in body

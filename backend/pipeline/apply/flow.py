@@ -35,6 +35,7 @@ from llm import PersonalDataBlocked, SpendCapReached
 from llm.client import ModelCallError, OutOfCredits
 from observability import context
 from observability.logs import event
+from pipeline import apply_trace
 from pipeline.apply import fields as rules
 from pipeline.apply import pacing, security_code
 from pipeline.apply.answers import bank_answer, draft_answer, pick_option
@@ -781,6 +782,7 @@ async def submit(session: AsyncSession, app_id: str) -> dict[str, Any]:
     await pacing.clear_strikes(session, await pacing.ats_of(session, app))
     await session.commit()
     event(log, "apply.submitted", "Submitted and confirmed", keep=True)
+    await apply_trace.sent(session, app)  # O26
     return {"status": "applied"}
 
 
@@ -795,6 +797,7 @@ async def fail(session: AsyncSession, app: Application, error: str) -> None:
     if app.run_id:
         await bump(session, app.run_id, "failed")
     await session.commit()
+    await apply_trace.failed(session, app)  # O26
 
 
 async def fail_by_id(session: AsyncSession, app_id: str, error: str) -> None:

@@ -11,7 +11,8 @@
 #   FAKE_EDIT_INPUT=1  as the writer, change in.json, which a harness should only read
 #   FAKE_REASONS=1     as the writer, leave the first job out and say why in reasons.json
 #                      (PRD 1.34, O24), with words in it that are not codes; as the checker,
-#                      call each job fixed. FAKE_REASONS=silent: leave it out and say nothing
+#                      call each job fixed. FAKE_REASONS=silent: leave it out and say nothing.
+#                      FAKE_REASONS=held: writer and checker both hold every job, ai_banned
 set -u
 . "$(dirname "$0")/common.sh"
 out=$(mktemp)
@@ -40,6 +41,11 @@ if "JAP reader job" in prompt:
     wrote = "out.json"
 elif "JAP writer job" in prompt:
     out = {j["application_id"]: {q["key"]: "ok" for q in j["questions"]} for j in data["jobs"]}
+    if os.environ.get("FAKE_REASONS") == "held":
+        for k in out:
+            out[k]["_review"] = "SECRET the form bans AI help"
+        json.dump({k: {"outcome": "held", "why": ["ai_banned"]} for k in out},
+                  open("reasons.json", "w"))
     if os.environ.get("FAKE_REASONS") in ("1", "silent") and out:
         first, *rest = out
         del out[first]
@@ -61,6 +67,9 @@ else:
     open("findings.txt", "w").write("".join(f"{k}: ok\n" for k in draft))
     if os.environ.get("FAKE_REASONS") == "1":
         json.dump({k: {"outcome": "fixed", "why": "unsupported_claim"} for k in draft},
+                  open("reasons.json", "w"))
+    if os.environ.get("FAKE_REASONS") == "held":
+        json.dump({k: {"outcome": "held", "why": ["ai_banned"]} for k in draft},
                   open("reasons.json", "w"))
     wrote = "out.json"
 said = os.environ.get("FAKE_SAY") or "fake harness done"

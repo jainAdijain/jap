@@ -139,6 +139,21 @@ LOADED = ("tools", "mcp_servers", "plugins", "skills", "agents")
 CHECKED = ("ok", "fixed", "held", "left_out")
 WAITING = ("unread", "pairs", "jobs", "resumes")
 STAMP = re.compile(r"^\d{8}-\d{6}-\d{1,8}$")
+# From 1.38 (O26): an application sent or failed. Its job site, how it was applied, and why
+# it failed, as a code (pipeline/apply_trace.py turns the error into one).
+ATS = ("greenhouse", "lever", "ashby", "other")
+APPLY_MODES = ("review", "automatic")
+FAILURES = (
+    "form_403",
+    "no_form",
+    "no_confirmation",
+    "outcome_unknown",
+    "option_missing",
+    "fill_error",
+    "expired",
+    "sending_off",
+    "other",
+)
 COUNTS = (
     "attempt",
     "latency_ms",
@@ -198,6 +213,15 @@ COUNTS = (
     "longest_line",
     "fields",
     "unknown",
+    # From 1.38 (O26): what an item cost, the input not read from a cache, and an application
+    # sent or failed: its answers, those the AI writer gave, those I changed before it went,
+    # and whether Submit was pressed.
+    "tokens_per_item",
+    "uncached_tokens_in",
+    "answers",
+    "writer_answers",
+    "edited",
+    "pressed",
 )
 LOCAL_HOSTS = ("localhost", "127.0.0.1", "host.docker.internal")
 MAX_QUEUE = 1_000
@@ -277,6 +301,9 @@ FIELDS: dict[str, tuple[str, Check]] = {
     "checker": (META + "checker", _name),
     "harness_version": (META + "harness_version", _name),
     "run_stamp": (META + "run_stamp", _stamp),
+    "ats": (META + "ats", _one_of(ATS)),
+    "apply_mode": (META + "apply_mode", _one_of(APPLY_MODES)),
+    "failure": (META + "failure", _one_of(FAILURES)),
     **{name: (META + name, _count) for name in COUNTS},
     **_counts(REASONS, "not_saved_{}"),
     **_counts(CAUSES, "cause_{}"),
@@ -458,11 +485,26 @@ def _attrs(kind: Kind, fields: dict[str, Any]) -> dict[str, Value]:
     return attrs
 
 
+def within(key: str, parent: str = "run") -> tuple[bytes, bytes, bytes]:
+    """The ids that put one span under a span of a trace sent whole (send_tree): that
+    trace's id, a new id of its own, and its parent's (1.38: an export or import called by
+    the runner sits inside the run's trace)."""
+    return _digest(f"jap:{key}", 16), os.urandom(8), _digest(f"jap:{key}/{parent}", 8)
+
+
 def record(
-    name: str, kind: Kind, started: float, ended: float, *, ok: bool = True, **fields: Any
+    name: str,
+    kind: Kind,
+    started: float,
+    ended: float,
+    *,
+    ok: bool = True,
+    ids: tuple[bytes, bytes, bytes | None] | None = None,
+    **fields: Any,
 ) -> dict[str, Value]:
     """One span of AI work, from `started` to `ended` (clock seconds): queued for the trace
-    service when one is set. Returns the attributes as they are sent, after the allow-list."""
+    service when one is set. Returns the attributes as they are sent, after the allow-list.
+    ids (within()) puts it inside another trace; without them it is a trace of its own."""
     try:
         settings = get_settings()
         attrs = _attrs(kind, fields)
@@ -470,8 +512,9 @@ def record(
         if to is None or not NAME.match(name):
             return attrs
         _ensure_thread()
+        span = _span(name, started, ended, ok, attrs, ids)
         try:
-            _queue.put_nowait((*to, settings.jap_env, _span(name, started, ended, ok, attrs)))
+            _queue.put_nowait((*to, settings.jap_env, span))
         except queue.Full:
             _warn("the send queue is full")
         return attrs

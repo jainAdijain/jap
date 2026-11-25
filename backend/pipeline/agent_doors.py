@@ -8,11 +8,17 @@ span (observability/trace.py): how many items went out and how big the export wa
 came back, how many were saved, and why the others were not, as codes from a fixed list.
 Counts only: no id of a posting or an application, no title, no question, no answer.
 
+From 1.38 (O26) an export or import the runner calls carries its run's stamp
+(JAP_RUN_STAMP, from make ... RUN=<stamp>) and its span is sent inside that run's trace, under
+the run, instead of as a trace of its own: one run is one trace, and the free plan's traces
+a month are not spent on doors. Called by hand, with no stamp, it is a trace of its own.
+
 The import's own lines ("<id>: not saved (missing: skills)") stay as they are for whoever
 reads them; reason() turns each into its code. Nothing here may fail a door: record() and
 done() swallow their own errors.
 """
 
+import os
 import sys
 import time
 from collections import Counter
@@ -129,7 +135,13 @@ def record(job: str, door: str, started: float, counts: dict[str, int]) -> None:
                 }
             )
         fields: dict[str, Any] = {"job": job, "door": door, "latency_ms": ms, **counts}
-        trace.record(f"door.{job}.{door}", "chain", started, ended, mode="agent", **fields)
+        stamp = os.environ.get("JAP_RUN_STAMP", "")
+        ids = None
+        if trace.STAMP.match(stamp):  # the runner's: inside its run's trace (agent_run_trace)
+            ids = trace.within(f"{get_settings().jap_env}:{job}:{stamp}")
+            fields["run_stamp"] = stamp
+        name = f"door.{job}.{door}"
+        trace.record(name, "chain", started, ended, mode="agent", ids=ids, **fields)
     except Exception as exc:  # the count is not worth a failed export or import
         print(f"jap trace: {type(exc).__name__}: {exc}", file=sys.stderr)
 

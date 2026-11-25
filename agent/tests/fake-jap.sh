@@ -15,6 +15,9 @@ lock = open(state_file + ".lock", "w")
 fcntl.flock(lock, fcntl.LOCK_EX)
 state = json.load(open(state_file))
 target, args = sys.argv[1], dict(a.split("=", 1) for a in sys.argv[2:])
+if "RUN" in args:  # PRD 1.38: the run an export or import belongs to
+    with open(state_file + ".runs", "a") as f:
+        f.write(f"{target} {args['RUN']}\n")
 
 def save():
     json.dump(state, open(state_file, "w"))

@@ -362,7 +362,7 @@ reader_worker() {
 		b="$RUN/reader-$i-of-$n/batch-$k"
 		mkdir -p "$b"
 		t=$(date +%s)
-		jap "$b/in.json" "$b/export.err" reader-export SHARD="$i/$n" LIMIT="$BATCH"
+		jap "$b/in.json" "$b/export.err" reader-export SHARD="$i/$n" LIMIT="$BATCH" RUN="$STAMP"
 		rc=$?
 		stamp "$b" export "$t" "$rc"
 		if [ "$rc" -ne 0 ]; then
@@ -386,7 +386,7 @@ reader_worker() {
 			return 1
 		fi
 		t=$(date +%s)
-		jap "$b/import.txt" "$b/import.err" reader-import FILE="$b/out.json"
+		jap "$b/import.txt" "$b/import.err" reader-import FILE="$b/out.json" RUN="$STAMP"
 		stamp "$b" import "$t" "$?"
 		cat "$b/import.err" >>"$b/import.txt"
 		saved=$(sed -n 's/^saved \([0-9][0-9]*\) of [0-9][0-9]*$/\1/p' "$b/import.txt" | tail -1)
@@ -483,7 +483,7 @@ run_writer() {
 	fi
 	mkdir -p "$b"
 	t=$(date +%s)
-	jap "$b/in.json" "$b/export.err" writer-export
+	jap "$b/in.json" "$b/export.err" writer-export RUN="$STAMP"
 	rc=$?
 	stamp "$b" export "$t" "$rc"
 	if [ "$rc" -ne 0 ]; then
@@ -542,7 +542,7 @@ run_writer() {
 	fi
 	handed "$b/out.json"
 	t=$(date +%s)
-	jap "$b/import.txt" "$b/import.err" writer-import FILE="$b/out.json"
+	jap "$b/import.txt" "$b/import.err" writer-import FILE="$b/out.json" RUN="$STAMP"
 	stamp "$b" import "$t" "$?"
 	cat "$b/import.err" >>"$b/import.txt"
 	sed 's/^/  import: /' "$b/import.txt" | tee -a "$LOG"

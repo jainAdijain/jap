@@ -224,6 +224,29 @@ J7=77777777-7777-4777-8777-777777777777 J8=88888888-8888-4888-8888-888888888888
 case_run handed "{'unread': [], 'pairs': [], 'jobs': ['$J7', '$J8']}" writer FAKE_REASONS=silent
 check "the jobs handed out go back with the answers, and JAP says which it noted as left out" '[ "$rc" = 0 ] && [ "$(state "[\"left_out\"]")" = "[\"$J7\"]" ] && grep -q "import: left out: 1 jobs not handed out again" "$TMP/handed.out" && [ "$(trace "$got" "[(s[\"role\"], s[\"items\"][\"left_out\"]) for s in t[\"sessions\"]]")" = "[('"'"'writer'"'"', 1), ('"'"'checker'"'"', 0)]" ]'
 
+# 1.38 (O26): every export and import names its run, so JAP puts its span in the run's trace;
+# a held job counts once in the run's reasons; a writer run carries no reader numbers.
+rm -f "$FAKE_STATE.runs"
+case_run stamped "$ONE" writer
+stampof=$(basename "$got" -writer.json)
+check "every export and import names the run it belongs to" '[ "$(cut -d" " -f1 "$FAKE_STATE.runs" | tr "\n" " ")" = "writer-export writer-import " ] && [ "$(cut -d" " -f2 "$FAKE_STATE.runs" | sort -u)" = "$stampof" ]'
+check "a writer run carries no reader shards or batch size" '[ "$(trace "$got" "t[\"shards\"], t[\"batch\"]")" = "None None" ]'
+case_run heldtwice "{'unread': [], 'pairs': [], 'jobs': ['$J7', '$J8']}" writer FAKE_REASONS=held
+check "a job held by the writer and the checker counts once in the run" '[ "$(trace "$got" "t[\"totals\"][\"why\"]")" = "{'"'"'ai_banned'"'"': 2}" ]'
+python3 - "$HERE/fixtures/devin-atif.json" "$TMP/devin-denied.json" <<'PY2'
+import json, sys
+d = json.load(open(sys.argv[1]))
+step = next(s for s in d["steps"] if any(c["tool_call_id"] == "call-3" for c in s.get("tool_calls", [])))
+step["tool_calls"].append({"tool_call_id": "call-9", "function_name": "edit",
+                           "arguments": {"file_path": "in.json", "content": "SECRET"}})
+step["observation"]["results"].append({"source_call_id": "call-9",
+                                       "content": "SECRET words of another shape: not allowed"})
+json.dump(d, open(sys.argv[2], "w"))
+PY2
+rm -rf "$TMP/read" && mkdir "$TMP/read"
+(cd "$TMP/read" && python3 "$ROOT/agent/trace.py" read devin --record "$TMP/devin-denied.json" --ended 1795432711)
+check "Devin: a write to in.json, which its settings deny, is counted refused whatever it answered" '[ "$(trace "$TMP/read/steps.json" "t[\"denied\"], [x[\"ok\"] for x in t[\"steps\"] if x.get(\"file\") == \"in.json\" and x[\"tool\"] == \"edit\"]")" = "2 [False]" ]'
+
 case_run edited "$ONE" writer FAKE_EDIT_INPUT=1
 edited=$(ls -d "$TMP"/work/*-writer/writer | tail -1)
 check "a harness that changes its in.json is named, and the checker gets the export as JAP gave it" '[ "$rc" = 0 ] && grep -q edited_by_the_harness "$edited/in.json" && ! grep -q edited_by_the_harness "$edited/check/in.json" && grep -q "The writer changed its in.json" "$TMP/edited.out" && [ "$(trace "$got" "[(s[\"role\"], s[\"input_changed\"]) for s in t[\"sessions\"]], t[\"totals\"][\"input_changed\"]")" = "[('"'"'writer'"'"', True), ('"'"'checker'"'"', False)] 1" ]'
