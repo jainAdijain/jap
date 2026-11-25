@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.29.0 (Each AI run's trace sent to the trace service; why a job was left out, in codes), 24 Nov 2026.**
+**Version 0.30.0 (AI runs that finish, and an email when one does not), 25 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -447,7 +447,9 @@ Settings, in `.env.live` (see `.env.example`): `JAP_HARNESS` (`claude`, `codex`,
 `JAP_AGENT_SHARDS` (8 reader shards in parallel), `JAP_AGENT_BATCH` (10 postings per reader
 batch), `JAP_AGENT_TIMEOUT_MIN` (20 minutes per harness session), `JAP_AGENT_TRACE` (0 = do
 not ask the harness for a record of its session), `JAP_AGENT_SEND_S` (60 seconds JAP may
-take over a run's trace before the runner keeps it for the next run) and
+take over a run's trace before the runner keeps it for the next run), `JAP_AGENT_CALL_S`,
+`JAP_AGENT_CALL_TRIES` and `JAP_AGENT_RETRY_S` (each call to JAP stopped after 120 seconds,
+and one that did not reach JAP tried 3 times, 30 seconds apart) and
 `JAP_AGENT_READER_AT` / `JAP_AGENT_WRITER_AT` (07:05 and 07:30, the Mac's time). The writer has no batch size: one
 session takes everything that is waiting, and the checker session follows it.
 
@@ -455,10 +457,37 @@ session takes everything that is waiting, and the checker session follows it.
 pause the two JAP tasks under Scheduled in the Claude app so nothing runs twice. `make
 ENV=live agent-status` shows both jobs and their last runs. Each run's log stays in
 `data-live/agent/runs/` for 30 days; its batch folders sit in the temp folder, outside the
-repo, for 3 days (`JAP_AGENT_WORK_DIR` moves them). The jobs run under `caffeinate -i` so
-the Mac cannot idle sleep while one is going — it cannot stop the lid being closed on
-battery, so keep the Mac on power — and keep any `DOCKER_HOST` the schedule was installed
-with. `docs/failures.md`, the log of failed applications and the lessons from them that every
+repo, for 3 days (`JAP_AGENT_WORK_DIR` moves them). The jobs run under `caffeinate -is` so
+the Mac cannot idle sleep while one is going, nor sleep at all while it is on power — it
+cannot stop the lid being closed on battery — and keep any `DOCKER_HOST` the schedule was
+installed with.
+
+**Runs that finish** (PRD 1.35, from v0.30.0). Three of five mornings, 21 to 25 Nov 2026, broke
+because the runner was on a Mac asleep on battery: macOS woke it for 20 seconds every 10
+minutes, so a run crept on in slices, and each export hung on a dead ssh connection to the
+VM for half an hour before it failed. Now:
+
+- Every call to JAP (status, export, import) is stopped after 2 minutes, and one that did not
+  reach JAP (stopped at that limit, or ssh or Docker failed) is tried again, 3 tries, 30
+  seconds apart. One JAP answered, even with an error, is not, since trying again would
+  change nothing. A retried import is safe: what was already saved answers "already read" or
+  "not answered".
+- A call that never reached JAP no longer reads `export_failed` or `import_failed`: the cause
+  is `slept` when the Mac slept during it (`kern.waketime`), else `unreachable`. Those two
+  now mean that JAP itself answered with an error.
+- The schedule tries each job again every hour, at the same minute, until 22:00, until one
+  run of it has finished that day (done, nothing to do, or stopped at the usage limit), so a
+  morning lost to a sleeping Mac is made up the first hour it is awake. A scheduled run does
+  not start in a dark wake (the Mac awake for a few seconds with no display, which
+  `pmset -g systemstate` shows as no Graphics), and a try on a day already done does
+  nothing and leaves no run log. Run `make ENV=live agent-schedule` once to install the
+  hourly tries. A run by hand is not affected.
+- **An email when a run breaks** (O25): when the runner hands a run's trace to JAP, JAP
+  emails the address on My profile if the run failed, stopped at the usage limit, or (the
+  reader) saved nothing while postings waited. One a day for each job, so a broken morning's
+  hourly tries send one email; counts, causes and what to do for each, never text from the
+  run. It goes with the trace, so when the Mac cannot reach JAP it goes once it can.
+  `JAP_ALERTS_ENABLED=false` sends none. `docs/failures.md`, the log of failed applications and the lessons from them that every
 harness keeps, is copied into every batch folder for the harness to read; it is not in git,
 holds no personal data and never overrides the job prompt (`JAP_FAILURES_FILE` moves it).
 
@@ -467,7 +496,7 @@ no prompt, job text, resume, answer or reply is kept in a trace.
 
 - The runner times each export, session and import and, when a session fails, names the
   cause in the run log: `not_logged_in`, `slept`, `timeout`, `usage_limit`, `no_output`,
-  `export_failed` or `import_failed`. Before 1.33 the first, second and fifth all read
+  `export_failed`, `import_failed` or (from 1.35) `unreachable`. Before 1.33 the first, second and fifth all read
   "wrote no out.json (exit 1)".
 - Where the harness gives a record of its own session, each model request (time, tokens in
   and out, cached tokens) and each tool call (which tool, which file of the batch folder,
@@ -563,7 +592,8 @@ Some subscriptions do not allow unattended use: check your plan's terms.
   (also when the form couldn't even be read), and **Retry**.
 - **Alert emails** go to the address on My profile, once each: when a run fails, when a board
   in a run can't be fetched, when an application ends Failed (with the screenshot attached),
-  and when the weekly form test can't read a form. They never carry answers or letters.
+  when the weekly form test can't read a form, and (from v0.30.0) when an AI reader or writer
+  run fails, stops at the usage limit or reads nothing (once a day for each job). They never carry answers or letters.
 - **Spend cap**: My profile has an **AI spend** card with this month's spend and the monthly cap
   ($2, or `JAP_MONTHLY_COST_CAP_USD`). Once it is reached, model steps stop: job descriptions
   aren't read, answers aren't drafted, and no cover letter is written, so a job that needs
@@ -880,6 +910,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.30.0 | 25 Nov 2026 | AI runs that finish, and an email when one does not (PRD 1.35: AH4, AH6, O18, O25). Found from the runs of 21 to 25 Nov 2026 and the Mac's power log: the runner ran on a Mac asleep on battery, woken 20 seconds every 10 minutes, and every export hung half an hour on a dead ssh connection. **Calls to JAP**: `agent/run.sh` stops each status, export and import after 2 minutes (`JAP_AGENT_CALL_S`) and tries one that did not reach JAP again, 3 tries 30 seconds apart (`JAP_AGENT_CALL_TRIES`, `JAP_AGENT_RETRY_S`); one JAP answered is not retried. **Causes**: `unreachable` is new, and a call that never reached JAP is `slept` (the Mac woke after it began) or `unreachable`, no longer `export_failed` or `import_failed`. **Schedule**: `agent/schedule.sh` tries each job every hour until 22:00 until one run of it has finished that day, a scheduled run does not start in a dark wake, and runs keep the Mac awake on power (`caffeinate -is`); reinstall with `make ENV=live agent-schedule`. **Alert** (O25): `backend/pipeline/agent_run_alert.py`, called by the trace door, emails when a run failed, hit the usage limit, or read nothing, once a day per job. `make test-agent` grows from 84 to 96 checks; new backend tests in `test_agent_run_alert.py`. |
 | 0.29.0 | 24 Nov 2026 | The trace of AI work, third of three releases (PRD 1.34: O22, O24, and O20 completed). **The runner's trace is sent**: after each run `agent/run.sh` hands the run's trace file to JAP (`make agent-trace-send`, `backend/pipeline/agent_run_trace.py`), which sends it as one trace: the run, each session with its export and import, each model request and tool call. It passes the same allow-list as every other span, so a trace file with text in it sends none of it, and no application or posting id goes out. The runner never holds the service's key. A trace that could not be sent stays marked `.unsent` beside its file and is handed over again at the start of the next run; handing over is stopped after a minute and never changes how a run ends. `observability/trace.py` gains `send_tree` (parents and children, ids worked out from the run's stamp, so a second send carries the same ids) and the fields of a run on its allow-list. **Why a job was left out, in codes**: the writer and checker prompts (version 1.3) ask for `reasons.json`, what happened to each job, why, and which kind of fact the answer bank lacked, from fixed lists; the runner keeps only those codes for ids of the export, counts the jobs left out itself, and writes a line per job to the run log. **O20**: a session's trace names the job prompt's version and the contract version. `make test-agent` grows from 67 to 84 checks, one of which keeps the codes the same in the prompts, the runner and the sender. Tried against LangSmith from the local stack with the tests' two stand-in runs (accepted, 9 and 15 spans); not yet by a run with a real harness. |
 | 0.28.0 | 24 Nov 2026 | The trace of AI work, second of three releases (PRD 1.33: O17 level 1, O19, O22, O23). **A sender**: `backend/observability/trace.py` is the only module that talks to a trace service, as OpenTelemetry traces over HTTPS with no service's library, off unless `JAP_TRACE_ENDPOINT` and `JAP_TRACE_HEADERS` are both set (LangSmith's free plan first). It takes fields by name and lets through only numbers, JAP's ids, values from fixed lists and short identifiers such as a model name, so no prompt, job text, answer, company or title can be sent; a test fails the build if text gets through. It never delays or fails the work: spans are queued and posted by a background thread, and a post that fails is dropped. **Model calls JAP makes itself** (`api` mode): each `llm_call` row now also holds the posting, the provider that served it, the attempt, cached and reasoning tokens and how it ended (`valid`, `retried`, `blocked`, `spend_cap`, `error`), and the same goes out as one span per call, the calls of one application or one run grouped. **JAP's doors**: every reader and writer export and import leaves one `log_event` row (`agent.export`, `agent.import`) and one span with counts only: items handed out, the export's size, items saved, and why the others were not, as codes. The runner takes the trace settings out of a harness's environment. Migration `0014_llm_call_trace`. Tried against LangSmith on 24 Nov 2026: a span was accepted and shows there as a model run with its tokens and JAP's fields, and no input or output text. The runner's own traces are sent in the next release |
 | 0.27.0 | 24 Nov 2026 | AI runs leave a trace (PRD 1.33, O16 to O21, first of three releases; nothing leaves the Mac yet). `agent/trace.py` and the runner record every reader, writer and checker session in numbers only: start, end, exit, what the import saved, and one named cause when it failed (`not_logged_in`, `slept`, `timeout`, `usage_limit`, `no_output`, `export_failed`, `import_failed`), where three different failures on 21 to 23 Nov all read "wrote no out.json". Where the harness gives a record of its session, each model request and tool call is kept with its time and tokens, and the run log and `make agent-status` show them; a harness without one gets an estimate from the file sizes. One trace file per run in `data*/agent/traces/` (30 days), one per session in its batch folder. A fifth adapter, for Devin's command line tool. A usage limit is read from the harness's record or its failing last words: Claude Code's "You've hit your weekly limit" was not recognised before, and a reply that quoted the word quota stopped a run. `JAP_AGENT_TRACE=0` runs the harnesses as before. The Devin adapter runs under JAP's own settings file (no shell, no web, `in.json` read-only), and the checker always gets the export as JAP gave it. Proven by a run: Devin (`make agent-check HARNESS=devin`) and Claude Code's limit reply; the other records are read from each tool's documents until `make agent-check` proves them |
