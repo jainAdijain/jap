@@ -1,9 +1,10 @@
 # agent/: JAP's AI work on any harness
 
-Version 1.5, 25 Nov 2026 · follows PRD 1.35 (AH1 to AH9, O16 to O25) · code v0.30.0
+Version 1.6, 25 Nov 2026 · follows PRD 1.36 (AH1 to AH10, O16 to O25) · code v0.31.0
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.6 | 25 Nov 2026 | Every text read whole (AH10): `wrap.py` moves each string of `in.json` over 600 characters into `text/`, wrapped at 100 characters, leaving `"@text/<file>"`; prompts reader 1.1, writer and checker 1.4. The trace adds `sizes.longest_line`, and `items.fields` and `items.unknown` for a reader |
 | 1.5 | 25 Nov 2026 | Runs that finish (PRD 1.35). Every call to JAP has a time limit (`JAP_AGENT_CALL_S`, 120 s) and one that did not reach JAP is tried again (3 tries, 30 s apart); a call that never reached it is `slept` or `unreachable`, not `export_failed` or `import_failed`. The schedule tries each job every hour until 22:00 until one run has finished that day (`JAP_AGENT_SCHEDULED=1`, `data*/agent/<job>.done`), does not start in a dark wake, and keeps the Mac awake on power. JAP emails when a run broke (O25) |
 | 1.4 | 24 Nov 2026 | The run's trace is handed to JAP, which sends it to the trace service; one that could not be sent waits as `<run>.unsent` and goes at the start of the next run (O22). The writer and checker say why in codes (`reasons.json`, O24; prompts 1.3): kept in the trace, a line per job in the run log, and the runner counts the jobs left out itself. A session's trace names the prompt's and the contract's version (O20) |
 | 1.3 | 23 Nov 2026 | Every run leaves a trace (PRD 1.33): `trace.py`, a `trace.json` per session and a file per run, a cause for each failed session, tokens and time in the run log and in `make agent-status`. An adapter for Devin. A usage limit is read from the harness's record or its failing last words, not searched for in everything it printed |
@@ -20,6 +21,7 @@ is everything between those commands and the harness you pay for. The README's
 make agent-run JOB=reader
   run.sh ── reader-status ── 8 shards in parallel, each:
   │           reader-export SHARD=i/8 LIMIT=10 > batch/in.json
+  │             └─ wrap.py: long text → batch/text/*.txt, wrapped (AH10)
   │           harnesses/$JAP_HARNESS.sh jobs/reader.md   (in batch/, writes out.json)
   │             └─ trace.py read: the harness's record → batch/steps.json (numbers only)
   │           reader-import FILE=batch/out.json          (until empty or nothing saved)
@@ -29,7 +31,7 @@ make agent-run JOB=reader
       agent-trace-send FILE=<that file>    (JAP sends it on; kept as .unsent when it cannot)
 
 make agent-run JOB=writer
-  run.sh ── writer-export > in.json
+  run.sh ── writer-export > in.json, then wrap.py (text/, also given to the checker)
             harness  jobs/writer.md  → draft.json + reasons.json
             checker  jobs/checker.md → out.json + findings.txt + reasons.json   (W8)
             writer-import FILE=out.json

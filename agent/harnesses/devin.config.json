@@ -7,7 +7,8 @@
       "Read(~/**)",
       "Write(in.json)",
       "Write(prompt.md)",
-      "Write(failures.md)"
+      "Write(failures.md)",
+      "Write(text/**)"
     ]
   },
   "disabled_tools": [

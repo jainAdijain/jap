@@ -29,6 +29,11 @@
 # The writer and the checker also say why they left a job out, held it or fixed it, in codes
 # from fixed lists (reasons.json, O24): the trace keeps them and the run log gets a line each.
 #
+# Text read whole (PRD 1.36, AH10). After each export agent/wrap.py moves every long string of
+# in.json (a job description, the resume, a prompt's rules) into a file of its own under
+# text/, wrapped at 100 characters a line, and leaves "@text/<file>" in its place: a harness
+# whose reader cuts long lines (Devin's, at 2,000) then reads all of it.
+#
 # Runs that finish (PRD 1.35, AH4, AH6). JAP is on the VM and the runner on the Mac, so every
 # call to JAP crosses ssh. Each has a time limit and one that did not reach JAP is tried again;
 # the trace then names why (slept, unreachable) instead of export_failed. A scheduled run does
@@ -315,6 +320,15 @@ call_harness() {
 	return "$rc"
 }
 
+# wrap <folder>: in.json's long text into text/, wrapped (AH10); the longest line left goes
+# to <folder>/longest for the trace. Without python3, or should it fail, in.json stays as
+# JAP gave it.
+wrap() {
+	command -v python3 >/dev/null 2>&1 || return 0
+	python3 "$ROOT/agent/wrap.py" "$1" >"$1/longest" 2>>"$RUN/trace.err" || rm -f "$1/longest"
+	return 0
+}
+
 # has <file> <key>: the exported JSON holds at least one entry with that id key.
 has() { grep -q "\"$2\"" "$1"; }
 
@@ -338,6 +352,7 @@ reader_worker() {
 			return 1
 		fi
 		has "$b/in.json" posting_id || has "$b/in.json" pair_id || return 0
+		wrap "$b"
 		call_harness "$HARNESS" "$MODEL" "$ROOT/agent/jobs/reader.md" "$b"
 		rc=$?
 		if [ "$rc" -eq 75 ]; then
@@ -457,9 +472,11 @@ run_writer() {
 		log "export failed$(not_reached "$b/export.err"): $(tail -1 "$b/export.err")"
 		return 1
 	fi
+	wrap "$b"
 	# The checker gets the export as JAP gave it, not the copy the writer's session could
 	# change (a harness did edit its in.json on 23 Nov 2026, to get round its own reader).
 	cp "$b/in.json" "$RUN/export.json"
+	[ -d "$b/text" ] && cp -R "$b/text" "$RUN/export-text"
 	call_harness "$HARNESS" "$MODEL" "$ROOT/agent/jobs/writer.md" "$b"
 	rc=$?
 	if [ "$rc" -eq 75 ]; then
@@ -479,6 +496,7 @@ run_writer() {
 		mkdir -p "$b/check"
 		[ -e "$b/input-changed" ] && log "The writer changed its in.json; the checker gets the export as JAP gave it"
 		cp "$RUN/export.json" "$b/check/in.json"
+		[ -d "$RUN/export-text" ] && cp -R "$RUN/export-text" "$b/check/text"
 		cp "$b/draft.json" "$b/check/"
 		call_harness "$CHECKER" "$CHECKER_MODEL" "$ROOT/agent/jobs/checker.md" "$b/check"
 		rc=$?

@@ -204,6 +204,16 @@ env JAP_DATA_HOST_DIR="$SCHED" JAP_AGENT_SHARDS=1 "$ROOT/agent/run.sh" reader >"
 check "a run by hand is not held back by the day being done" '[ "$?" = 0 ] && [ "$(state "[\"unread\"]")" = "[]" ]'
 unset JAP_AGENT_RETRY_S
 
+# 1.36 (AH10): long text leaves in.json for wrapped files under text/, whole.
+case_run long "$ONE" reader FAKE_LONG=1
+lb=$(ls -d "$TMP"/work/*-reader/reader-1-of-1/batch-1 | tail -1)
+check "a long description goes to text/, wrapped, and in.json points to it" '[ "$rc" = 0 ] && grep -q "\"@text/postings-0-description_text.txt\"" "$lb/in.json" && [ "$(awk "length > 100" "$lb"/text/*.txt "$lb/in.json" | wc -l | tr -d " ")" = 0 ]'
+check "the whole of it, to the last word" '[ "$(tr -d "\n " <"$lb/text/postings-0-description_text.txt")" = "$(python3 -c "print((\"SECRET POSTING\" + \" words \" * 1500)[:8990].replace(\" \", \"\") + \"LAST-WORD\")")" ]'
+check "the trace: the longest line given, and the reader's fields left unknown" '[ "$(trace "$got" "[(s[\"sizes\"][\"longest_line\"] <= 100, s[\"items\"][\"fields\"], s[\"items\"][\"unknown\"]) for s in t[\"sessions\"]]")" = "[(True, 1, 1)]" ] && ! grep -q "LAST-WORD\|SECRET" "$got"'
+case_run longw "$ONE" writer FAKE_LONG=1
+lw=$(ls -d "$TMP"/work/*-writer/writer | tail -1)
+check "the writer's resume goes to text/, and the checker gets the same files" '[ "$rc" = 0 ] && grep -q "\"resume\": \"@text/resume.txt\"" "$lw/in.json" && cmp -s "$lw/text/resume.txt" "$lw/check/text/resume.txt" && grep -q LAST-WORD "$lw/check/text/resume.txt"'
+
 case_run edited "$ONE" writer FAKE_EDIT_INPUT=1
 edited=$(ls -d "$TMP"/work/*-writer/writer | tail -1)
 check "a harness that changes its in.json is named, and the checker gets the export as JAP gave it" '[ "$rc" = 0 ] && grep -q edited_by_the_harness "$edited/in.json" && ! grep -q edited_by_the_harness "$edited/check/in.json" && grep -q "The writer changed its in.json" "$TMP/edited.out" && [ "$(trace "$got" "[(s[\"role\"], s[\"input_changed\"]) for s in t[\"sessions\"]], t[\"totals\"][\"input_changed\"]")" = "[('"'"'writer'"'"', True), ('"'"'checker'"'"', False)] 1" ]'
@@ -350,7 +360,7 @@ same("why, runner and sender", runner.WHY, sender["WHY"])
 same("facts, runner and sender", runner.FACTS, sender["FACTS"])
 same("outcomes, runner and sender", runner.OUTCOMES, sender["CHECKED"])
 same("causes", set(runner.CAUSES) | {"no_answer"}, set(sender["CAUSES"]))
-same("files", set(runner.FILES) | {"other", "outside"}, set(sender["FILES"]))
+same("files", set(runner.FILES) | {"text", "other", "outside"}, set(sender["FILES"]))
 offered = {"outcome": set(), "why": set(), "facts": set()}
 not_codes = {"answer_bank", "resume", "max_chars"}
 for prompt in ("writer", "checker"):

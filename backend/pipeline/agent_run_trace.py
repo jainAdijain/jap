@@ -42,7 +42,7 @@ VERSION = 1  # of the trace file (agent/trace.py)
 MAX_SPANS = 10_000
 # What the reader's import did not save, where the runner's word differs from the door's.
 NOT_SAVED = {"invalid_value": "bad_value"}
-READ = ("postings", "pairs", "written", "saved", "merged", "kept_apart")
+READ = ("postings", "pairs", "written", "saved", "merged", "kept_apart", "fields", "unknown")
 WRITTEN = (
     "jobs",
     "questions",
@@ -208,6 +208,7 @@ def _session(path: str, base: dict[str, Any], s: dict[str, Any], room: int) -> l
         "seconds": s.get("seconds"),
         "in_bytes": sizes.get("in_bytes"),
         "out_bytes": sizes.get("out_bytes"),
+        "longest_line": sizes.get("longest_line"),
         "input_changed": int(bool(s.get("input_changed"))),
         "denied": s.get("denied"),
         "steps_not_sent": len(steps) - len(inside),
