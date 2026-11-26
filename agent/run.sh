@@ -41,6 +41,12 @@
 # tries each job every hour until it has. Three of five mornings (21 to 25 Nov 2026) broke on
 # a Mac asleep on battery that woke for 20 seconds every 10 minutes.
 #
+# The batch in the prompt (PRD 1.41, AH11). A reader session gets in.json and its text/ files
+# inside its prompt (agent/inline.py) and answers with the JSON itself, which the runner
+# writes to out.json: one model request a session, where opening each file had made one
+# request a file, each sending everything so far again. On the batches of 25 and 26 Nov
+# 2026 that was 87,000 tokens in, not 768,000, with the same fields.
+#
 # Settings (from the environment's .env file through make, or the environment):
 #   JAP_HARNESS            claude (default), codex, gemini, opencode, or any adapter's name
 #   JAP_HARNESS_MODEL      model for that harness; empty = the harness's own default
@@ -290,11 +296,13 @@ send_waiting() {
 	return 0
 }
 
-# call_harness <name> <model> <prompt> <folder>: one session in that folder, at most
-# TIMEOUT_MIN minutes. Returns the adapter's code (75 = usage limit, 124 = timed out).
+# call_harness <name> <model> <prompt> <folder> [inline]: one session in that folder, at
+# most TIMEOUT_MIN minutes. With inline the batch goes into the prompt (AH11, agent/inline.py).
+# Returns the adapter's code (75 = usage limit, 124 = timed out).
 call_harness() {
 	local name=$1 model=$2 prompt=$3 dir=$4 pid wd rc t was
 	cp "$prompt" "$dir/prompt.md"
+	[ "${5:-}" = inline ] && python3 "$ROOT/agent/inline.py" prompt "$dir" 2>>"$RUN/trace.err"
 	[ -f "$FAILURES" ] && cp "$FAILURES" "$dir/failures.md"
 	was=$(cksum <"$dir/in.json" 2>/dev/null)
 	t=$(date +%s)
@@ -373,8 +381,10 @@ reader_worker() {
 		fi
 		has "$b/in.json" posting_id || has "$b/in.json" pair_id || return 0
 		wrap "$b"
-		call_harness "$HARNESS" "$MODEL" "$ROOT/agent/jobs/reader.md" "$b"
+		call_harness "$HARNESS" "$MODEL" "$ROOT/agent/jobs/reader.md" "$b" inline
 		rc=$?
+		# AH11: the answer is the session's reply; it becomes out.json here.
+		[ "$rc" -eq 75 ] || python3 "$ROOT/agent/inline.py" reply "$b" 2>>"$RUN/trace.err"
 		if [ "$rc" -eq 75 ]; then
 			session "$b" reader "$HARNESS" "$MODEL" out.json "$i/$n" "$k" none
 			log "shard $i/$n: the $HARNESS plan's usage limit is reached; the rest waits for the next run"
@@ -440,6 +450,11 @@ shards_for() {
 
 run_reader() {
 	local st tries=0 i failed=0
+	# AH11: the batch goes to the harness in its prompt, which needs python3 (macOS has it).
+	command -v python3 >/dev/null 2>&1 || {
+		log "The reader needs python3 to put the batch in the prompt (PRD 1.41, AH11)"
+		return 1
+	}
 	st=$(reader_status)
 	[ -n "$st" ] || {
 		no_answer

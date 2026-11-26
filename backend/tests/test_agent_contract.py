@@ -94,9 +94,11 @@ def test_writer_export_keeps_the_contract() -> None:
 
 @needs_contract
 def test_every_job_prompt_names_the_files_the_runner_uses() -> None:
-    """agent/run.sh hands a harness in.json and reads back the file named here."""
+    """agent/run.sh hands a harness in.json and reads back the file named here; the reader
+    gets the batch in its prompt and answers in its reply (PRD 1.41, AH11)."""
     jobs = CONTRACT.parent / "jobs"
-    assert "`out.json`" in (jobs / "reader.md").read_text()
+    reader = (jobs / "reader.md").read_text()
+    assert "`in.json`" in reader and "Reply with one JSON object and nothing else" in reader
     assert "`draft.json`" in (jobs / "writer.md").read_text()
     checker = (jobs / "checker.md").read_text()
     assert "`out.json`" in checker and "`findings.txt`" in checker

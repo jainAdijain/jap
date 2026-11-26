@@ -8,6 +8,8 @@
 #   FAKE_SIGNED_OUT=1  fail as a harness that is not signed in
 #   FAKE_RECORD=0      give no record, as a harness that cannot
 #   FAKE_SAY=<words>   end with these words (a session that worked and mentions a quota)
+#   FAKE_REPLY=1       as the reader, give the answer as the reply, not out.json (AH11);
+#                      FAKE_REPLY=junk: a reply with no JSON object in it
 #   FAKE_EDIT_INPUT=1  as the writer, change in.json, which a harness should only read
 #   FAKE_REASONS=1     as the writer, leave the first job out and say why in reasons.json
 #                      (PRD 1.34, O24), with words in it that are not codes; as the checker,
@@ -37,7 +39,12 @@ if "JAP reader job" in prompt:
            for p in data.get("postings", [])}
     out.update({f"pair:{p['pair_id']}": {"same": False, "reason": "fake"}
                 for p in data.get("pairs", [])})
-    json.dump(out, open("out.json", "w"))
+    if os.environ.get("FAKE_REPLY") == "1":  # AH11: the answer as the reply, no file
+        os.environ["FAKE_SAY"] = "SECRET words first " + json.dumps(out)
+    elif os.environ.get("FAKE_REPLY") == "junk":
+        os.environ["FAKE_SAY"] = "SECRET I could not do it {not json}"
+    else:
+        json.dump(out, open("out.json", "w"))
     wrote = "out.json"
 elif "JAP writer job" in prompt:
     out = {j["application_id"]: {q["key"]: "ok" for q in j["questions"]} for j in data["jobs"]}
