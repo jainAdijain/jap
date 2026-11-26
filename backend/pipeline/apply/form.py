@@ -306,9 +306,21 @@ async def _combo_options(page: Page, key: str) -> list[str]:
     return [t for t in (" ".join(x.split()) for x in texts) if t]
 
 
+# Ashby names each radio group anew on every page load: a random id, then the question's
+# own name ("<uuid>_question_17759507004"). JAP reads the form on one load and submits it
+# on another, so such a key is matched by what follows the id (JAP-16).
+LOAD_ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}_(?=.)", re.I)
+
+
+def stable_key(key: str) -> str:
+    return LOAD_ID.sub("", key)
+
+
 def selector(key: str) -> str:
     if key.startswith("id:"):
         return f'[id="{key[3:]}"]'
+    if (rest := stable_key(key)) != key:
+        return f'[name$="_{rest}"]'
     return f'[name="{key}"]'
 
 
@@ -524,16 +536,16 @@ async def _check_before_submit(
     data = await page.evaluate(READ_JS)
     if data["captcha"]:
         raise CaptchaFound(PUZZLE_FOUND)
-    known = {f.key: f for f in fields}
+    known = {stable_key(f.key): f for f in fields}
     empty: list[str] = []
     wrong: list[str] = []
     for r in data["fields"]:
         key, value = str(r["key"]), r.get("value")
-        f = known.get(key)
+        f = known.get(stable_key(key))
         required = bool(r.get("required")) or bool(REQUIRED_MARK.search(str(r.get("label") or "")))
         required = required or (f is not None and f.required)
         label = REQUIRED_MARK.sub("", str(r.get("label") or key)).strip() or key
-        answer = answers.get(key, "")
+        answer = answers.get(f.key if f else key, "")
         if value is None:
             if required and not answer and not (f and f.type == "file"):
                 empty.append(label)
@@ -685,8 +697,9 @@ async def submit_form(
                     else "The site emailed you a security code and wants it before it takes "
                     "the application, so nothing was sent. Apply yourself from the posting",
                 )
-            keys = {f.key.removeprefix("id:"): f.label for f in fields}
-            invalid = [keys[k] for k in await page.evaluate(INVALID_JS) if k in keys]
+            keys = {stable_key(f.key.removeprefix("id:")): f.label for f in fields}
+            marked = [stable_key(k) for k in await page.evaluate(INVALID_JS)]
+            invalid = [keys[k] for k in marked if k in keys]
             if invalid:
                 return SubmitResult(
                     confirmed=False,

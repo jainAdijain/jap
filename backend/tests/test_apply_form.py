@@ -534,6 +534,26 @@ async def test_ashby_form_is_filled_and_each_button_goes_to_its_question(
 
 
 @needs_browser
+async def test_ashby_radios_named_anew_on_each_load_are_filled(site: str, tmp_path: Path) -> None:
+    """JAP-16, as on ClickHouse's form: Ashby puts a new random id in front of each radio
+    group's name on every load, so the name read is not the one the submit finds. The
+    answer is picked by the question's own name and the form is sent."""
+    read = await read_form(f"{site}/ashby_load_id.html")
+    years = next(f for f in read.fields if f.key.endswith("_question_17759507004"))
+    assert (years.type, years.required) == ("radio", True)
+    assert years.options == ["0", "1", "2", "3", "4", "5+"]
+    _Handler.posts.clear()
+    result = await submit_form(
+        f"{site}/ashby_load_id.html", read.fields,
+        {"_systemfield_name": "Asha Rao", years.key: "0"}, {},
+        tmp_path / "s.png", tmp_path / "t.zip",
+    )  # fmt: skip
+    assert result.confirmed, result.error
+    sent = {k.split("_", 1)[1] if "-" in k else k: v for k, v in _Handler.posts[-1].items()}
+    assert sent == {"_systemfield_name": "Asha Rao", "question_17759507004": "0"}
+
+
+@needs_browser
 async def test_an_empty_required_field_stops_before_submit(site: str, tmp_path: Path) -> None:
     """A required field left empty is named, and Submit is never pressed (JAP-11)."""
     read = await read_form(f"{site}/ashby_atlan.html")

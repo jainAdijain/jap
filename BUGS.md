@@ -477,3 +477,31 @@ list is counted as it is. `agent/tests/run_test.sh` checks "a job held by the wr
 checker counts once in the run".
 
 Files: `agent/trace.py` (`added`, `cmd_run`), `agent/tests/run_test.sh`.
+
+## JAP-16 — Bug — Ashby radio answers were never found on the form that was sent
+
+**Status:** Fixed (v0.34.1). Found 26 Nov 2026 on live, approving two ClickHouse (Ashby) jobs;
+called a bug by Aditya the same day. The Supabase SWE Auth failure of 19 Nov 2026 ("No option"
+for an answer copied letter for letter) was the same defect.
+
+Both applications failed with `No option "0" for "How many years of Postgres professional
+experience..."` although `0` was one of the options as read, and nothing was sent: the error
+comes while filling, before Submit. Ashby names each radio group anew on every page load, a
+random id and then the question's own name (`<uuid>_question_17759507004`), and does the same
+to the EEO questions (`<uuid>__systemfield_eeoc_gender`). Text fields, checkboxes and files
+keep their names. JAP reads the form on one load, keeps the name as the field's key, and
+`submit_form` opens the form fresh, where `_choose` looked for `[name="<old uuid>_question_..."]`,
+found no radio, and stopped. Every required Ashby radio question failed this way; an optional
+one (the EEO questions, left empty) was skipped without notice.
+
+Fix (v0.34.1): `stable_key()` in `pipeline/apply/form.py` drops a leading uuid and `_` from a
+key; `selector()` finds such a key by what follows the id (`[name$="_question_..."]`), and the
+check before Submit and the list of fields the page marked invalid compare keys the same way.
+Keys stay as read, so applications prepared before the fix are sent with it too.
+`tests/forms/ashby_load_id.html` names its radios with a new `crypto.randomUUID()` on every
+load; `test_ashby_radios_named_anew_on_each_load_are_filled` fails on the old code with the
+live error and passes now. Checked on ClickHouse's own form without submitting: read under one
+id, a fresh load under another, and the answer was ticked.
+
+Files: `backend/pipeline/apply/form.py`, `backend/tests/test_apply_form.py`,
+`backend/tests/forms/ashby_load_id.html`.
