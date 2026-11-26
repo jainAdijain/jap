@@ -10,7 +10,8 @@ times for single words to get round it (1.48 million tokens for 5 postings); JAP
 So the runner calls this on every batch folder after the export: each string longer than
 LONG characters, wherever it is in in.json, goes to a file of its own under text/, with its
 own line breaks and every line wrapped at WIDTH, and its value in in.json becomes
-"@text/<file>". The job prompts (version 1.1, 1.4 and 1.4) say to read such a file in full.
+"@text/<file>". The writer and checker prompts (1.4) say to read such a file in full; the
+reader gets the files in its prompt (agent/inline.py, AH11).
 Nothing else changes: the ids, the description hashes and the keys stay where they were,
 and JAP's import never reads in.json. Short values stay in place.
 

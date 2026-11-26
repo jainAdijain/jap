@@ -1,9 +1,10 @@
 # agent/: JAP's AI work on any harness
 
-Version 1.9, 25 Nov 2026 · follows PRD 1.40 (AH1 to AH10, O16 to O26, W8, W13) · code v0.35.0
+Version 1.10, 26 Nov 2026 · follows PRD 1.41 (AH1 to AH11, O16 to O26, W8, W13) · code v0.36.0
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.10 | 26 Nov 2026 | The batch in the prompt (PRD 1.41, AH11): `inline.py` puts `in.json` and its `text/` files in the reader's prompt and takes the answer from the reply, so a reader session is one model request; reader prompt 1.2 |
 | 1.9 | 25 Nov 2026 | Shards by volume (PRD 1.40): a reader run starts one shard for each batch of postings to read, at least one and at most `JAP_AGENT_SHARDS`, and its trace names the shards started |
 | 1.8 | 25 Nov 2026 | O26: every export and import is called with `RUN=<stamp>`, so JAP puts its span inside the run's trace. A run's `why` and `facts` count each job once across the writer and the checker; a writer run has no `shards` or `batch`; a Devin write to a file its settings protect counts in `denied` whatever it answered |
 | 1.7 | 25 Nov 2026 | Less work (PRD 1.37): `draft.py` skips the checker session for a draft of choices only (`JAP_CHECKER_WHEN=always` to check every draft) and adds `"_handed_out"` to the writer's import, so JAP stops handing out a job left out until its inputs change (W13). The reader is given only postings in my target roles (R3, JAP's side) |
@@ -25,7 +26,9 @@ make agent-run JOB=reader
   run.sh ── reader-status ── a shard for each batch to read (at most 8), in parallel, each:
   │           reader-export SHARD=i/8 LIMIT=10 > batch/in.json
   │             └─ wrap.py: long text → batch/text/*.txt, wrapped (AH10)
-  │           harnesses/$JAP_HARNESS.sh jobs/reader.md   (in batch/, writes out.json)
+  │           inline.py prompt: in.json and text/ into prompt.md (AH11)
+  │           harnesses/$JAP_HARNESS.sh jobs/reader.md   (in batch/, answers in its reply)
+  │             └─ inline.py reply: the JSON in its last words → batch/out.json
   │             └─ trace.py read: the harness's record → batch/steps.json (numbers only)
   │           reader-import FILE=batch/out.json          (until empty or nothing saved)
   │           trace.py session → batch/trace.json, and the batch's line in the run log

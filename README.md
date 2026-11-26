@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.35.0 (A reader run starts only the shards its postings need), 25 Nov 2026.**
+**Version 0.36.0 (The reader's batch goes in its prompt: one model request a session), 26 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -604,6 +604,17 @@ session's trace adds the longest line the harness was given and, for the reader,
 fields it filled and how many it called unknown; the files a tool reads there show as
 `text`. Without `python3` on the Mac, `in.json` goes as JAP gave it.
 
+**The batch in the prompt** (PRD 1.41, AH11, from v0.36.0). A harness sends everything so
+far again with each model request, and a reader that opened `in.json` and then each
+description made a request per file: on 26 Nov 2026 a batch of 9 postings took 14 requests
+and 282,000 tokens. `agent/inline.py` now adds the batch (`in.json`, then each `text/` file it
+names) to the reader's prompt, and the harness answers with the JSON itself, which the runner
+writes to `out.json` for the import (reader prompt 1.2). A session is one request. On 20
+postings and 3 pairs Devin had already read, that was 87,000 tokens in instead of 768,000,
+with the same fields or better ones: no placeholder salary, and a steadier seniority. The
+reader needs `python3` on the Mac; a reply with no JSON in it counts as a session that wrote
+nothing.
+
 **Devin** runs under JAP's own settings (`agent/harnesses/devin.config.json`), not yours: no
 shell or web tool, nothing readable under your home folder, nothing writable outside the
 batch folder, and `in.json` read-only. Its file reader cuts lines at 2,000 characters, so it
@@ -969,6 +980,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.36.0 | 26 Nov 2026 | The reader's batch goes in its prompt (PRD 1.41, AH11). New `agent/inline.py`: `prompt` adds `in.json` and every `text/` file it names to the reader's `prompt.md`, `reply` takes the JSON object from the harness's last words into `out.json` (unless the session wrote one). `run.sh` uses both for every reader session and needs `python3` for the reader. Reader prompt 1.2: no tools, the answer as the reply, a placeholder salary is null. Tried on 5 batches Devin had read on 25 and 26 Nov (20 postings, 3 pairs): 5 requests and 87,413 tokens in, not 42 and 768,074; no posting missing, every hash and key right, the 3 pairs decided the same, 159 of 170 fields the same and the other 11 better. `make test-agent`: 112 checks |
 | 0.35.0 | 25 Nov 2026 | A reader run starts only the shards its postings need (PRD 1.40, R3, AH4). `agent/run.sh` starts one shard for each batch of postings to read (`unread` over `JAP_AGENT_BATCH`, rounded up), at least one for the pairs and at most `JAP_AGENT_SHARDS`; the run log says how many, and the run's trace names the shards started. On 25 Nov eight shards split 10 postings into six Devin sessions of 1 to 3 (309,906 tokens in, about 37,000 a session before its postings). `make test-agent`: 109 checks |
 | 0.34.0 | 25 Nov 2026 | A refusal holds only who refused (PRD 1.39, V5). A 429 or 403 from a company's own careers site puts that company on hold (`company_hold`, migration `0017_company_hold`), not the whole ATS; a refusal from the board's own pages (`greenhouse.io`, `lever.co`, `ashbyhq.com`) still holds the ATS. Which one is told by the page's address after redirects (`FormError.host`, `SubmitResult.host`), else the apply link. Pick passes over a company on hold, submit waits for it, the Runs history names it, and a job refused through every wait fails naming the company's site. Also logs JAP-15 (fixed in 0.33.0) |
 | 0.33.0 | 25 Nov 2026 | Traces that answer cost, failures and quality (PRD 1.38, O26). `tokens_per_item` and `uncached_tokens_in` on sessions and runs (`agent_run_trace.py`). Door spans inside their run's trace when the runner calls them: `run.sh` passes `RUN=<stamp>`, the Makefile hands it to the container as `JAP_RUN_STAMP`, `agent_doors.py` sends the span with `trace.within()`. New `pipeline/apply_trace.py`: `apply.failed` (ats, apply_mode, pressed, failure code) from `flow.fail()`, and `apply.sent` (answers, writer_answers, edited) when a submit is confirmed; the writer's answers are kept at import (migration 0016). `agent/trace.py`: reasons counted once per job across writer and checker, no shards or batch on a writer run, Devin's refused writes to `in.json`, `prompt.md`, `failures.md` or `text/` counted. `make test-agent`: 107 checks. |

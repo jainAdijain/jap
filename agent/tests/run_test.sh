@@ -119,6 +119,14 @@ case_run norecord "$ONE" reader FAKE_RECORD=0
 check "a harness with no record still gets level 2, marked as an estimate" '[ "$rc" = 0 ] && [ "$(trace "$got" "[(s[\"level\"], s[\"tokens\"][\"estimate\"], s[\"tokens\"][\"in\"] > 0, s[\"seconds\"] >= 0, s[\"items\"][\"saved\"]) for s in t[\"sessions\"]]")" = "[(2, True, True, True, 1)]" ] && grep -q "an estimate: the harness gave no record" "$TMP/norecord.out"'
 case_run off "$ONE" reader JAP_AGENT_TRACE=0
 check "JAP_AGENT_TRACE=0: no record asked for, the run still traced at level 2" '[ "$rc" = 0 ] && [ "$(causes)" = "[] [2]" ] && [ ! -e "$(ls -d "$TMP"/work/*-reader/reader-1-of-1/batch-1 | tail -1)/steps.json" ]'
+
+# 1.41 (AH11): the batch goes in the prompt and the answer comes back as the reply.
+case_run inline "$ONE" reader FAKE_REPLY=1 FAKE_LONG=1
+ib=$(ls -d "$TMP"/work/*-reader/reader-1-of-1/batch-1 | tail -1)
+check "the batch is in the prompt: in.json and the whole of its text" 'grep -q "^## in.json" "$ib/prompt.md" && grep -q "@text/" "$ib/prompt.md" && grep -q "LAST-WORD" "$ib/prompt.md" && grep -q "(end of text/" "$ib/prompt.md"'
+check "the reply becomes out.json, and JAP saves it" '[ "$rc" = 0 ] && [ -s "$ib/out.json" ] && [ "$(state "[\"unread\"]")" = "[]" ] && [ "$(trace "$got" "t[\"totals\"][\"saved\"]")" = 1 ]'
+case_run junk "$ONE" reader FAKE_REPLY=junk
+check "a reply with no JSON is a session that wrote nothing" '[ "$rc" = 1 ] && grep -q "wrote no out.json" "$TMP/junk.out" && [ "$(state "[\"unread\"]")" = "[\"1\"]" ]'
 case_run limit "$ONE" reader FAKE_LIMIT=1
 check "cause usage_limit" '[ "$rc" = 75 ] && [ "$(causes)" = "[('"'"'usage_limit'"'"', 1)] [2]" ]'
 case_run signedout "$ONE" reader FAKE_SIGNED_OUT=1
