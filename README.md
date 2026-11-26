@@ -1,6 +1,6 @@
 # JAP: Job Application Pipeline
 
-**Version 0.34.0 (A refusal from a company's own site holds that company, not the whole board), 25 Nov 2026.**
+**Version 0.35.0 (A reader run starts only the shards its postings need), 25 Nov 2026.**
 
 JAP watches the public job boards of the companies you pick (Greenhouse, Lever and Ashby),
 lists the jobs that match your profile, and prepares or submits applications for you to review.
@@ -407,8 +407,10 @@ read once your roles take it in. On 20 Nov 2026 that was 239 of 1,531 unread pos
 says `unread` (to be read) and `unread_all` (unread in all); the export says
 `unread_to_read` and `scope`.
 
-The runner starts 8 workers, one per shard (`JAP_AGENT_SHARDS`), and asks for 10 postings a
-batch (`JAP_AGENT_BATCH`), not the 50 a `make reader-export` by hand gives; each worker
+The runner starts up to 8 workers, one per shard (`JAP_AGENT_SHARDS`), and asks for 10
+postings a batch (`JAP_AGENT_BATCH`), not the 50 a `make reader-export` by hand gives. It
+starts one worker for each batch of postings to read, so 10 postings take one session and 25
+take three (PRD 1.40): each session pays the harness's setup again. Each worker
 repeats export, read, import until its batch is empty or saves nothing, and one more pass
 then takes whatever is left. The first read of a large backlog (thousands of postings)
 is a one-off and can reach your plan's usage limit; what is left is read on the next run.
@@ -462,7 +464,7 @@ each on its own subscription and models. Switching is one line and one command. 
 
 | Part | What it is |
 | --- | --- |
-| `agent/run.sh` | The runner (`make agent-run JOB=reader|writer`). It exports each batch, starts the harness once per batch, imports what comes back, runs the reader's 8 shards in parallel plus a leftover pass, runs the writer and then a checker session before anything is imported, and stops when the plan's usage limit is reached (exit 75; the rest waits for the next run). One reader and one writer run at a time. |
+| `agent/run.sh` | The runner (`make agent-run JOB=reader|writer`). It exports each batch, starts the harness once per batch, imports what comes back, runs up to 8 reader shards in parallel (one for each batch to read) plus a leftover pass, runs the writer and then a checker session before anything is imported, and stops when the plan's usage limit is reached (exit 75; the rest waits for the next run). One reader and one writer run at a time. |
 | `agent/jobs/` | The job prompts, one per job (`reader.md`, `writer.md`, `checker.md`), written for any harness. The harness sees only one batch folder: `in.json` from the export, the prompt, and the files it writes (`out.json`, `draft.json`, `findings.txt`, `reasons.json`). It runs no command, reads no database, needs no shell or web. |
 | `agent/harnesses/` | One small adapter per harness: how to run a prompt without a chat window, how to get its record of the session, and how its usage-limit message reads. Add a harness by copying one and following `common.sh`. |
 | `agent/trace.py` | The trace of each run (PRD 1.33, O16 to O21; 1.34, O24): numbers and codes only. See below. |
@@ -472,7 +474,7 @@ each on its own subscription and models. Switching is one line and one command. 
 Settings, in `.env.live` (see `.env.example`): `JAP_HARNESS` (`claude`, `codex`, `gemini` or
 `opencode`), `JAP_HARNESS_MODEL` (empty = the harness's default), `JAP_CHECKER_HARNESS` and
 `JAP_CHECKER_MODEL` (the checker pass; empty = the same, `none` = no check),
-`JAP_AGENT_SHARDS` (8 reader shards in parallel), `JAP_AGENT_BATCH` (10 postings per reader
+`JAP_AGENT_SHARDS` (at most 8 reader shards in parallel), `JAP_AGENT_BATCH` (10 postings per reader
 batch), `JAP_AGENT_TIMEOUT_MIN` (20 minutes per harness session), `JAP_AGENT_TRACE` (0 = do
 not ask the harness for a record of its session), `JAP_AGENT_SEND_S` (60 seconds JAP may
 take over a run's trace before the runner keeps it for the next run), `JAP_AGENT_CALL_S`,
@@ -967,6 +969,7 @@ data/               gitignored: resumes, screenshots, cover letters, backups
 
 | Version | Date | Changes |
 | --- | --- | --- |
+| 0.35.0 | 25 Nov 2026 | A reader run starts only the shards its postings need (PRD 1.40, R3, AH4). `agent/run.sh` starts one shard for each batch of postings to read (`unread` over `JAP_AGENT_BATCH`, rounded up), at least one for the pairs and at most `JAP_AGENT_SHARDS`; the run log says how many, and the run's trace names the shards started. On 25 Nov eight shards split 10 postings into six Devin sessions of 1 to 3 (309,906 tokens in, about 37,000 a session before its postings). `make test-agent`: 109 checks |
 | 0.34.0 | 25 Nov 2026 | A refusal holds only who refused (PRD 1.39, V5). A 429 or 403 from a company's own careers site puts that company on hold (`company_hold`, migration `0017_company_hold`), not the whole ATS; a refusal from the board's own pages (`greenhouse.io`, `lever.co`, `ashbyhq.com`) still holds the ATS. Which one is told by the page's address after redirects (`FormError.host`, `SubmitResult.host`), else the apply link. Pick passes over a company on hold, submit waits for it, the Runs history names it, and a job refused through every wait fails naming the company's site. Also logs JAP-15 (fixed in 0.33.0) |
 | 0.33.0 | 25 Nov 2026 | Traces that answer cost, failures and quality (PRD 1.38, O26). `tokens_per_item` and `uncached_tokens_in` on sessions and runs (`agent_run_trace.py`). Door spans inside their run's trace when the runner calls them: `run.sh` passes `RUN=<stamp>`, the Makefile hands it to the container as `JAP_RUN_STAMP`, `agent_doors.py` sends the span with `trace.within()`. New `pipeline/apply_trace.py`: `apply.failed` (ats, apply_mode, pressed, failure code) from `flow.fail()`, and `apply.sent` (answers, writer_answers, edited) when a submit is confirmed; the writer's answers are kept at import (migration 0016). `agent/trace.py`: reasons counted once per job across writer and checker, no shards or batch on a writer run, Devin's refused writes to `in.json`, `prompt.md`, `failures.md` or `text/` counted. `make test-agent`: 107 checks. |
 | 0.32.0 | 25 Nov 2026 | The AI reads and writes less (PRD 1.37: R3, W8, W13). **Reader**: only postings in your target roles are given out when your match rule needs a role in every combination (`JAP_READER_SCOPE`, default `roles`); `reader-status` says `unread` and `unread_all`; the export adds `unread_to_read` and `scope`. **Writer**: the runner sends `_handed_out` with the answers, and JAP notes each job left out with a hash of its inputs (migration 0015, `application.writer_left_out_at` and `writer_left_out_inputs`), skips it until they change or 7 days pass, says so on its questions, and counts it as `waiting_on_you`. **Checker**: `agent/draft.py` skips the checker session for a draft of choices only (`JAP_CHECKER_WHEN`, default `text`). Contract stays 1 (fields added). `make test-agent`: 103 checks. |

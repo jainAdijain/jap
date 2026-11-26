@@ -1,9 +1,10 @@
 # agent/: JAP's AI work on any harness
 
-Version 1.8, 25 Nov 2026 · follows PRD 1.38 (AH1 to AH10, O16 to O26, W8, W13) · code v0.33.0
+Version 1.9, 25 Nov 2026 · follows PRD 1.40 (AH1 to AH10, O16 to O26, W8, W13) · code v0.35.0
 
 | Version | Date | Change |
 | --- | --- | --- |
+| 1.9 | 25 Nov 2026 | Shards by volume (PRD 1.40): a reader run starts one shard for each batch of postings to read, at least one and at most `JAP_AGENT_SHARDS`, and its trace names the shards started |
 | 1.8 | 25 Nov 2026 | O26: every export and import is called with `RUN=<stamp>`, so JAP puts its span inside the run's trace. A run's `why` and `facts` count each job once across the writer and the checker; a writer run has no `shards` or `batch`; a Devin write to a file its settings protect counts in `denied` whatever it answered |
 | 1.7 | 25 Nov 2026 | Less work (PRD 1.37): `draft.py` skips the checker session for a draft of choices only (`JAP_CHECKER_WHEN=always` to check every draft) and adds `"_handed_out"` to the writer's import, so JAP stops handing out a job left out until its inputs change (W13). The reader is given only postings in my target roles (R3, JAP's side) |
 | 1.6 | 25 Nov 2026 | Every text read whole (AH10): `wrap.py` moves each string of `in.json` over 600 characters into `text/`, wrapped at 100 characters, leaving `"@text/<file>"`; prompts reader 1.1, writer and checker 1.4. The trace adds `sizes.longest_line`, and `items.fields` and `items.unknown` for a reader |
@@ -21,7 +22,7 @@ is everything between those commands and the harness you pay for. The README's
 
 ```
 make agent-run JOB=reader
-  run.sh ── reader-status ── 8 shards in parallel, each:
+  run.sh ── reader-status ── a shard for each batch to read (at most 8), in parallel, each:
   │           reader-export SHARD=i/8 LIMIT=10 > batch/in.json
   │             └─ wrap.py: long text → batch/text/*.txt, wrapped (AH10)
   │           harnesses/$JAP_HARNESS.sh jobs/reader.md   (in batch/, writes out.json)
